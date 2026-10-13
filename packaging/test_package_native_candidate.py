@@ -10,8 +10,8 @@ from package_native_candidate import assemble
 class CandidatePackageTests(unittest.TestCase):
     def fixture(self,root):
         (root/'packaging').mkdir();(root/'packaging/el_modem.spec').write_bytes(b'spec')
-        for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','docs/REDISTRIBUTION.md'):
-            p=root/name;p.parent.mkdir(exist_ok=True);p.write_text('original documentation')
+        for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','docs/REDISTRIBUTION.md','packaging/serial/README.md','packaging/serial/build-driver.sh','packaging/serial/serialsim-flow.patch','packaging/serial/COPYING'):
+            p=root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('original documentation')
         exe=root/'el-modem';exe.write_bytes(b'executable')
         reports=root/'reports';reports.mkdir();notices=root/'notices';notices.mkdir()
         digest=hashlib.sha256(exe.read_bytes()).hexdigest()

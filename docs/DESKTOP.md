@@ -88,15 +88,16 @@ IPC. Full PCM/DSP recording is enabled by default, bounded to 600 seconds per
 call; each worker run has its own capture directory. Recording duration and
 enabling are configurable named settings applied after restart.
 
-See the README for the source preview qualification limits. An
+See the current handoff for which packaged/live gates have actually run. An
 implemented feature is not a claim of qualification on every modem, kernel, or
 host. Windows/macOS native serial qualification and native IAX remain future work.
 
 `packaging/build.sh docker-bookworm-lto` builds with a PGO+LTO shared Python
 library from the matching patched Debian source, including Debian's built-in
 module set. This is the recipe used for the four passing short PPP cases and
-ten passing family-reset cases documented in
-the private development qualification record (not distributed).
+ten passing family-reset cases in the local Linux qualification record.
+Those historical results apply to that artifact only; native release candidates
+carry their own qualification reports in the archive.
 The manifest records the library digest, optimization settings and source
 checksums. The first build takes longer; Docker caches subsequent builds.
 Rebuilding produces a new artifact that still needs its own qualification.

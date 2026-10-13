@@ -33,7 +33,7 @@ def assemble(executable,root,reports,notices,output,target,version,revision):
         if path.is_symlink() or not path.is_file():raise ValueError('regular explicit package file required: '+str(path))
         files[name]=path.read_bytes()
     add('el-modem.exe' if actual.startswith('windows') else 'el-modem',executable)
-    for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','docs/REDISTRIBUTION.md'):add(name,root/name)
+    for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','docs/REDISTRIBUTION.md','packaging/serial/README.md','packaging/serial/build-driver.sh','packaging/serial/serialsim-flow.patch','packaging/serial/COPYING'):add(name,root/name)
     for path in sorted(reports.glob('*')):
         if path.is_file():add('qualification/'+path.name,path)
     for path in sorted(notices.rglob('*')):
@@ -59,7 +59,7 @@ def assemble(executable,root,reports,notices,output,target,version,revision):
     with zipfile.ZipFile(output,'x',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
         for name,data in sorted(files.items()):
             entry=zipfile.ZipInfo(base+'/'+name,date_time=(1980,1,1,0,0,0));entry.create_system=3
-            entry.external_attr=((0o100755 if name in ('el-modem','el-modem.exe') else 0o100644)<<16)
+            entry.external_attr=((0o100755 if name in ('el-modem','el-modem.exe','packaging/serial/build-driver.sh') else 0o100644)<<16)
             entry.compress_type=zipfile.ZIP_DEFLATED;archive.writestr(entry,data)
     with zipfile.ZipFile(output) as archive:
         for name,record in review['files'].items():

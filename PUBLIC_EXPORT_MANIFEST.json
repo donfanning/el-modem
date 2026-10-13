@@ -27,7 +27,7 @@
       "mode": "100644"
     },
     "docs/DESKTOP.md": {
-      "sha256": "5ca94644f3a5997f2e69da3c34fdaec32e2234af0ad55158efe3617d1586f6fe",
+      "sha256": "99beef4b3a705d7517046c4d00f59931a386a412692fce35713752cc20d677dc",
       "mode": "100644"
     },
     "docs/SERIAL.md": {
@@ -1223,7 +1223,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "f3a40a20628aa1ba7293485b5394653a10e2194f5cd920534a86860430cb3c25",
+      "sha256": "7901e7e69faa0eadee7235fc4666d27c2fc8da58ca9bb83515e336061c81ebf7",
       "mode": "100644"
     },
     ".gitignore": {
@@ -1235,11 +1235,11 @@
       "mode": "100644"
     },
     "packaging/inventory_portable.py": {
-      "sha256": "c8e4b70de35d6397f5c10b532b8b239863193cc1eddbc906226ce26f40deb960",
+      "sha256": "48304535fdfb44a0e3bded148e51753d8c7036d74c606518b7b635b8a0c6738a",
       "mode": "100644"
     },
     "packaging/package_native_candidate.py": {
-      "sha256": "e78b9f69e2161651c6de28edf31000840b71ae86898179e56066efa6162b3d62",
+      "sha256": "f69fd90b387818b92cf6ae8fb093f3389dc9473e48ccf69b6cbf34f57b81963e",
       "mode": "100644"
     },
     "packaging/test_candidate_transport.py": {
@@ -1247,7 +1247,23 @@
       "mode": "100644"
     },
     "packaging/test_package_native_candidate.py": {
-      "sha256": "024a74c21992392931b24e4df813a76257741175ba8cdac297ebdf1a147c150d",
+      "sha256": "452975b61f6d9a38e2a4eaa99230b237b6094c211b21b1f9df8a48076c0b5d24",
+      "mode": "100644"
+    },
+    "packaging/build_with_lineage.py": {
+      "sha256": "78bdbac9f89dd3d8dde3cf1b3aab1a1054235a8563bcceefdf91b568ee38079f",
+      "mode": "100644"
+    },
+    "packaging/test_build_with_lineage.py": {
+      "sha256": "5e8b54b83eb78fca848f220a140dfa95fb4083ff9c8773ea5499bc53119cae2b",
+      "mode": "100644"
+    },
+    "packaging/prepare_public.py": {
+      "sha256": "d8eaafcd91c2967834066a891a2d0d724a7e6783e52dfd10d77f0afb215549ab",
+      "mode": "100644"
+    },
+    "packaging/serial/COPYING": {
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
       "mode": "100644"
     }
   },
@@ -1297,6 +1313,21 @@
         ".github/workflows/build.yml"
       ],
       "reason": "encrypted candidate retention and native package/notice tooling"
+    },
+    {
+      "paths": [
+        "packaging/build_with_lineage.py",
+        "packaging/test_build_with_lineage.py",
+        "packaging/inventory_portable.py",
+        "packaging/package_native_candidate.py",
+        "packaging/test_package_native_candidate.py",
+        "packaging/prepare_public.py",
+        "packaging/serial/COPYING",
+        "docs/DESKTOP.md",
+        ".github/workflows/build.yml"
+      ],
+      "reason": "native byte processing trace and complete driver/docs archive",
+      "private_commit": "e3a1d4c"
     }
   ]
 }
