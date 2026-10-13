@@ -11,7 +11,7 @@
       "mode": "100644"
     },
     "CREDITS.md": {
-      "sha256": "be31a109f082806d16a7182e4e8f63bb63ad3b0d2b2559a99bb4ae967612246a",
+      "sha256": "bc4551847c0bcf58eb338ae8269f1ea00924b64d882960032bdf4392a31a21a7",
       "mode": "100644"
     },
     "LICENSE": {
@@ -19,7 +19,7 @@
       "mode": "100644"
     },
     "NOTICE": {
-      "sha256": "a32f184f1c20eb495654322aede2c7091d4829783cf99ca66a4a80cac871ce1f",
+      "sha256": "6807223427e898a6efc42bcc4f9b34d0abacb61e4a359cadf1b6519dc967d4e2",
       "mode": "100644"
     },
     "docs/AT_COMMANDS.md": {
@@ -1151,11 +1151,11 @@
       "mode": "100644"
     },
     "README.md": {
-      "sha256": "65fea059d2f29cc3f9ac7497294480bf36a1e4bc182eda700267eeea5731a335",
+      "sha256": "e8c0ff5c44229d6e5f65d2dd19a39e24e29c48c7b1fd8565f7f7e3ce717dbb0b",
       "mode": "100644"
     },
     "docs/REDISTRIBUTION.md": {
-      "sha256": "ad3c13053dcdefd7d954dd867738875aa5149daea350881b6abbae44cd1f1742",
+      "sha256": "f271ef70a2467c276141e28adc538e8117646b680c6c0057e9bb47d5e0b736ee",
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
@@ -1189,6 +1189,15 @@
       "files": {
         "README.md": "packaging/public/README.md",
         "CREDITS.md": "CREDITS.md"
+      }
+    },
+    {
+      "source_commit": "04ce523ef6f6a72dfdaae62e7a4a14289b94732a",
+      "files": {
+        "README.md": "packaging/public/README.md",
+        "CREDITS.md": "CREDITS.md",
+        "NOTICE": "NOTICE",
+        "docs/REDISTRIBUTION.md": "packaging/public/REDISTRIBUTION.md"
       }
     }
   ]

@@ -17,8 +17,9 @@ desktop tests transferred exact data but exceeded the receive-queue gate.
 Multiple modem processes work, but their real-time capacity depends on the host.
 Windows/macOS builds are not a claim of qualified native virtual COM support.
 
-Created by **Don Fanning (JFalcon)**, drawing on years of telephony and VoIP
-research, including Telephreak and collaboration with Champ Clark III (dabeave).
+I’m **Don Fanning (jfalcon)** — [gh:donfanning](https://github.com/donfanning).
+I created El-Modem, drawing on years of telephony and VoIP research, including
+Telephreak and my collaboration with Champ Clark III (dabeave).
 See [Credits](CREDITS.md) for development assistance, reference implementations
 and research acknowledgments.
 
@@ -64,7 +65,7 @@ each exported file's hash. This does not replace a credentials review.
 
 The community source is licensed under [GPL-3.0-or-later](LICENSE).
 Separate commercial licensing is planned for proprietary incorporation; contact
-the maintainer for terms. See [NOTICE](NOTICE), [contribution policy](CONTRIBUTING.md),
+me for terms. See [NOTICE](NOTICE), [contribution policy](CONTRIBUTING.md),
 [credits](CREDITS.md) and [redistribution review](docs/REDISTRIBUTION.md).
 Provenance review remains open. Binary redistribution requires the complete
 notices and licenses of the actual bundled dependencies.

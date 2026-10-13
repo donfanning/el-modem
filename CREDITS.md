@@ -1,10 +1,11 @@
 # Credits and acknowledgments
 
-El-Modem was created and is maintained by **Don Fanning (JFalcon;
-[donfanning](https://github.com/donfanning))**, who directs its development,
-interoperability testing and intended behavior.
+**Don Fanning (jfalcon)** — [gh:donfanning](https://github.com/donfanning)
 
-Development has been assisted by **OpenCode**, **Anthropic Claude**,
+I created and maintain El-Modem, and I direct its development, interoperability
+testing and intended behavior.
+
+I have used **OpenCode**, **Anthropic Claude**,
 **GitHub Copilot**, and **OpenAI ChatGPT/Codex** for implementation, research,
 review and troubleshooting.
 
@@ -18,14 +19,14 @@ terms. See [NOTICE](NOTICE).
 Special thanks to **[Telephreak](https://www.telephreak.org/)** and
 **Champ Clark III (dabeave)**, creator of
 [iWar](https://sourceforge.net/projects/iwar/), for years of shared telephony
-and VoIP research and collaboration with Don.
+and VoIP research and collaboration with me.
 
-Their earlier 2600/HOPE and DEF CON presentations include:
+Our earlier 2600/HOPE and DEF CON presentations include:
 
 - [Hacking International Networks and System(s) Using VoIP](https://infocondb.org/con/hope/the-last-hope/hacking-international-networks-and-systems-using-voip),
-  The Last HOPE, July 19, 2008 — JFalcon and Da Beave.
+  The Last HOPE, July 19, 2008 — me (jfalcon) and Da Beave.
 - [AAPL — Automated Analog Telephone Logging](https://infocondb.org/con/def-con/def-con-17/aapl-automated-analog-telephone-logging),
-  DEF CON 17, August 2, 2009 — JFalcon and Da Beave.
+  DEF CON 17, August 2, 2009 — me (jfalcon) and Da Beave.
 
 This collaboration is part of the project's background; it does not imply
 that iWar code is incorporated or that Champ authored the current DSP.

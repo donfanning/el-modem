@@ -1,7 +1,7 @@
 # Redistribution review
 
 The community license is GPL-3.0-or-later, with a separate commercial licensing
-route selected by the owner. Commercial terms and the contributor agreement
+route I selected. Commercial terms and the contributor agreement
 remain to be finalized. Attribution is not a license grant.
 The existing credits describe the project's claimed provenance; this review
 does not independently prove that every algorithm/table was written from scratch.
