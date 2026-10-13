@@ -17,6 +17,11 @@ desktop tests transferred exact data but exceeded the receive-queue gate.
 Multiple modem processes work, but their real-time capacity depends on the host.
 Windows/macOS builds are not a claim of qualified native virtual COM support.
 
+Created by **Don Fanning (JFalcon)**, drawing on years of telephony and VoIP
+research, including Telephreak and collaboration with Champ Clark III (dabeave).
+See [Credits](CREDITS.md) for development assistance, reference implementations
+and research acknowledgments.
+
 ## Build and run
 
 The directory layout retains `lab/asterisk` for the application sources;

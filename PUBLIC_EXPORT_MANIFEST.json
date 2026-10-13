@@ -11,7 +11,7 @@
       "mode": "100644"
     },
     "CREDITS.md": {
-      "sha256": "43545ad8d49f34d9dc93a704fb0a0462929f23326289b76cce27de976e59d835",
+      "sha256": "be31a109f082806d16a7182e4e8f63bb63ad3b0d2b2559a99bb4ae967612246a",
       "mode": "100644"
     },
     "LICENSE": {
@@ -1151,7 +1151,7 @@
       "mode": "100644"
     },
     "README.md": {
-      "sha256": "252a579f2c6335983a43b1e0ef302741c709412e711b0dd9342331e7fbeab862",
+      "sha256": "65fea059d2f29cc3f9ac7497294480bf36a1e4bc182eda700267eeea5731a335",
       "mode": "100644"
     },
     "docs/REDISTRIBUTION.md": {
@@ -1182,5 +1182,14 @@
     "Binary dependency notice inventory and sustained timing qualification pending"
   ],
   "history_included": false,
-  "external_calls_placed": false
+  "external_calls_placed": false,
+  "documentation_updates": [
+    {
+      "source_commit": "c4c9fa4feeb4809b6bc10dc505ee2a5239349999",
+      "files": {
+        "README.md": "packaging/public/README.md",
+        "CREDITS.md": "CREDITS.md"
+      }
+    }
+  ]
 }

@@ -1,40 +1,115 @@
-# Credits and third-party material
+# Credits and acknowledgments
 
-This project aims to be self-contained: every modem signal path, protocol and tool in the shipped program is our own
-code, written from public specifications. Other projects were used to **test against** and to **check interoperability
-details**; where that informed code it is said here. Nothing below is copied into the shipped program unless stated.
+El-Modem was created and is maintained by **Don Fanning (JFalcon;
+[donfanning](https://github.com/donfanning))**, who directs its development,
+interoperability testing and intended behavior.
 
-## Specifications (primary sources)
-ITU-T Recommendations V.8 (11/2000), V.21, V.22, V.22bis, V.32 and V.32bis (the constellation figures), V.34 (02/98),
-V.42 (03/2002 and, for Annex A, the 1993/1996 editions), V.42bis (01/90), V.90, V.92, V.25. Obtained from itu.int
-(free to read); the PDFs are not stored in this repository (`lab/tools/fetch_itu.sh`).
+Development has been assisted by **OpenCode**, **Anthropic Claude**,
+**GitHub Copilot**, and **OpenAI ChatGPT/Codex** for implementation, research,
+review and troubleshooting.
 
-## Code we wrote ourselves (this repository)
-V.21/Bell 103 FSK, V.32/V.32bis (`v32_*.py`), V.34 caller and answerer (`v34_*.py`), V.8 (`v8.py`), V.42 detection and LAPM
-(`v42_lapm.py`), V.42bis (`v42bis.py`), MNP 2-4 class link from V.42 Annex A (`mnp_link.py`), the Hayes AT command
-interpreter and DCE (`modem_dce.py`), the SIP/RTP legs, the serial-over-TCP bridge, tests and tooling.
+These credits acknowledge contributions and influences; they do not establish
+copyright ownership or complete provenance clearance. Original community code
+is offered under GPL-3.0-or-later; third-party material retains its respective
+terms. See [NOTICE](NOTICE).
 
-## Projects used as references, test peers or sources of hints
-* **SpanDSP** (Steve Underwood, LGPL-2.1; submodule `spandsp/`). It is **no longer used at run time**: V.8, V.42, V.42bis and
-  V.22/V.22bis are our own code (`v8.py`, `v42_lapm.py`, `v42bis.py`, `v22.py`). It is kept only as the *independent reference*
-  they are tested against (`test_v8.py`, `test_v42_lapm.py`, `test_v42bis.py`, `test_v22.py`; `spandsp_v22.py` is the test wrapper). Reading its `v42.c` and
-  `v8.c` informed three interoperability details (XID parameter encoding, originator/answerer address octets, V.8 timing margins); the
-  code itself was not copied. Our patches to it (bit-rate-scaled timers, V.42bis negotiation hooks, XID length fix) live in
-  `lab/asterisk/audio-peer/*.patch` and are LGPL like the library.
-* **Smart Link slmodemd** (binary-only DSP, from the D-Modem build). Used only as a black-box test peer in the lab
-  (`lab/slmodem-peer/`); never distributed or linked, no code or tables used.
-* **BinModem** (GPL-3, Rust): its V.32bis implementation was used as a hint source while diagnosing real-line behaviour; nothing copied.
-* **philpem's slmodem reconstruction**: not used.
-* **minimodem** (submodule, a test tool for audio FSK) and **Asterisk** (GPL-2, the lab PBX): lab infrastructure only, not part of the program.
-* **Gough Lui's collection of V.32/V.34 modem sounds** (goughlui.com): real recordings used to check our signals and decoders.
-* **University of Cape Town thesis on V.32 9600 bit/s modems** (D. Lindebaum): the 9600 bit/s constellation labelling cross-check.
-* **voip.ms**: the VoIP provider used for real-line validation.
-* Runtime libraries: Python (PSF), NumPy (BSD-3).
+## Telephreak and earlier work
 
-Corrections and further attributions are welcome: if you recognise your work in something here, open an issue.
+Special thanks to **[Telephreak](https://www.telephreak.org/)** and
+**Champ Clark III (dabeave)**, creator of
+[iWar](https://sourceforge.net/projects/iwar/), for years of shared telephony
+and VoIP research and collaboration with Don.
 
-## Public source preview
+Their earlier 2600/HOPE and DEF CON presentations include:
 
-Reference submodules, lab peers, provider configurations and all recordings
-are excluded from this export. The community license is GPL-3.0-or-later;
-provenance review remains open. See NOTICE and docs/REDISTRIBUTION.md.
+- [Hacking International Networks and System(s) Using VoIP](https://infocondb.org/con/hope/the-last-hope/hacking-international-networks-and-systems-using-voip),
+  The Last HOPE, July 19, 2008 — JFalcon and Da Beave.
+- [AAPL — Automated Analog Telephone Logging](https://infocondb.org/con/def-con/def-con-17/aapl-automated-analog-telephone-logging),
+  DEF CON 17, August 2, 2009 — JFalcon and Da Beave.
+
+This collaboration is part of the project's background; it does not imply
+that iWar code is incorporated or that Champ authored the current DSP.
+
+## Standards and reference software
+
+**ITU-T** modem recommendations and **IETF** protocols provide the project's
+interoperability foundations. Implemented modem families include V.21,
+V.22/V.22bis, V.32/V.32bis and V.34, with V.8 selection and V.42 error control.
+The code also includes V.42bis compression and MNP compatibility. V.90/V.92
+and V.150.1 were research references, not implemented features.
+
+- **Dr. Tony Fisher and Randy Rossi** — Fisher's modem work and Rossi's
+  [FisherSoftModem rewrite](https://github.com/randyrossi/fisher-modem).
+  Our V.32 source comments reference constellation ordering, scramblers,
+  rate words, trellis tables and timing-slip techniques. Rossi's rewrite
+  carries an MIT license; original Fisher material and any incorporated
+  material require their own provenance and notice review.
+- **Steve Underwood and SpanDSP contributors** —
+  [SpanDSP](https://github.com/freeswitch/spandsp) supplied independent
+  comparisons and informed V.8/V.42 interoperability details. Early versions
+  used SpanDSP at runtime; the native modem path now uses El-Modem engines.
+  Reference wrappers and patches retain their applicable upstream licenses.
+- **Smart Link and D-Modem contributors** — the proprietary slmodemd DSP,
+  integrated through [D-Modem](https://github.com/strozfriedberg/D-Modem),
+  served as an independent black-box test peer. The proprietary blob is not
+  distributed with this source preview.
+- **CasualArclamp's [BinModem](https://github.com/CasualArclamp/BinModem)** —
+  V.32-family implementation and diagnostic references.
+- **Fabrice Bellard's [linmodem](https://bellard.org/linmodem/)** — historical
+  software-modem and receiver-architecture references.
+- **Kamal Mostafa and [minimodem](https://github.com/kamalmostafa/minimodem)
+  contributors** — independent FSK testing and reference tooling.
+- **gnomsa's [sip-softmodem](https://github.com/gnomsa/sip-softmodem)**,
+  **[Shadytel's shadysoftmodem](https://github.com/Shadytel/shadysoftmodem)**,
+  and **[Osmocom](https://osmocom.org/projects/retronetworking/wiki/Software_Modems)** —
+  software-modem and transport research references.
+
+Reference use is not a claim that these projects supplied a verified fix or
+that their code is incorporated into El-Modem.
+
+## Recordings and DSP research
+
+**Gough Lui's [V.34 modem recordings](https://goughlui.com/2017/05/30/project-the-large-collection-of-v-34-modem-sounds/)**
+provided synchronized modem conversations for offline startup, training,
+B1 and data-decoding investigations. Recordings and derived fixtures are
+excluded from the public preview; attribution does not grant redistribution
+permission.
+
+Receiver research also drew on **Lindebaum's University of Cape Town work**
+on trellis-coded modulation and **Christopher J. Buehler, Jonas Keating,
+Hayden Metz, Carl J. Nuzman and Hemanth Sampath**, with advisor
+**Dr. Steven A. Tretter**, for the University of Maryland report published
+by Texas Instruments as
+[SPRA159](https://www.ti.com/lit/an/spra159/spra159.pdf).
+
+## Runtime and development infrastructure
+
+Thanks to the contributors and maintainers of:
+
+- **CPython/Python Software Foundation** and **NumPy** for the numerical runtime.
+- **Numba, llvmlite and LLVM** for compiled trellis acceleration.
+- **Textual and Rich** for the terminal dashboard and dialogs.
+- **PyInstaller**, **Debian** and **GCC** for packaging and runtime builds.
+- **Corey Minyard and [serialsim](https://github.com/cminyard/serialsim)**,
+  and Linux serial-core contributors, for the separate Linux virtual-serial
+  prerequisite. Our driver patch does not replace credit for the underlying driver.
+- **Asterisk**, **pppd**, **FFmpeg**, **Docker**, **Git**, **GitHub Actions**
+  and **Gitleaks** for lab infrastructure, protocol testing, codec verification,
+  development and publication checks.
+
+Binary releases require a version-specific dependency license and notice
+inventory; this list is not a substitute for it.
+
+## Interoperability environments
+
+Special thanks to **[dialup.world](https://dialup.world/)** for its dial-up
+modem service, which provided a real-world target for modem, LAPM and PPP
+interoperability testing.
+
+Services operated by **Astound** and **NIST ACTS**, together
+with **voip.ms** and other SIP routes, provided real-world interoperability
+conditions. This acknowledgment does not imply authorship, endorsement or
+certification. Private PBX configuration, credentials and call records remain
+outside the public source preview.
+
+Corrections and additional attributable contributions are welcome.
