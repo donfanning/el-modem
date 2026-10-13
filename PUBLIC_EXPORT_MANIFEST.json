@@ -1258,10 +1258,6 @@
       "sha256": "5e8b54b83eb78fca848f220a140dfa95fb4083ff9c8773ea5499bc53119cae2b",
       "mode": "100644"
     },
-    "packaging/prepare_public.py": {
-      "sha256": "d8eaafcd91c2967834066a891a2d0d724a7e6783e52dfd10d77f0afb215549ab",
-      "mode": "100644"
-    },
     "packaging/serial/COPYING": {
       "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
       "mode": "100644"
@@ -1328,6 +1324,12 @@
       ],
       "reason": "native byte processing trace and complete driver/docs archive",
       "private_commit": "e3a1d4c"
+    },
+    {
+      "paths": [
+        "packaging/prepare_public.py"
+      ],
+      "reason": "remove private-only exporter; native build tooling does not need it"
     }
   ]
 }
