@@ -190,8 +190,13 @@ class V34AnswerModem(V42Layer):
             return [0] * count
         return np.clip(np.round(self.answerer.tx(count)), -32768, 32767).astype(int).tolist()
 
-    def note_concealed(self, n: int) -> None:
+    def note_concealed_rx(self, n: int) -> None:
+        """Mark the next PCM chunk as transport concealment, like the caller."""
         self._conceal_pending = int(n)
+
+    def note_concealed(self, n: int) -> None:
+        # Preserve existing direct callers of the older answerer-only name.
+        self.note_concealed_rx(n)
 
     def feed_pcm(self, pcm: bytes) -> bytes:
         x = np.frombuffer(pcm, dtype="<i2")
@@ -215,6 +220,8 @@ class V34AnswerModem(V42Layer):
                 self._fail("V.8 failed")
             return b""
         if self._phase == "p2":
+            if concealed and concealed == len(x):
+                self.answerer.note_concealed(self.answerer.rx_t,len(x))
             self.answerer.rx(x.astype(float))
             self._sync_events()
             epoch = getattr(self.answerer, '_rate_epoch', 0)

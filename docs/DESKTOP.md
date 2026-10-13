@@ -104,5 +104,22 @@ Rebuilding produces a new artifact that still needs its own qualification.
 `docker-bookworm` remains the stock-library comparison. The experimental
 `docker-bookworm-optimized` PGO-only recipe lacks Debian's built-in module set,
 failed the frozen self-test, and did not improve the microbenchmark. Use the
-LTO recipe for the desktop candidate. Sustained, drift and recovery checks with
-the TUI attached remain open; these short gates do not qualify a loaded host.
+LTO recipe for the desktop candidate. The locally promoted Linux executable
+has SHA-256 `24aa87bd207cddc8e92e0d284c7e0fa420d4c5edfb0886395a816337cba90435`.
+It passes actual TUI settings/terminal checks, ten-minute exact transfers and
+real-time gates in both roles, 100 ppm drift for 120 seconds, and local recovery
+probes against an independent peer. These results do not qualify a loaded host,
+larger drift or RTP packet loss. Automatic recovery has one retained failed
+seed and one passing seed. Detailed qualification evidence remains in the
+private development handoff. A rebuilt executable must qualify again; the hash identifies the tested bytes.
+
+The current Linux x86-64 artifact declares GLIBC symbols through version 2.36.
+Its bundled Pillow extension also declares a host dependency on `libxcb.so.1`.
+The modem self-test passes without that library, but every optional UI/dependency
+path has not been qualified without it. Linux binary portability beyond the
+qualified environment remains subject to testing.
+
+Before extracting its bundled libraries, the Linux executable's bootloader
+requires the host to provide `libc.so.6`, `libdl.so.2`, `libpthread.so.0` and
+`libz.so.1`. A bundled zlib copy cannot satisfy that startup requirement.
+The unchanged artifact passes its 22 self-test gates in clean Debian Bookworm.

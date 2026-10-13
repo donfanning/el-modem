@@ -296,6 +296,8 @@ class V34Caller:
     # -- receive ----------------------------------------------------------------------------------------------
     def note_concealed(self, start: int, n: int) -> None:
         """The receiver replaced ``n`` lost samples starting at ``start`` (this caller's rx_t clock) with concealment audio."""
+        from v34_transport import note_concealed
+        note_concealed(self,start,n)
         self._concealed.append((int(start), int(n)))
         if len(self._concealed) > 256:
             del self._concealed[:-256]

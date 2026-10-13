@@ -9,15 +9,19 @@ import time
 _PACKAGING=Path(__file__).resolve().parents[2]/'packaging'
 if _PACKAGING.is_dir(): sys.path.insert(0,str(_PACKAGING))
 
-def worker(path,fd):
+EXPERIMENT_ENV=('V34_GAP_FEEDBACK','V34_EQUALIZER_BACKEND')   # off unless set; observe|hold of the concealed-sample feedback guard (lab experiment)
+
+def worker(path,fd=None):
     import signal
     signal.signal(signal.SIGTERM,lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
     from native_runtime import NATIVE_ENV
     from modem_settings import ENV
     document=json.loads(Path(path).read_text()); spec=document['spec']; directory=Path(document['directory'])
+    experiment={key:os.environ[key] for key in EXPERIMENT_ENV if key in os.environ}   # deliberate opt-in research switches survive the scrub
     for key in list(os.environ):
         if key.startswith(('V34_','MODEM_','EL_MODEM_')): del os.environ[key]
     os.environ.update(NATIVE_ENV)
+    os.environ.update(experiment)
     os.environ['EL_MODEM_FACTORY_NATIVE']='1'
     boot={'instance.name':'name','serial.backend':'serial','serial.tcp_port':'serial_port',
           'sip.bind_host':'sip_host','sip.bind_port':'sip_port','sip.media_host':'media_host','sip.media_port':'media_port'}
@@ -38,7 +42,13 @@ def worker(path,fd):
     link=str(directory/'serial')
     if Path(link).exists() or Path(link).is_symlink():
         raise ValueError(f'refusing to replace existing serial path: {link}')
-    control=WorkerControl(fd)
+    if fd is None:
+        import socket
+        endpoint=document['control']
+        connection=socket.create_connection(('127.0.0.1',endpoint['port']),timeout=10)
+        connection.sendall(endpoint['token'].encode())
+        control=WorkerControl(connection)
+    else:control=WorkerControl(fd)
     serial=None
     def create_serial():
         nonlocal serial
@@ -63,8 +73,12 @@ def worker(path,fd):
         if not control.channel.closed: control.close()
 
 def main():
+    # CTRL_BREAK permits orderly cleanup of Windows process groups.
+    import signal
+    if hasattr(signal,'SIGBREAK'):
+        signal.signal(signal.SIGBREAK,lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
     if '--worker' in sys.argv:
-        p=argparse.ArgumentParser();p.add_argument('--worker');p.add_argument('--control-fd',type=int,required=True)
+        p=argparse.ArgumentParser();p.add_argument('--worker');p.add_argument('--control-fd',type=int)
         a=p.parse_args();worker(a.worker,a.control_fd);return
     supervisor_flags={'--tui','--headless','--config','--modems','--serial-backend','--help','-h'}
     if len(sys.argv)>1 and not any(x.split('=')[0] in supervisor_flags for x in sys.argv[1:]):
@@ -73,7 +87,8 @@ def main():
     p=argparse.ArgumentParser(prog='el-modem',description='EL-MODEM multi-modem dashboard and native DSP runtime')
     ui=p.add_mutually_exclusive_group();ui.add_argument('--tui',action='store_true');ui.add_argument('--headless',action='store_true')
     p.add_argument('--config',default=str(Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'el-modem'/'config.json'))
-    p.add_argument('--modems',type=int);p.add_argument('--serial-backend',choices=('driver','pty','tcp'),default='driver')
+    from modem_serial import default_backend
+    p.add_argument('--modems',type=int);p.add_argument('--serial-backend',choices=('driver','pty','tcp'),default=default_backend())
     a=p.parse_args()
     if a.modems is not None and a.modems<1: p.error('--modems must be positive')
     if not a.headless and not sys.stdin.isatty(): p.error('interactive terminal required; use --headless')

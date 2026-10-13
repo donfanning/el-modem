@@ -35,7 +35,7 @@ class Channel:
 
 class WorkerControl:
     def __init__(self, fd):
-        self.channel=Channel(socket.socket(fileno=fd))
+        self.channel=Channel(fd if isinstance(fd,socket.socket) else socket.socket(fileno=fd))
         self.next_status=0.; self.terminal=None; self.terminal_backend=None; self.pending=bytearray()
         self.rd_until=0.; self.sd_until=0.; self.counts=(0,0)
     def poll(self, dce, ser, registration, session):
@@ -44,7 +44,8 @@ class WorkerControl:
         for message in self.channel.receive():
             try:
                 action=message['action']
-                if action=='settings': value=snapshot(dce)
+                if action=='shutdown':raise KeyboardInterrupt()
+                elif action=='settings': value=snapshot(dce)
                 elif action=='set': value=set_value(dce,message['name'],message['value'])
                 elif action=='save':
                     dce._store_profile(0); value='saved'
@@ -68,10 +69,10 @@ class WorkerControl:
         if self.terminal is not None:
             if self.pending:
                 try:
-                    n=os.write(self.terminal,self.pending); del self.pending[:n]
+                    n=self.terminal.send(self.pending) if isinstance(self.terminal,socket.socket) else os.write(self.terminal,self.pending); del self.pending[:n]
                 except BlockingIOError: pass
             try:
-                data=os.read(self.terminal,4096)
+                data=self.terminal.recv(4096) if isinstance(self.terminal,socket.socket) else os.read(self.terminal,4096)
                 if data: self.channel.send(dict(event='terminal',hex=data.hex()))
             except BlockingIOError: pass
         if now>=self.next_status and not self.channel.output:
@@ -109,6 +110,6 @@ class WorkerControl:
             try:
                 release=getattr(self.terminal_backend,'release_terminal',None)
                 if release is not None: release(self.terminal)
-            finally: os.close(self.terminal)
+            finally: (self.terminal.close() if isinstance(self.terminal,socket.socket) else os.close(self.terminal))
         self.terminal=None; self.terminal_backend=None; self.pending.clear()
     def close(self): self.close_terminal(); self.channel.close()

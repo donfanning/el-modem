@@ -12,7 +12,10 @@ def update_data_baseband(engine, receiver, source_offset):
         engine._rx=engine._rx[origin:]
     start=max(0,source_offset-origin)
     local_origin=max(0,origin-source_offset)
+    receiver._pcm_source_offset=source_offset
     receiver._z=receiver.update_baseband(engine._rx[start:],origin=local_origin)
+    guard=getattr(getattr(getattr(engine,'_p4rcv',None),'eq',None),'_transport_guard',None)
+    if guard is not None:guard.prune(source_offset+local_origin)
 
 
 def trim_data_pcm(engine, eq, source_offset, *, tracking=False):

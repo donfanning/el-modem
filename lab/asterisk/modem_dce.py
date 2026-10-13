@@ -203,6 +203,14 @@ class _V22Receiver:
     def feed_pcm(self, pcm: bytes) -> bytes:
         return self._modem.feed_pcm(pcm)
 
+    def note_concealed_rx(self, n: int) -> None:
+        note = getattr(self._modem, 'note_concealed_rx', None)
+        if note is not None:note(n)
+
+    def note_transport_discontinuity_rx(self, n: int = 0) -> None:
+        note = getattr(self._modem, 'note_transport_discontinuity_rx', None)
+        if note is not None:note(n)
+
 
 class OnlineAudioSession:
     """Bridges a connected call's RTP media to a Bell 103 modem pair.
@@ -619,8 +627,11 @@ class OnlineAudioSession:
                 if negotiated is not None:stats['negotiated']=asdict(negotiated)
                 stats['rx_qualification']=getattr(core,'rx_qualification',None)
                 eq=getattr(getattr(core,'_p4rcv',None),'eq',None)
+                if eq is not None:stats['equalizer_backend']=getattr(eq,'arithmetic_backend','legacy')
                 guard=getattr(eq,'_input_guard',None)
                 if guard is not None:stats['v34_input_power_guard']=guard.report()
+                transport=getattr(eq,'_transport_guard',None)
+                if transport is not None:stats['v34_gap_feedback']=transport.report()
                 phase3=getattr(core,'_p3',None)
                 R=getattr(core,'_p4R',None) or (phase3.get('R') if isinstance(phase3,dict) else phase3)
                 stats['streaming_storage']=dict(pcm_samples=len(core._rx),pcm_origin=getattr(core,'_rx_origin',0),
@@ -2862,6 +2873,8 @@ def main(serial_backend=None, control=None) -> None:
     if os.environ.get('V34_DATA_TRACE'):
         from v34_data_trace import install as install_data_trace
         install_data_trace()
+    from v34_equalizer_backend import warmup as warm_equalizer_backend
+    warm_equalizer_backend()  # Fail/prepare explicit opt-in before opening DTE or media.
     if os.environ.get('V34_NATIVE_FEEDBACK')=='1':
         from v34_feedback_native import warmup as warm_feedback
         warm_feedback()

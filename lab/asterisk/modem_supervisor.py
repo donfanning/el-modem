@@ -7,7 +7,8 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from modem_serial import default_backend
 from modem_control import Channel
 from modem_storage import atomic_json
 
@@ -19,7 +20,7 @@ class ModemSpec:
     sip_port: int = 5062
     media_host: str = '127.0.0.1'
     media_port: int = 16000
-    serial: str = 'driver'
+    serial: str = field(default_factory=default_backend)
     serial_port: int = 9100
     enabled: bool = True
 
@@ -90,14 +91,21 @@ class Supervisor:
                 if key in ports: raise ValueError('colliding serial ports')
                 ports.add(key)
     def acquire(self):
-        import fcntl
         self.path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-        self.lock=open(str(self.path)+'.lock','a')
-        try: fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        self.lock=open(str(self.path)+'.lock','a+b')
+        try:
+            if sys.platform=='win32':
+                import msvcrt
+                self.lock.seek(0);self.lock.write(b'0');self.lock.flush();self.lock.seek(0)
+                msvcrt.locking(self.lock.fileno(),msvcrt.LK_NBLCK,1)
+            else:
+                import fcntl
+                fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except OSError:
             self.lock.close();self.lock=None; raise ValueError('configuration is already owned by another supervisor')
     def save(self): self.validate(); atomic_json(self.path,dict(schema=1,modems=[asdict(s) for s in self.specs]))
-    def add(self, name=None, serial='driver'):
+    def add(self, name=None, serial=None):
+        serial=serial or default_backend()
         taken={s.id for s in self.specs}; number=1
         while f'modem-{number}' in taken or (self.root/f'modem-{number}').exists(): number+=1
         spec=ModemSpec(f'modem-{number}',name or f'Modem {number}',sip_port=5060+number*2,
@@ -120,17 +128,51 @@ class Supervisor:
             with socket.socket(socket.AF_INET,kind) as probe: probe.bind((host,port))
         if spec.serial=='driver' and not os.access('/dev/ttyPipe',os.R_OK|os.W_OK):
             raise ValueError('serial driver unavailable: install the documented serialsim prerequisite and device permissions, or explicitly choose PTY/TCP')
-        left,right=socket.socketpair()
-        atomic_json(directory/'worker.json',dict(spec=asdict(spec),directory=str(directory.resolve())))
+        document=dict(spec=asdict(spec),directory=str(directory.resolve()))
         argv=([sys.executable] if getattr(sys,'frozen',False) else
               [sys.executable,str(Path(__file__).with_name('el_modem.py'))])
+        argv+=['--worker',str((directory/'worker.json').resolve())]
         log=open(directory/'worker.log','ab',buffering=0)
+        left=right=listener=proc=None
         try:
-            proc=subprocess.Popen(argv+['--worker',str((directory/'worker.json').resolve()),'--control-fd',str(right.fileno())],
-                                  pass_fds=(right.fileno(),),stdout=log,stderr=log)
+            if sys.platform=='win32':
+                import secrets
+                import hmac
+                listener=socket.socket();listener.bind(('127.0.0.1',0));listener.listen(4);listener.settimeout(30)
+                token=secrets.token_hex(32)
+                document['control']=dict(port=listener.getsockname()[1],token=token)
+                atomic_json(directory/'worker.json',document)
+                proc=subprocess.Popen(argv,stdout=log,stderr=log)
+                deadline=time.monotonic()+30
+                while time.monotonic()<deadline:
+                    listener.settimeout(max(.01,deadline-time.monotonic()))
+                    connection,_=listener.accept();connection.settimeout(min(2,max(.01,deadline-time.monotonic())))
+                    auth=bytearray()
+                    try:
+                        while len(auth)<64:
+                            block=connection.recv(64-len(auth))
+                            if not block:break
+                            auth.extend(block)
+                        if hmac.compare_digest(bytes(auth),token.encode()):left=connection;break
+                    except OSError:pass
+                    connection.close()
+                if left is None:raise TimeoutError('worker control authentication timed out')
+            else:
+                left,right=socket.socketpair()
+                atomic_json(directory/'worker.json',document)
+                proc=subprocess.Popen(argv+['--control-fd',str(right.fileno())],
+                                      pass_fds=(right.fileno(),),stdout=log,stderr=log)
         except BaseException:
-            left.close(); raise
-        finally: right.close();log.close()
+            if left is not None:left.close()
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                try:proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:proc.kill();proc.wait()
+            raise
+        finally:
+            if right is not None:right.close()
+            if listener is not None:listener.close()
+            log.close()
         self.workers[ident]=(proc,Channel(left)); self.states[ident]=dict(state='starting',lights={},owner='none')
     def request(self,ident,action,**fields):
         if ident not in self.workers: raise ValueError('modem is not running')
@@ -156,9 +198,15 @@ class Supervisor:
         if item:
             proc,channel=item
             if proc.poll() is None:
-                proc.terminate()
-                try: proc.wait(timeout=8)
-                except subprocess.TimeoutExpired: proc.kill();proc.wait()
+                # Windows terminate() cannot run Python cleanup handlers.
+                # Ask the DCE loop to hang up/archive and exit first on every OS.
+                try:
+                    channel.send(dict(action='shutdown'));channel.flush()
+                    proc.wait(timeout=8)
+                except (OSError,BufferError,subprocess.TimeoutExpired):
+                    proc.terminate()
+                    try:proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:proc.kill();proc.wait()
             channel.close()
             serial_link=self.root/ident/'serial'
             if serial_link.is_symlink():serial_link.unlink()

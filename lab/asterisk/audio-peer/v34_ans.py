@@ -313,6 +313,10 @@ class V34Answerer:
             need -= limit
         return np.concatenate(out) if out else np.zeros(0)
 
+    def note_concealed(self, start: int, n: int) -> None:
+        from v34_transport import note_concealed
+        note_concealed(self,start,n)
+
     def _freeze_hold(self) -> None:
         """Hold or release equaliser adaptation as the freeze guard asks (the equaliser's own freeze: taps, carrier and timing coast)."""
         p4 = getattr(self, '_p4rcv', None)

@@ -14,6 +14,7 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 import v34_tx as tx
+from v34_transport import FeedbackValidity
 
 FS = 8000
 
@@ -728,6 +729,12 @@ class SymbolEq:
         self.freq = 0.0
         self.mu, self.kp, self.ki = mu, kp, ki
         self.adapt = True
+        from v34_equalizer_backend import selected
+        arithmetic=selected()
+        self._rust_interp=arithmetic.interpolate if arithmetic is not None else None
+        self._rust_feedback=arithmetic.feedback if arithmetic is not None else None
+        self._rust_centroid=arithmetic.centroid if arithmetic is not None else None
+        self.arithmetic_backend='rust' if arithmetic is not None else 'legacy'
         # Clock correction can require a fresh sinc window every symbol.
         # Preserve the NumPy reference/default; warm this opt-in in the DCE.
         self._native_interp = False
@@ -778,6 +785,8 @@ class SymbolEq:
         self._tj_dev = 0.0
         self._g_origin = 0
         self._g_zlen = -1
+        gap_mode=os.environ.get('V34_GAP_FEEDBACK','0')
+        self._transport_guard=FeedbackValidity(gap_mode) if gap_mode!='0' else None
 
     GRID = 128                                            # symbols interpolated per batch
     MARGIN = 6                                            # spare T/2 samples either side for slips
@@ -808,7 +817,8 @@ class SymbolEq:
             else:
                 self._grid, self._dgrid = interp_pair(R._z, pos-origin)
         else:
-            self._grid = interp(R._z, pos-origin)
+            self._grid = (self._rust_interp(R._z,pos-origin) if self._rust_interp is not None
+                          else interp(R._z, pos-origin))
             self._dgrid = None
         self._g_traj = trajectory
         self._g_vel = self.vel if trajectory else 0.0
@@ -880,6 +890,8 @@ class SymbolEq:
         return grid + (self._res + deviation) * derivative
 
     def _interpolate(self, positions):
+        if self._rust_interp is not None:
+            return self._rust_interp(self.R._z,positions)
         if getattr(self, '_native_interp', False):
             from v34_interp_native import interpolate
             return interpolate(self.R._z, positions)
@@ -987,14 +999,24 @@ class SymbolEq:
                     self._gradient_rows = []
             elif self.adapt and self.k % 16 == 0:
                 self._input_guard.observe_training(power)
-        tracking = self.adapt and not held
+        transport=getattr(self,'_transport_guard',None)
+        tainted=transport is not None and transport.tainted(self)
+        before=(self.h.copy(),self.phase,self.freq,self.vel) if tainted else None
+        hold_carrier=bool(tainted and transport.hold_carrier)       # taps + carrier loop
+        hold_timing=bool(tainted and transport.hold_timing)         # sampling-window recovery
+        transport_held=hold_carrier or hold_timing
+        if hold_timing:self._gradient_rows=[]
+        tracking = self.adapt and not held and not hold_carrier
+        tracking_timing = self.adapt and not held and not hold_timing
         y = complex(w @ self.h)
         yr = y * complex(math.cos(-self.phase), math.sin(-self.phase))
         d = desired if desired is not None else decide(yr)
-        if tracking and self.timing_mode == 'gradient' and self.k % 2 == 0:
+        if tracking_timing and self.timing_mode == 'gradient' and self.k % 2 == 0:
             self._gradient_timing(yr,d)
         if tracking and self.adapt_nlms:
-            if self._native_feedback:
+            if self._rust_feedback is not None:
+                self.phase,self.freq=self._rust_feedback(self.h,w,yr,d,self.mu,self.kp,self.ki,self.phase,self.freq)
+            elif self._native_feedback:
                 from v34_feedback_native import feedback
                 self.phase,self.freq=feedback(self.h,w,yr,d,self.mu,self.kp,self.ki,self.phase,self.freq)
             else:
@@ -1007,7 +1029,7 @@ class SymbolEq:
                     self.phase += self.kp * perr + self.freq
         elif not tracking:
             self.phase += self.freq                          # keep rotating at the learned carrier offset
-        if tracking:
+        if tracking_timing:
             # Timing recovery must keep running even when the NLMS tap update is frozen, otherwise a
             # sampling-clock offset drifts the window off the symbol over a long 4-point run.
             self._n += 1
@@ -1020,6 +1042,7 @@ class SymbolEq:
         # even when feedback and tap adaptation are frozen.
         self.dt += self.vel
         self.dt += self.kff * (self.freq * R.baud / (2 * math.pi)) / R.fc * R.spl
+        if before is not None:transport.record(before,self,transport_held)
         self.k += 1
         return yr
 
@@ -1069,7 +1092,9 @@ class SymbolEq:
         """Timing loop from the energy centroid of the taps (in T/2 samples, 0 = centre): the sampling window follows
         the signal (proportional + integral action, so a constant clock offset becomes a constant velocity); large
         excursions are still handled by shifting the taps by whole half-symbols."""
-        if self._native_feedback:
+        if self._rust_centroid is not None:
+            c=self._rust_centroid(self.h,self.span)
+        elif self._native_feedback:
             from v34_feedback_native import centroid
             c=centroid(self.h,self.span)
         else:

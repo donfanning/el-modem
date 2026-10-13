@@ -226,6 +226,20 @@ class V8Chain:
                         engine_seconds=ended-acquired,
                         engine_cpu_seconds=cpu_ended-cpu_acquired)
 
+    def _note_receive_transport(self, method: str, samples: int) -> None:
+        # Notification belongs to the current receive chunk/selected engine.
+        # Do not retain V.8-era marks for an engine selected on a later chunk.
+        with self._rx_lock:
+            with self._lock:
+                note = getattr(self.engine, method, None)
+                if note is not None:note(samples)
+
+    def note_concealed_rx(self, n: int) -> None:
+        self._note_receive_transport('note_concealed_rx', n)
+
+    def note_transport_discontinuity_rx(self, n: int = 0) -> None:
+        self._note_receive_transport('note_transport_discontinuity_rx', n)
+
     def feed_pcm(self, pcm: bytes) -> bytes:
         # Keep receive and shutdown serialized, but do not hold the dispatch
         # lock through V.34's DSP. Match the selected engine's direct-DCE

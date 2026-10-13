@@ -1,13 +1,20 @@
 """Driver-backed modem serial endpoint and explicit legacy adapters."""
 import array
-import fcntl
 import os
 import select
 import socket
-import termios
 import time
-import tty
+import sys
+if os.name == 'posix':
+    import fcntl
+    import termios
+    import tty
 from serial_port import PtySerial, TcpSerial
+
+
+def default_backend():
+    return 'driver' if sys.platform.startswith('linux') else 'tcp' if sys.platform=='win32' else 'pty'
+
 
 # Pinned serialsim UAPI plus EL-MODEM prerequisite-driver open-count extension.
 ALLOC=0x5391
@@ -18,6 +25,7 @@ GET_OPEN=0x800454ec
 
 class DriverSerial:
     def __init__(self, link):
+        if not sys.platform.startswith("linux"):raise ValueError("serialsim driver backend requires Linux; choose PTY/TCP")
         self.allocator=os.open('/dev/ttyPipe',os.O_RDWR|os.O_CLOEXEC)
         try:
             self.number=fcntl.ioctl(self.allocator,ALLOC,0)
@@ -114,6 +122,6 @@ class LegacySerial:
                 os.close(fd)
                 raise
         host,port=self.backend.name[6:].rsplit(':',1)
-        conn=socket.create_connection((host,int(port))); conn.setblocking(False); return conn.detach()
+        conn=socket.create_connection((host,int(port))); conn.setblocking(False); return conn
     def release_terminal(self,fd):
         if self.kind=='pty': fcntl.ioctl(fd,termios.TIOCNXCL)

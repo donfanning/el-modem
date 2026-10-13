@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_commit": "e769e8a10f235a78d5c4f6a41ade9bf0dfab8284",
+  "source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
   "files": {
     ".gitattributes": {
       "sha256": "b39d7782634d2a332265d55f12444cb42037cf88151abb95437e3a8005a45477",
@@ -11,7 +11,7 @@
       "mode": "100644"
     },
     "CREDITS.md": {
-      "sha256": "bc4551847c0bcf58eb338ae8269f1ea00924b64d882960032bdf4392a31a21a7",
+      "sha256": "8940135e61be559e28166fab438b5006593d505325e7e9c87eb79b090dc9b822",
       "mode": "100644"
     },
     "LICENSE": {
@@ -27,7 +27,7 @@
       "mode": "100644"
     },
     "docs/DESKTOP.md": {
-      "sha256": "e750553d326684b7dc5ce3e587e595535b86a7d82c393eb1310bed3abed0af0d",
+      "sha256": "5ca94644f3a5997f2e69da3c34fdaec32e2234af0ad55158efe3617d1586f6fe",
       "mode": "100644"
     },
     "docs/SERIAL.md": {
@@ -47,7 +47,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/autochain.py": {
-      "sha256": "4640281c70b4cecd49283fcbd0f4396a633774295700599a6725147361c6db1a",
+      "sha256": "ded510fd1676c34165a06b083b7356b8ef886f2ef3609130b7759b5060608674",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/autodetect.py": {
@@ -366,6 +366,10 @@
       "sha256": "618e5ad503980b15633ad71ff314ff8304dd047254d21584687fbaa4e0b4dcbf",
       "mode": "100644"
     },
+    "lab/asterisk/audio-peer/test_v34_equalizer_backend.py": {
+      "sha256": "886b744468895ac02e20126a4bd72589aafb6f6c6ba0d0e45f64c0f054cf2812",
+      "mode": "100644"
+    },
     "lab/asterisk/audio-peer/test_v34_false_e.py": {
       "sha256": "5adb55bfda93814b811588e7835209c20c9a7ba09da9ae82d0868040d6fa02f9",
       "mode": "100644"
@@ -546,6 +550,10 @@
       "sha256": "1e517c3e348032342b2bf86e22ae013c37dfa6814a7b5cba08ccfab966d4fbee",
       "mode": "100644"
     },
+    "lab/asterisk/audio-peer/test_v34_transport_feedback.py": {
+      "sha256": "d872e9b7d06b23bf8a1d781ced22c668b8dcc14c634b7389559f052a9a58a13d",
+      "mode": "100644"
+    },
     "lab/asterisk/audio-peer/test_v34_trellis_native.py": {
       "sha256": "27a34433203d1742908c0f393eac9fc3e51f6be880e267c6e51d3c5f43397c08",
       "mode": "100644"
@@ -707,11 +715,11 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_ans.py": {
-      "sha256": "36868c16a7fe2fb5a0a3e795158ca908b25863eca438527017b1b151b49b17b4",
+      "sha256": "3be92f06463fd23ccd1c85a1ae42dd9f980953d5cc3c078ad260c1db42503119",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_answer_modem.py": {
-      "sha256": "836725ffe4272c0c1d39a4e84eee49ba2d74db0ae800261ffc04842de7caf490",
+      "sha256": "02d73017d46980563d66ba9d69cd8d1fc5809dc548e3188ec944731b58270563",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_audio_loss_probe.py": {
@@ -727,7 +735,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_call.py": {
-      "sha256": "1cab476a209e9a49d81351ee27b4df0f11513864dfe65a6deba34b83ab088abf",
+      "sha256": "6deb65343a2117569517a314cf7ebc9ce637ed425a3b28429fb9d97d0658ca9e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_channel_controls.py": {
@@ -756,6 +764,10 @@
     },
     "lab/asterisk/audio-peer/v34_duplex_model.py": {
       "sha256": "97e9037a05925a32aef332132914b7db56f18b3ddee6a87022708968ece941be",
+      "mode": "100644"
+    },
+    "lab/asterisk/audio-peer/v34_equalizer_backend.py": {
+      "sha256": "45c1d63c51dcb765906d721d5c3bd08019d6763c0286894ad8be8320dd7458d1",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_feedback_native.py": {
@@ -827,7 +839,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_quality.py": {
-      "sha256": "a6425a1c4e5745889b7770e28f3a18098cab462aee2ac48c7de9d11a98d98b63",
+      "sha256": "75dbc97cdc3c3d45b2ef0173b06f03bc1a08ab55d5851718bae4e2611239a512",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_rate_change.py": {
@@ -843,7 +855,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_receive.py": {
-      "sha256": "902ca3df6cf43eaa2057c739462e9ec71c9f5114d87882973c301165c1474658",
+      "sha256": "2ea82bbe658cd824f9c8828a34864aad9694e9d1779c053a6526571bc96a6a59",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_receive_dsp.py": {
@@ -855,7 +867,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_rx.py": {
-      "sha256": "83c6c0aec7717308e05eaebadd744f1a1443d5ed6aa5631cea31b84c70d8fa21",
+      "sha256": "96974c15575153d2aa96682991a72e475fa9c264cec905a3a9b63ef78c1d9e4e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_stream_impair.py": {
@@ -863,11 +875,15 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_streaming.py": {
-      "sha256": "20d820a8cda2f8929c637d51f1cfc97894b3abaa6e22b66ac8a4f505dc1c3b85",
+      "sha256": "f6b449fd3b0f37138d0117eb17ab46c9478f2fc41f484ba18932f3598d96c35d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_sync_audit.py": {
       "sha256": "bc29afd83e30265c2d6a5beadbd9de735d41580b48622a4340e52ee7829179c8",
+      "mode": "100644"
+    },
+    "lab/asterisk/audio-peer/v34_transport.py": {
+      "sha256": "385783e7eb2689320faea2e109bc763fe982fdeaa52fe7279d8264f07a6815ae",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_trellis_native.py": {
@@ -927,7 +943,7 @@
       "mode": "100644"
     },
     "lab/asterisk/el_modem.py": {
-      "sha256": "3a0f3b23d42362fddfac062c6fa0a2c73bed570e9b62de9e7ac41bad9f150ac5",
+      "sha256": "4e45c8263b4925bee06839d96c58a3a27ed5892f084e1d82079d79e9ba8382f2",
       "mode": "100644"
     },
     "lab/asterisk/host_bridge_e2e.py": {
@@ -935,11 +951,11 @@
       "mode": "100755"
     },
     "lab/asterisk/modem_control.py": {
-      "sha256": "e79fbe9f0d4f12aa32b5d4a0e132bfc7444969d24b9293d0655d257a515d1971",
+      "sha256": "e13dd22beba3e73b7721067ed46eb5619ad3e4f4518ca3bf60c30baa1cf57b25",
       "mode": "100644"
     },
     "lab/asterisk/modem_dce.py": {
-      "sha256": "50eddfd1dbb1225d37269ad911618ca9221ed27a73adf46c7700e1709155d7d4",
+      "sha256": "083960377d2490d3ce4f53805d945de3169ddca45539769498f995b4acbfaddc",
       "mode": "100644"
     },
     "lab/asterisk/modem_selftest.py": {
@@ -947,7 +963,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_serial.py": {
-      "sha256": "71a618db54a1e3d06755c8c30a91e384197c1bce5729aa8c24ec373202632051",
+      "sha256": "5cc1bfa9b83af3d75fe71a4c2dcbd0315b91c04d26d922c536283afe7f5eea77",
       "mode": "100644"
     },
     "lab/asterisk/modem_settings.py": {
@@ -955,11 +971,11 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_storage.py": {
-      "sha256": "3fa1008482c96281629ab0bd35cea32e6b025fa2cdd14c542ba819a2d670aaac",
+      "sha256": "3d912e30eef6828fe11d41946332c4f52c60d52b3a5e0ae6a0ff306761d996ff",
       "mode": "100644"
     },
     "lab/asterisk/modem_supervisor.py": {
-      "sha256": "eeea0cd4a584174bffe9196535c6baebb924c13383fe8aab049f480140c52168",
+      "sha256": "8c35e98ffae2193340d469f3f347254a2adb47aaf5dd5263a9318e86d11aac4b",
       "mode": "100644"
     },
     "lab/asterisk/modem_tui.py": {
@@ -1026,6 +1042,10 @@
       "sha256": "05527445913b19b9b91d8daab45c283380dd3d53d370e230c94674590bda559a",
       "mode": "100644"
     },
+    "lab/asterisk/test_modem_portability.py": {
+      "sha256": "cab76281366d92d91259ca307ccc52c8a7802f33eae7eba1bfe5ebd13b025f35",
+      "mode": "100644"
+    },
     "lab/asterisk/test_modem_selftest.py": {
       "sha256": "d45d703019facb1144ea7eadcd13b5a47532d7c351b3f8020a1c2eb131b13912",
       "mode": "100644"
@@ -1035,7 +1055,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_startup.py": {
-      "sha256": "b3594b41297d025641f3de7a35fd752a4632c19ac740b1622bd2ff0d7470e754",
+      "sha256": "268171ffe89e49b5a408ec4f157ebaf01aab2ba1459f8a8e55825db8881c7985",
       "mode": "100644"
     },
     "lab/asterisk/test_online_control.py": {
@@ -1056,6 +1076,10 @@
     },
     "lab/asterisk/test_runtime_timing.py": {
       "sha256": "9c8191e72b5a937a08ed321124932e92e9c18577a0405c798a46ddb74bab9632",
+      "mode": "100644"
+    },
+    "lab/asterisk/test_rx_transport_notifications.py": {
+      "sha256": "dc716c3e86c5b2a10427abb74caa702158152229cd7f98384a1a31c9ed59640e",
       "mode": "100644"
     },
     "lab/asterisk/test_serial_bridge.py": {
@@ -1106,9 +1130,33 @@
       "sha256": "1c50735c0a13b7973dbd30593fb6d89557b8f2c4c79c78f7f9e00af09c3a6e0f",
       "mode": "100644"
     },
+    "packaging/assemble_candidate.py": {
+      "sha256": "57c4de527594b822f0650415bd80d24e597d59d6630eab49a9208f3f3709c7e8",
+      "mode": "100644"
+    },
+    "packaging/audit_native_links.py": {
+      "sha256": "df085dfa642013bf44c834b5efc04614c6b8378b1bcdf0fd666096f692ca25c1",
+      "mode": "100644"
+    },
+    "packaging/audit_python_static.py": {
+      "sha256": "ac7fc28f70a3393c59e8d0226bca5ec4ec06fc1016505dd69f64fe0dc1b97ac0",
+      "mode": "100644"
+    },
+    "packaging/audit_v32_tables.py": {
+      "sha256": "e6713af131ad478db67f8f5cc5af194bb1c9a7dad419c26b52bad066689da533",
+      "mode": "100644"
+    },
     "packaging/build.sh": {
       "sha256": "2bdc00d7a1d45082d379935d0f0143c2f0e45068fc2631fc1bef6572e2284aa8",
       "mode": "100755"
+    },
+    "packaging/collect_binary_sources.py": {
+      "sha256": "760349b68e209ed5655a0b1224dc2a83c22b1295fbcba5b70bd8b79df44faea4",
+      "mode": "100644"
+    },
+    "packaging/collect_source_notices.py": {
+      "sha256": "25ef8da776657643fde67bb5e996ae754576e94278eb9f01c6de70b880785ae1",
+      "mode": "100644"
     },
     "packaging/diagnose_python_runtime.py": {
       "sha256": "22faab04f362482f86fc36ea55f1765fc2493647b9b3c669fe970d266a25d54c",
@@ -1116,6 +1164,10 @@
     },
     "packaging/el_modem.spec": {
       "sha256": "40c3a516c998b71ca27ffacc4273c9e24936e77b0f4db1450920f79afc513d1f",
+      "mode": "100644"
+    },
+    "packaging/inventory_binary.py": {
+      "sha256": "51e4d480c0c1869bd92c50d5adc9565a6bc33c1d03e15d18a225581ab4029f48",
       "mode": "100644"
     },
     "packaging/native_runtime.py": {
@@ -1128,6 +1180,10 @@
     },
     "packaging/qualify_instances.py": {
       "sha256": "866e6c7ef1fade6debf56701cea69c084afe474edaf978e97b04ad46c3935b8c",
+      "mode": "100644"
+    },
+    "packaging/qualify_tui.py": {
+      "sha256": "65b68b501af3c4a33d275294584e34de5f30968ce3aa0bfd2bad20636f24efb9",
       "mode": "100644"
     },
     "packaging/serial/README.md": {
@@ -1146,12 +1202,20 @@
       "sha256": "469fa4a239ae4f0523a45ced08ab5c0e4848c6173b068907fcd74f975bf7df5c",
       "mode": "100644"
     },
+    "packaging/smoke_desktop.py": {
+      "sha256": "28796a24e3be8036e67d262b55be4d2988f2c97bade660f14f2012cc8036fc26",
+      "mode": "100644"
+    },
     "packaging/test_native_runtime.py": {
       "sha256": "b092445d54693a9d35c481cc835f0564b9e1704abdafd445c037100df64de907",
       "mode": "100644"
     },
+    "packaging/verify_binary_sources.py": {
+      "sha256": "0452a909a2d5ed3c6bdb25e0926de56bc9bf9f8a800790dc858526366e47f33c",
+      "mode": "100644"
+    },
     "README.md": {
-      "sha256": "e8c0ff5c44229d6e5f65d2dd19a39e24e29c48c7b1fd8565f7f7e3ce717dbb0b",
+      "sha256": "65dcd9158647b181704aed834ee30de8d85d64ff9b005ffc91f45276c01f1825",
       "mode": "100644"
     },
     "docs/REDISTRIBUTION.md": {
@@ -1159,7 +1223,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "b92459815e22b3347fe5b7bb7d1e1f427829dc284723a99ea6e0486c6b0dc40a",
+      "sha256": "2d0c33bdf785b9ba68aedf30a45e63f59aa2013e6d18fef96096091dd7aae0ca",
       "mode": "100644"
     },
     ".gitignore": {
@@ -1167,7 +1231,7 @@
       "mode": "100644"
     }
   },
-  "excluded_count": 1083,
+  "excluded_count": 1131,
   "findings": [
     {
       "path": "lab/asterisk/test_sip_auth.py",
@@ -1183,22 +1247,11 @@
   ],
   "history_included": false,
   "external_calls_placed": false,
-  "documentation_updates": [
+  "public_overlays": [
     {
-      "source_commit": "c4c9fa4feeb4809b6bc10dc505ee2a5239349999",
-      "files": {
-        "README.md": "packaging/public/README.md",
-        "CREDITS.md": "CREDITS.md"
-      }
-    },
-    {
-      "source_commit": "04ce523ef6f6a72dfdaae62e7a4a14289b94732a",
-      "files": {
-        "README.md": "packaging/public/README.md",
-        "CREDITS.md": "CREDITS.md",
-        "NOTICE": "NOTICE",
-        "docs/REDISTRIBUTION.md": "packaging/public/REDISTRIBUTION.md"
-      }
+      "path": "CREDITS.md",
+      "public_commit": "822c0997f081c051d062539a0535253b6a4439eb",
+      "reason": "retain owner-edited public credits"
     }
   ]
 }

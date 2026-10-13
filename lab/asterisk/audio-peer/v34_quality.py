@@ -79,5 +79,6 @@ def observe(engine, state, eq):
     monitor = state.get('quality')
     if monitor is not None:
         guard = getattr(eq, '_input_guard', None)
+        from v34_transport import held_symbols
         monitor.sample(suspended=bool(getattr(guard, 'holding', False)),
-                       held_symbols=getattr(guard, 'held_symbols', 0))
+                       held_symbols=held_symbols(eq))

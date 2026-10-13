@@ -12,8 +12,9 @@ cancellation. Native IAX calling is not implemented; IAX settings are stored.
 This is an experimental Linux-first source preview, not a stable release.
 Real PSTN calls have reached V.34/LAPM and PPP, including login and communication
 with the far-end PPP gateway. Short independent-peer tests and local exact-data
-tests pass. Sustained timing qualification remains open: previous ten-minute
-desktop tests transferred exact data but exceeded the receive-queue gate.
+tests pass. A qualified Linux desktop artifact has passed sustained local payload/timing
+and TUI checks. New native build candidates need their own qualification;
+those Linux results do not establish Windows/macOS real-time performance.
 Multiple modem processes work, but their real-time capacity depends on the host.
 Windows/macOS builds are not a claim of qualified native virtual COM support.
 
@@ -36,7 +37,10 @@ packaging/dist/el-modem --self-test-payload
 packaging/dist/el-modem --serial-backend pty
 ```
 
-The normal default serial backend needs the separately installed Linux
+Linux defaults to the separately installed native serial driver, macOS to PTY,
+and Windows to TCP. Windows applications that require COM need an external
+virtual-port/TCP bridge; a signed virtual COM driver is not bundled. The Linux
+default serial backend needs the separately installed
 [serialsim prerequisite](packaging/serial/README.md). PTY and TCP alternatives
 have different modem-signal capabilities. The dashboard includes per-modem
 settings, status lights and an exclusive ASCII terminal. Configure SIP for your

@@ -451,6 +451,7 @@ def initialize(engine, eq, remote_role, baud, policy=None):
     engine._rx_state={'drx':receiver.drx,'receiver':receiver,'vit':receiver.vit,
         'hist':receiver.bits[-23:],'bits':[],'ys':[],'pend':[],'frames':0,'ones':[0,0]}
     if os.environ.get('V34_QUALITY_MONITOR') == '1' or os.environ.get('V34_AUTO_RATE') == '1':
+        from v34_transport import held_symbols
         engine._rx_state['quality'] = DataQuality(receiver.vit, receiver.profile, baud,
-            held_symbols=getattr(getattr(eq, '_input_guard', None), 'held_symbols', 0))
+            held_symbols=held_symbols(eq))
     return True

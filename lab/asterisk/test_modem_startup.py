@@ -44,6 +44,21 @@ class ResidentPreparationTests(unittest.TestCase):
             modem_dce.main()
         self.assertEqual(events, ['prepared', 'serve'])
 
+    def test_missing_requested_arithmetic_backend_never_opens_dte(self):
+        serve=mock.Mock()
+        with mock.patch.dict(os.environ, {'V34_EQUALIZER_BACKEND':'rust'}, clear=True), \
+                mock.patch.dict(sys.modules, {'el_modem_dsp':None}), \
+                mock.patch.object(sys,'argv',['modem_dce.py']), \
+                mock.patch.object(modem_dce,'run_pty',serve):
+            with self.assertRaises(ImportError):modem_dce.main()
+        serve.assert_not_called()
+
+    def test_arithmetic_warmup_precedes_dte(self):
+        events=[]
+        with mock.patch('v34_equalizer_backend.warmup',side_effect=lambda:events.append('arithmetic')):
+            self.run_main([],lambda:None,lambda *a,**kw:events.append('serve'))
+        self.assertEqual(events,['arithmetic','serve'])
+
     def test_separate_self_test_does_not_run_resident_preparation(self):
         prepare, serve = mock.Mock(), mock.Mock()
         with mock.patch('modem_selftest.run', return_value={'status': 'PASS'}), \
