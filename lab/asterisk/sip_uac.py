@@ -141,7 +141,7 @@ class SipOriginateCall:
                         self._fail_once("no response")
                         return
                     continue
-                except ConnectionRefusedError:                 # ICMP port unreachable from the proxy host
+                except (ConnectionRefusedError, ConnectionResetError): # Linux/Windows ICMP port unreachable
                     self._fail_once("no line")
                     return
                 except OSError:

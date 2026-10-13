@@ -214,6 +214,10 @@ class SipIncomingCallServer:
             except socket.timeout:
                 self._emit_periodic_ring()
                 continue
+            except ConnectionResetError:
+                # Winsock surfaces a prior UDP send's ICMP error here. Keep
+                # the listener available to new callers rather than killing it.
+                continue
             except OSError:
                 if not self._stop.is_set():
                     logger.exception("SIP modem socket failed")

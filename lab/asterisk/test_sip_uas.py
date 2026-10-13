@@ -4,6 +4,7 @@
 import socket
 import threading
 import unittest
+from unittest.mock import Mock
 import uuid
 
 from modem_dce import AtDce
@@ -122,6 +123,18 @@ class SipIncomingCallTests(unittest.TestCase):
         self.assertEqual(self.dce.take_notifications(), b"\r\nNO CARRIER\r\n")
         self.assertFalse(self.dce.online)
 
+
+class WindowsUdpListenerTests(unittest.TestCase):
+    def test_reset_does_not_stop_udp_listener(self):
+        server=Mock();server._stop=threading.Event()
+        def stop_after_reset(*args):
+            server._stop.set();raise socket.timeout()
+        server._socket.recvfrom.side_effect=[ConnectionResetError('ICMP unreachable'),socket.timeout()]
+        # Make the second (timeout) path stop only after it has been serviced.
+        server._emit_periodic_ring.side_effect=server._stop.set
+        SipIncomingCallServer._serve(server)
+        self.assertEqual(server._socket.recvfrom.call_count,2)
+        server._emit_periodic_ring.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()

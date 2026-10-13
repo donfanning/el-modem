@@ -1015,11 +1015,11 @@
       "mode": "100644"
     },
     "lab/asterisk/sip_uac.py": {
-      "sha256": "7a118a029666ec6a87a897db9985cfcdf807237372ff2fd7008b6f5bd5b5f4ec",
+      "sha256": "0692949c3db1e3918a6b8ff50f525953e0e64bc18cdb6ad1151918e279109692",
       "mode": "100644"
     },
     "lab/asterisk/sip_uas.py": {
-      "sha256": "295fbc110fd40ba67620adc91c9900c280fdafbb15c58f501df6f43f401ce0f4",
+      "sha256": "4f12373148100b8495a4d5c6de0a4517acbb6db6bcc9453bf7b923646ffb078a",
       "mode": "100644"
     },
     "lab/asterisk/test-audiosocket.py": {
@@ -1031,7 +1031,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
-      "sha256": "0614cb2c6963f17e94e0ced956581d93c8d9b762de6264355a433d731d2a5e84",
+      "sha256": "c8268b59830b128069faaaae6978ca43c3186d75f53749da9ef98c95b3c06f6d",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_instances.py": {
@@ -1095,11 +1095,11 @@
       "mode": "100644"
     },
     "lab/asterisk/test_sip_uac.py": {
-      "sha256": "4b61e9152ba4c2e4907a2855b3410e84656da0b0fac552fe99769f2fa2fadcbe",
+      "sha256": "c8dd626315afa173c437ee8f9fabd636d1cc994befcee5fdc3c417fdfbb20f9d",
       "mode": "100644"
     },
     "lab/asterisk/test_sip_uas.py": {
-      "sha256": "23ea7c0e017abaa5d20f04217b39dcab161612758ae5074ed7cd61bb03ca7ffa",
+      "sha256": "2c67f08997a93b62a3da817e81cdbe552852d7f59726bd657bd0132cca02f797",
       "mode": "100644"
     },
     "packaging/Dockerfile.artifact": {
@@ -1223,7 +1223,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "2d0c33bdf785b9ba68aedf30a45e63f59aa2013e6d18fef96096091dd7aae0ca",
+      "sha256": "56839f2efb0a80758b29568a56db2e7da365b5adfc384e561cedd01412370cfc",
       "mode": "100644"
     },
     ".gitignore": {
@@ -1252,6 +1252,20 @@
       "path": "CREDITS.md",
       "public_commit": "822c0997f081c051d062539a0535253b6a4439eb",
       "reason": "retain owner-edited public credits"
+    },
+    {
+      "paths": [
+        "lab/asterisk/sip_uac.py",
+        "lab/asterisk/sip_uas.py",
+        "lab/asterisk/test_sip_uac.py",
+        "lab/asterisk/test_sip_uas.py",
+        "lab/asterisk/test_modem_desktop.py",
+        ".github/workflows/build.yml"
+      ],
+      "reason": "native CI observed Windows UDP and Linux builder fixes",
+      "private_commits": [
+        "9ff2329"
+      ]
     }
   ]
 }

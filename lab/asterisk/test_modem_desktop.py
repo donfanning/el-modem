@@ -35,7 +35,8 @@ class SettingsTests(unittest.TestCase):
             set_value(d,'dsp.eq_span',12);d._store_profile(0)
             loaded=AtDce();loaded.load_profiles(root+'/profile.json')
             self.assertEqual(loaded.extended_settings['dsp.eq_span'],'12')
-            self.assertEqual(os.stat(root+'/profile.json').st_mode&0o777,0o600)
+            if os.name=='posix':self.assertEqual(os.stat(root+'/profile.json').st_mode&0o777,0o600)
+            else:self.assertTrue(os.access(root+'/profile.json',os.R_OK|os.W_OK)) # Windows access follows directory ACL, not POSIX mode bits.
     def test_save_failure_returns_error(self):
         d=AtDce();d.profile_path='/nonexistent/test'
         with patch('modem_storage.atomic_json',side_effect=OSError('denied')):

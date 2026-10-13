@@ -4,6 +4,7 @@
 import socket
 import threading
 import unittest
+from unittest.mock import Mock,patch
 
 from sip_uac import SipOriginateCall
 from sip_uas import parse_message
@@ -188,6 +189,17 @@ class SipOriginateCallTests(unittest.TestCase):
         thread.join(timeout=3)
         self.assertFalse(thread.is_alive())
 
+
+class WindowsUdpFailureTests(unittest.TestCase):
+    def test_udp_reset_reports_no_line_once(self):
+        endpoint=Mock();endpoint.getsockname.return_value=('127.0.0.1',15000)
+        endpoint.recvfrom.side_effect=ConnectionResetError('ICMP unreachable')
+        outcomes=[]
+        call=SipOriginateCall('127.0.0.1',0,'127.0.0.1',5060,'127.0.0.1',16000,
+            on_connected=lambda address:outcomes.append('connected'),on_failed=outcomes.append,on_hangup=lambda:None)
+        with patch('sip_uac.socket.socket',return_value=endpoint):call.dial('test',2)
+        self.assertEqual(outcomes,['no line'])
+        endpoint.close.assert_called()
 
 if __name__ == "__main__":
     unittest.main()
