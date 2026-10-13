@@ -1,0 +1,2 @@
+# Unified patches contain context prefixes before tabs and blank lines.
+packaging/serial/*.patch -whitespace

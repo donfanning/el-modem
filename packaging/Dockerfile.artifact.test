@@ -1,0 +1,5 @@
+# Test tools only: DSP still executes the unchanged standalone artifact.
+ARG MODEM_ARTIFACT_IMAGE=el-modem-tui-rc-20261012
+FROM ${MODEM_ARTIFACT_IMAGE}
+RUN apt-get update -qq && apt-get install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/*

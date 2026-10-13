@@ -1,0 +1,11 @@
+# Original modem only. The independent SmartLink test peer is not included.
+FROM debian:bookworm-slim
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    python3 python3-numpy python3-numba=0.56.4+dfsg-2 \
+    && rm -rf /var/lib/apt/lists/*
+ENV OPENBLAS_NUM_THREADS=1 NUMBA_CACHE_DIR=/tmp/el-modem-numba
+WORKDIR /app
+COPY lab/asterisk/*.py /app/
+COPY lab/asterisk/audio-peer/*.py /app/audio-peer/
+ENTRYPOINT ["python3", "-u", "/app/modem_dce.py"]
+CMD ["--serial-tcp", "0.0.0.0:9100", "--line-mode", "v34", "--v34-native-trellis"]

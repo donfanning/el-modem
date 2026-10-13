@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!*.example
+dist/
+build/
+packaging/dist/
+*.raw
+*.wav
+*.pcap*
+*.npz

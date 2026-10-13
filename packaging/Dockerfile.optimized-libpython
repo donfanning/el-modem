@@ -1,0 +1,28 @@
+# Optimized shared runtime; retains the patched Debian CPython source version.
+# KNOWN LIMIT (lab/PYTHON_LTO_LIBPYTHON_2026_10_13.md): this PGO-only recipe does not build Debian's static module set into libpython
+# (e.g. _struct), so a binary packaged with it fails --self-test, and PGO alone measured no faster than stock shared libpython.
+# Use Dockerfile.lto-libpython, which fixes both.
+FROM el-modem-builder-bookworm AS source
+ARG PYTHON_DEBIAN_VERSION=3.11.2-6+deb12u9
+RUN sed -i 's/Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends libssl-dev zlib1g-dev libffi-dev libbz2-dev liblzma-dev libsqlite3-dev libexpat1-dev \
+    && mkdir /opt/python-source && cd /opt/python-source \
+    && apt-get source python3.11=${PYTHON_DEBIAN_VERSION} \
+    && sha256sum *.dsc *.tar.* > source-sha256.txt
+FROM source AS compiled
+ARG PYTHON_DEBIAN_VERSION=3.11.2-6+deb12u9
+RUN cd /opt/python-source/python3.11-* \
+    && printf '%s\n' '*shared*' 'pyexpat pyexpat.c -DPy_BUILD_CORE_MODULE -I$(srcdir)/Include/internal -lexpat' > Modules/Setup.local \
+    && CFLAGS="-O3 -fno-semantic-interposition" LDFLAGS="-fno-semantic-interposition" ./configure --prefix=/usr --enable-shared --enable-optimizations \
+       --with-system-expat --with-system-ffi --without-ensurepip \
+    && make -j4 profile-opt \
+    && mkdir /opt/el-modem-libpython \
+    && cp libpython3.11.so.1.0 /opt/el-modem-libpython/ \
+    && cp /opt/python-source/source-sha256.txt /opt/el-modem-libpython/ \
+    && cp config.log /opt/el-modem-libpython/ \
+    && cp /usr/lib/x86_64-linux-gnu/libpython3.11.so.1.0 /opt/el-modem-libpython/original.so
+RUN cd /opt/python-source/python3.11-* && cp LICENSE /opt/el-modem-libpython/LICENSE.python
+RUN test "$PYTHON_DEBIAN_VERSION" = "$(dpkg-query -W -f='${Version}' python3.11)" \
+    && python3 -c 'import json,pathlib,platform,subprocess; p=pathlib.Path("/opt/el-modem-libpython"); (p/"build.json").write_text(json.dumps(dict(python=platform.python_version(),debian_source_version=subprocess.check_output(["dpkg-query","-W","-f=${Version}","python3.11"],text=True),optimization=["O3","PGO","fno-semantic-interposition"],source_sha256=(p/"source-sha256.txt").read_text()),indent=2)+"\n")'
+ENV EL_MODEM_LIBPYTHON=/opt/el-modem-libpython/libpython3.11.so.1.0
