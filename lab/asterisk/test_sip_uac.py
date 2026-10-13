@@ -167,6 +167,22 @@ class SipOriginateCallTests(unittest.TestCase):
         thread.join(timeout=3)
         self.assertFalse(thread.is_alive())
 
+    def test_hangup_during_ack_uses_bye_and_does_not_publish_connection(self) -> None:
+        connected=[];call=self._make_call(on_connected=connected.append);original_ack=call._send_ack
+        def ack_then_hangup(*args,**kwargs):
+            original_ack(*args,**kwargs);call.hangup()
+        with patch.object(call,'_send_ack',side_effect=ack_then_hangup):
+            thread=threading.Thread(target=call.dial,args=('105',5));thread.start()
+            _,headers,source=self.uas.recv_invite()
+            self.uas.send('200 OK',headers,source)
+            ack,_,_=self.uas.recv_any();bye,_,_=self.uas.recv_any()
+            thread.join(timeout=3)
+        self.assertTrue(ack.startswith('ACK'),ack)
+        self.assertTrue(bye.startswith('BYE'),bye)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(call._socket)
+        self.assertEqual(connected,[])
+
     def test_local_hangup_after_answer_sends_bye(self) -> None:
         call = self._make_call()
         thread = threading.Thread(target=call.dial, args=("105", 5))

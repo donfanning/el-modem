@@ -173,13 +173,17 @@ class SipOriginateCall:
                         dialog.to_header = to_header
                     continue
                 if code.startswith("2"):
-                    dialog.to_header = to_header
-                    self._send_ack(sock, dialog, with_route=False)
                     remote_addr = parse_remote_rtp(body)
                     with self._lock:
                         if self._finished:
                             return
+                        dialog.to_header = to_header
+                        # Publish answer state before ACK becomes visible to a
+                        # peer/control thread; hangup must then choose BYE.
                         self._answered = True
+                        self._send_ack(sock, dialog, with_route=False)
+                        if self._finished:
+                            return
                     self.on_connected(remote_addr or (self.target_host, self.target_port))
                     self._wait_for_hangup(sock, dialog)
                     return

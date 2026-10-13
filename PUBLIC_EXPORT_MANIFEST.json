@@ -1015,7 +1015,7 @@
       "mode": "100644"
     },
     "lab/asterisk/sip_uac.py": {
-      "sha256": "0692949c3db1e3918a6b8ff50f525953e0e64bc18cdb6ad1151918e279109692",
+      "sha256": "5ae9678c13b81a9cd38707651d76ebf68b0bde591f78cea70c641f3e596a87b9",
       "mode": "100644"
     },
     "lab/asterisk/sip_uas.py": {
@@ -1095,7 +1095,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_sip_uac.py": {
-      "sha256": "c8dd626315afa173c437ee8f9fabd636d1cc994befcee5fdc3c417fdfbb20f9d",
+      "sha256": "e2335f9e0e0242198d4659da3c486d78e2c28fc62a8c304572f5c6519f8359ef",
       "mode": "100644"
     },
     "lab/asterisk/test_sip_uas.py": {
@@ -1330,6 +1330,13 @@
         "packaging/prepare_public.py"
       ],
       "reason": "remove private-only exporter; native build tooling does not need it"
+    },
+    {
+      "paths": [
+        "lab/asterisk/sip_uac.py",
+        "lab/asterisk/test_sip_uac.py"
+      ],
+      "reason": "observed native CI ACK/answer-state race; deterministic regression"
     }
   ]
 }
