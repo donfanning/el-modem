@@ -1,9 +1,8 @@
 # Credits and acknowledgments
 
-**Don Fanning (jfalcon)** — [gh:donfanning](https://github.com/donfanning)
 
-I created and maintain El-Modem, and I direct its development, interoperability
-testing and intended behavior.
+Created and maintain El-Modem by **Don Fanning (jfalcon)** — [gh:donfanning](https://github.com/donfanning)
+and I direct its development, interoperability testing and intended behavior.
 
 I have used **OpenCode**, **Anthropic Claude**,
 **GitHub Copilot**, and **OpenAI ChatGPT/Codex** for implementation, research,
