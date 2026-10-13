@@ -8,6 +8,10 @@ on:
         description: Build and test native candidates (no binary publication)
         type: boolean
         default: true
+      candidate_recipient:
+        description: Optional age public recipient for encrypted local review archives
+        type: string
+        default: ''
 permissions:
   contents: read
 jobs:
@@ -71,4 +75,25 @@ jobs:
           name: candidate-reports-${{ matrix.target }}
           path: candidate-reports/
           if-no-files-found: ignore
-      # No binaries uploaded until provenance/notices review is complete.
+      - name: Inventory and assemble native review archive
+        if: inputs.candidate_recipient != ''
+        shell: bash
+        env:
+          CANDIDATE_RECIPIENT: ${{ inputs.candidate_recipient }}
+          CANDIDATE_TARGET: ${{ matrix.target }}
+          CANDIDATE_REVISION: ${{ github.sha }}
+        run: |
+          exe=dist/el-modem
+          if [ "$RUNNER_OS" = Windows ]; then exe=dist/el-modem.exe; fi
+          python packaging/inventory_portable.py "$exe" candidate-notices
+          python packaging/package_native_candidate.py "$exe" "build/el-modem-0.1.0-rc1-${CANDIDATE_TARGET}.zip" --target "$CANDIDATE_TARGET" --revision "$CANDIDATE_REVISION"
+          python packaging/candidate_transport.py "build/el-modem-0.1.0-rc1-${CANDIDATE_TARGET}.zip" "encrypted-candidates/el-modem-0.1.0-rc1-${CANDIDATE_TARGET}.zip.age"
+      - name: Retain encrypted candidates only
+        if: inputs.candidate_recipient != '' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-candidate-${{ matrix.target }}
+          path: encrypted-candidates/
+          if-no-files-found: error
+          retention-days: 3
+      # No plaintext binaries uploaded while review is open. Private identity stays local.

@@ -1223,11 +1223,31 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "56839f2efb0a80758b29568a56db2e7da365b5adfc384e561cedd01412370cfc",
+      "sha256": "f3a40a20628aa1ba7293485b5394653a10e2194f5cd920534a86860430cb3c25",
       "mode": "100644"
     },
     ".gitignore": {
       "sha256": "20915503efb0f631c1a75f048ed2e5493f02f76a610a9ddbb41260bba38e0940",
+      "mode": "100644"
+    },
+    "packaging/candidate_transport.py": {
+      "sha256": "796b882d5886b951f8df60245dcdd98287cb7ed4ea6285a499933e00b42a4e20",
+      "mode": "100644"
+    },
+    "packaging/inventory_portable.py": {
+      "sha256": "c8e4b70de35d6397f5c10b532b8b239863193cc1eddbc906226ce26f40deb960",
+      "mode": "100644"
+    },
+    "packaging/package_native_candidate.py": {
+      "sha256": "e78b9f69e2161651c6de28edf31000840b71ae86898179e56066efa6162b3d62",
+      "mode": "100644"
+    },
+    "packaging/test_candidate_transport.py": {
+      "sha256": "cbf855cd5aff2414d4a325b26ad05067d6db31a72f228e90037a37f968fd4b96",
+      "mode": "100644"
+    },
+    "packaging/test_package_native_candidate.py": {
+      "sha256": "024a74c21992392931b24e4df813a76257741175ba8cdac297ebdf1a147c150d",
       "mode": "100644"
     }
   },
@@ -1266,6 +1286,17 @@
       "private_commits": [
         "9ff2329"
       ]
+    },
+    {
+      "paths": [
+        "packaging/candidate_transport.py",
+        "packaging/inventory_portable.py",
+        "packaging/package_native_candidate.py",
+        "packaging/test_candidate_transport.py",
+        "packaging/test_package_native_candidate.py",
+        ".github/workflows/build.yml"
+      ],
+      "reason": "encrypted candidate retention and native package/notice tooling"
     }
   ]
 }
