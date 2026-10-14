@@ -62,6 +62,14 @@ if library_override:
         raise RuntimeError('expected exactly one bundled Python shared library')
     a.binaries = [(name, str(library_override), kind) if name == library_override.name else (name, path, kind)
                   for name, path, kind in a.binaries]
+if sys.platform == 'win32':
+    # Microsoft's runtime DLLs are not ours to redistribute. The Universal CRT is part of Windows 10+
+    # (the system copy always wins), and the Visual C++ runtime is a documented prerequisite
+    # (lab/WINDOWS_ATTRIBUTION_2026_10_13.md). PyInstaller otherwise picks up whatever copies sit on PATH.
+    def _microsoft_runtime(name):
+        base = Path(name).name.casefold()
+        return base == 'ucrtbase.dll' or base.startswith(('api-ms-win-', 'vcruntime140', 'msvcp140', 'vcomp140', 'concrt140'))
+    a.binaries = [entry for entry in a.binaries if not _microsoft_runtime(entry[0])]
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='el-modem',
           debug=False, bootloader_ignore_signals=False, strip=False, upx=True, console=True)

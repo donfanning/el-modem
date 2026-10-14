@@ -21,6 +21,15 @@ from PyInstaller.archive.readers import CArchiveReader
 def sha(data):return hashlib.sha256(data).hexdigest()
 
 
+NATIVE_MAGIC=(b'MZ',b'\x7fELF',b'\xfe\xed\xfa\xce',b'\xfe\xed\xfa\xcf',b'\xce\xfa\xed\xfe',b'\xcf\xfa\xed\xfe',b'\xca\xfe\xba\xbe')
+
+
+def is_native(name,data):
+    """Single-file archives store every member with typecode 'b', data files included, so the
+    typecode says nothing about native code. Decide by file magic."""
+    return data[:4].startswith(NATIVE_MAGIC)
+
+
 def inventory(executable,output,lineage=None):
     output.mkdir(parents=True,exist_ok=False)
     archive=CArchiveReader(str(executable));pyz=archive.open_embedded_archive('PYZ.pyz')
@@ -74,10 +83,12 @@ def inventory(executable,output,lineage=None):
         if path.is_file():native_index.setdefault(path.name.casefold(),[]).append((path,'CPython installation; third-party runtimes need separate licensing review'))
     for index,path in enumerate((interpreter/'LICENSE.txt',interpreter/'LICENSE',Path(sysconfig.get_path('stdlib'))/'LICENSE.txt',interpreter/'share/doc/python3.11/LICENSE')):
         if path.is_file():notice(path,'CPython',Path('CPython')/('LICENSE-'+str(index)+'.txt'))
-    libraries=[]
+    libraries=[];data_files=[]
     for name,entry in archive.toc.items():
         if entry[-1]!='b':continue
         data=archive.extract(name);digest=sha(data);matches=[]
+        if not is_native(name,data):
+            data_files.append(dict(name=name,sha256=digest,bytes=len(data)));continue
         for path,component in native_index.get(Path(name).name.casefold(),[]):
             if sha(path.read_bytes())==digest:matches.append(dict(component=component,builder_file=str(path)))
         processed=[]
@@ -117,7 +128,7 @@ def inventory(executable,output,lineage=None):
     gaps+=['installed notice missing: '+row['name'] for row in records if not row['notices']]
     if not any(row['component']=='CPython' for row in notices):gaps.append('CPython license not located in builder')
     report=dict(schema=1,status='REVIEW_REQUIRED',artifact_sha256=sha(executable.read_bytes()),system=platform.system(),machine=platform.machine(),python=sys.version,
-        build_manifest=manifest,system_packages=system_packages,python_distributions=records,native_libraries=libraries,notices=notices,review_gaps=gaps,
+        build_manifest=manifest,system_packages=system_packages,python_distributions=records,native_libraries=libraries,data_files=data_files,notices=notices,review_gaps=gaps,
         limits=['Installed versions and notice collection do not prove license compatibility or corresponding-source completeness.',
                 'Unmatched native bytes may have loader/signature modifications; they are not silently attributed.',
                 'Wheel/compiler static dependencies and host libraries require separate review.',
