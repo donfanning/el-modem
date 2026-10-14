@@ -1,0 +1,22 @@
+{
+    "files":  [
+                  {
+                      "name":  "vcruntime140.dll",
+                      "version":  "14.44.35211.0",
+                      "present":  true
+                  },
+                  {
+                      "name":  "vcruntime140_1.dll",
+                      "version":  "14.44.35211.0",
+                      "present":  true
+                  },
+                  {
+                      "name":  "msvcp140.dll",
+                      "version":  "14.44.35211.0",
+                      "present":  true
+                  }
+              ],
+    "registered":  true,
+    "version":  "v14.44.35211.00",
+    "installed":  1
+}

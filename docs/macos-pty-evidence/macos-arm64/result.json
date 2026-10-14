@@ -1,0 +1,70 @@
+{
+  "status": "PASS",
+  "target": "macos-arm64",
+  "executable_sha256": "e85818e067caba2983a07b911bdbad66e77ad1c488a5c9f064d8b8286ddf4096",
+  "platform": "macOS-15.7.9-arm64-arm-64bit",
+  "machine": "arm64",
+  "scope": "Actual minicom \u2192 OS PTY \u2192 frozen supervisor/worker, Hayes commands, terminal close/reopen and clean teardown. No DSP/PSTN call or hardware RS232 signals.",
+  "pty_endpoint": "/dev/ttys000",
+  "minicom_version": "minicom version 2.11.1 (compiled Feb 28 2026)\nCopyright (C) Miquel van Smoorenburg.\n\nThis program is free software; you can redistribute it and/or\nmodify it under the terms of the GNU General Public License\nas published by the Free Software Foundation; either version\n2 of the License, or (at your option) any later version.",
+  "sessions": [
+    {
+      "application": "/opt/homebrew/bin/minicom",
+      "argv": [
+        "/opt/homebrew/bin/minicom",
+        "-o",
+        "-D",
+        "/var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T/el-modem-pty-lft2zodl/instances/modem-1/serial",
+        "-b",
+        "115200",
+        "-8",
+        "-C",
+        "/Users/runner/work/el-modem/el-modem/pty-reports/first-capture.txt",
+        "elmodem-qualification-63db1b3fe5e5415781afd6951e3fa265"
+      ],
+      "exit_code": 0,
+      "capture_sha256": "a3dedb10ccb8dd0b0b9b6838534da09721a9c59a00f1d6e0981cf819b97bb0eb",
+      "commands": [
+        "ATZ",
+        "ATE0",
+        "ATI3",
+        "ATS0=9",
+        "ATS0?",
+        "ATZ",
+        "ATE0",
+        "ATS0?"
+      ]
+    },
+    {
+      "application": "/opt/homebrew/bin/minicom",
+      "argv": [
+        "/opt/homebrew/bin/minicom",
+        "-o",
+        "-D",
+        "/var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T/el-modem-pty-lft2zodl/instances/modem-1/serial",
+        "-b",
+        "115200",
+        "-8",
+        "-C",
+        "/Users/runner/work/el-modem/el-modem/pty-reports/reopened-capture.txt",
+        "elmodem-qualification-73a14e823c454b8a91b9427ab79918e2"
+      ],
+      "exit_code": 0,
+      "capture_sha256": "184604f1a3bbf99b4ebfa90a53f25b19a389de5db532339eea33e04e8aead7ea",
+      "commands": [
+        "ATZ",
+        "ATE0",
+        "ATI3",
+        "ATS0=9",
+        "ATS0?",
+        "ATZ",
+        "ATE0",
+        "ATS0?"
+      ]
+    }
+  ],
+  "cleanup": {
+    "supervisor_exit": 0,
+    "serial_link_removed": true
+  }
+}

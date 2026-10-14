@@ -1,0 +1,6 @@
+{
+    "scope":  "Effective running-kernel code integrity, not only next-boot BCD",
+    "testsigning":  false,
+    "options":  1,
+    "enabled":  true
+}

@@ -1,0 +1,9 @@
+{
+    "scope":  "Continuation of original published Windows setup lifecycle; no calls",
+    "cleanup":  {
+                    "uninstall_entry_removed":  true,
+                    "executable_removed":  true,
+                    "shortcut_removed":  true
+                },
+    "passed":  true
+}

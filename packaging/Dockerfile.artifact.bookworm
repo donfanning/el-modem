@@ -1,0 +1,5 @@
+# Run the already-built Linux executable; no source overlay or host Python DSP.
+FROM debian:bookworm-slim
+ENV OPENBLAS_NUM_THREADS=1
+COPY packaging/dist/el-modem /usr/local/bin/el-modem
+ENTRYPOINT ["/usr/local/bin/el-modem"]

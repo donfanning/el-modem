@@ -1,0 +1,40 @@
+diff --git a/serialsim.c b/serialsim.c
+index 509f316..f2a26bf 100644
+--- a/serialsim.c
++++ b/serialsim.c
+@@ -491,7 +491,7 @@ static int serialsim_thread(void *data)
+ 		spin_unlock_irq(&intf->mctrl_lock);
+ 
+ 		spin_lock_irq(&oport->lock);
+-		if (ointf->tx_enabled
++		if (ointf->tx_enabled && !uart_tx_stopped(oport)
+ #ifndef USE_KFIFO_BUF
+ 		    && oport->state->xmit.buf
+ #endif
+@@ -662,6 +662,13 @@ static int serialsim_startup(struct uart_port *port)
+ 		spin_unlock_irqrestore(&port->lock, flags);
+ 	}
+ 
++	if (!rv) {
++		struct tty_struct *tty = tty_port_tty_get(&port->state->port);
++		if (tty) {
++			set_bit(TTY_EXCLUSIVE, &tty->flags);
++			tty_kref_put(tty);
++		}
++	}
+ 	return rv;
+ }
+ 
+@@ -761,6 +768,12 @@ static int serialpipe_ioctl(struct uart_port *port, unsigned int cmd,
+ 			serialsim_set_modem_lines(intf->ointf, mask, arg);
+ 		break;
+ 
++	case 0x800454ec: /* EL-MODEM remote open count, read-only. */
++		val = intf->ointf->port.state->port.count;
++		if (copy_to_user((unsigned int __user *)arg, &val, sizeof(val)))
++			rv = -EFAULT;
++		break;
++
+ 	case TIOCSERGREMMCTRL:
+ 		if (copy_to_user((unsigned int __user *) arg,
+ 				 &intf->ointf->mctrl,

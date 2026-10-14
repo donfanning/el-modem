@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "date": "2026-10-14",
+  "scope": "Exact published rc1 Windows setup, clean runtime-less Server 2022 Evaluation guest, interactive install/launch/uninstall",
+  "setup_sha256": "bab1cb831fbf230e45532a30c4a9608a9d5f3218ff5cd706e5092f06e802fa40",
+  "executable_sha256": "f98372c76cb648e1faaf92c925659ab8e6ba065b7e5fd249230ccf3fc82cd7a7",
+  "guest": {
+    "caption": "Microsoft Windows Server 2022 Standard Evaluation",
+    "version": "10.0.20348",
+    "kernel_code_integrity_enabled": true,
+    "test_signing": false
+  },
+  "results": {
+    "runtime_absent_before_install": true,
+    "interactive_setup": true,
+    "runtime_signature_valid": true,
+    "runtime_installer_exit_code": 0,
+    "runtime_after": "v14.44.35211.00",
+    "installed_self_test_exit_code": 0,
+    "installed_self_test_gates": 22,
+    "start_menu_tui_launch_and_cooperative_quit": true,
+    "interactive_uninstall": true,
+    "payload_shortcut_and_uninstall_registration_removed": true
+  },
+  "limits": [
+    "One Windows Server 2022 administrator-install profile",
+    "Not Windows 10/11, standard-user/UAC, SmartScreen, Windows ARM64, Secure Boot/HVCI, connected DSP, or oldest-OS/runtime qualification",
+    "Initial immediate post-install wrapper did not retain the exit code for a valid PASS self-test report; the repeated installed self-test recorded exit 0"
+  ]
+}

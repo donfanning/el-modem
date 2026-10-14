@@ -1,0 +1,6 @@
+{
+    "Name":  "com0com",
+    "State":  "Running",
+    "StartMode":  "Manual",
+    "PathName":  "C:\\Windows\\system32\\drivers\\com0com.sys"
+}

@@ -1,0 +1,14 @@
+[
+    {
+        "File":  "com0com.cat",
+        "SHA256":  "FF045546B42508FAF83120CDA1759E1A16B8B3559D37B4F01494D2830EEE8E4F",
+        "Status":  "Valid",
+        "Signer":  "CN=CyberCircuits, O=CyberCircuits, STREET=13 Sydney Street, L=Hauraki, S=Auckland, PostalCode=0622, C=NZ"
+    },
+    {
+        "File":  "com0com.sys",
+        "SHA256":  "3EA9374E0DA84AC3BABA16CFD1B2CB8E1B7C18E8495AD6757E16010A85EA6C2E",
+        "Status":  "Valid",
+        "Signer":  "CN=CyberCircuits, O=CyberCircuits, STREET=13 Sydney Street, L=Hauraki, S=Auckland, PostalCode=0622, C=NZ"
+    }
+]

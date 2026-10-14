@@ -1,0 +1,861 @@
+{
+  "status": "PASS_FOR_DOCUMENTED_HOST_PROFILE",
+  "date": "2026-10-14",
+  "artifact_sha256": "836a8bf8a9959aefec5a227a31185f7ecfe43578188271cd7d36aa830a158afc",
+  "source_revision": "9fd8af82f497b472869007c5623bb24063846ce9",
+  "hardware": "AMD Ryzen 5 3600; 6 cores / 12 threads",
+  "container_runtime": "Ubuntu 24.04",
+  "dte_transport": "TCP",
+  "cpufreq_driver": "acpi-cpufreq",
+  "baseline_policy": "schedutil",
+  "confirmation_policy": "performance",
+  "host_policy_restoration_verified": true,
+  "criteria": {
+    "combined_mean_ms_max": 10,
+    "tail_budget_ms_max": 20,
+    "tail_definition": "sum of marginal TX/RX p99.5 budgets, not a joint percentile"
+  },
+  "baseline": {
+    "pending": [],
+    "cases": [
+      {
+        "probe": "sustained-call",
+        "role": "call",
+        "seed": 3942,
+        "data_seconds": 606.267744,
+        "bytes_received_each_direction": 1081344,
+        "functional_pass": true,
+        "realtime_pass": false,
+        "timing_failures": [
+          "mean combined DSP exceeds 10 ms"
+        ],
+        "combined_mean_ms": 10.071771,
+        "tail_budget_ms": 15.693084,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "sustained-answer",
+        "role": "answer",
+        "seed": 3941,
+        "data_seconds": 602.047538,
+        "bytes_received_each_direction": 1097728,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 9.892628,
+        "tail_budget_ms": 15.987484,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "drift",
+        "role": "call",
+        "seed": 3701,
+        "data_seconds": 122.890471,
+        "bytes_received_each_direction": 212992,
+        "functional_pass": true,
+        "realtime_pass": false,
+        "timing_failures": [
+          "mean combined DSP exceeds 10 ms"
+        ],
+        "combined_mean_ms": 10.160415,
+        "tail_budget_ms": 16.622475,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "drift",
+        "role": "answer",
+        "seed": 3701,
+        "data_seconds": 128.489407,
+        "bytes_received_each_direction": 229376,
+        "functional_pass": true,
+        "realtime_pass": false,
+        "timing_failures": [
+          "mean combined DSP exceeds 10 ms"
+        ],
+        "combined_mean_ms": 10.002786,
+        "tail_budget_ms": 17.198979,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "peer-retrain",
+        "role": "call",
+        "seed": 3711,
+        "data_seconds": 27.080317,
+        "bytes_received_each_direction": 32768,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 8.740553,
+        "tail_budget_ms": 16.455921,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 28800,
+            "rx": 28800,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "peer-retrain",
+        "role": "answer",
+        "seed": 3711,
+        "data_seconds": 29.970842,
+        "bytes_received_each_direction": 32768,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 8.446623,
+        "tail_budget_ms": 19.599158,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 21600,
+            "rx": 21600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "online-retrain",
+        "role": "call",
+        "seed": 3712,
+        "data_seconds": 55.778757,
+        "bytes_received_each_direction": 65536,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 9.444073,
+        "tail_budget_ms": 18.317382,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 28800,
+            "rx": 28800,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 26400,
+            "rx": 26400,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 28800,
+            "rx": 28800,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "online-retrain",
+        "role": "answer",
+        "seed": 3712,
+        "data_seconds": 58.271024,
+        "bytes_received_each_direction": 65536,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 9.308281,
+        "tail_budget_ms": 18.31732,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 24000,
+            "rx": 24000,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 21600,
+            "rx": 21600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 24000,
+            "rx": 24000,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "connected-rate",
+        "role": "call",
+        "seed": 3713,
+        "data_seconds": 61.584488,
+        "bytes_received_each_direction": 81920,
+        "functional_pass": true,
+        "realtime_pass": false,
+        "timing_failures": [
+          "mean combined DSP exceeds 10 ms",
+          "p99 combined processing budget exceeds 20 ms"
+        ],
+        "combined_mean_ms": 10.216768,
+        "tail_budget_ms": 20.404017,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 31200,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 31200,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "connected-rate",
+        "role": "answer",
+        "seed": 3713,
+        "data_seconds": 61.964339,
+        "bytes_received_each_direction": 81920,
+        "functional_pass": true,
+        "realtime_pass": false,
+        "timing_failures": [
+          "mean combined DSP exceeds 10 ms"
+        ],
+        "combined_mean_ms": 10.043932,
+        "tail_budget_ms": 18.388021,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 31200,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 31200,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "auto-rollback",
+        "role": "answer",
+        "seed": 3717,
+        "data_seconds": 312.729203,
+        "bytes_received_each_direction": 540672,
+        "functional_pass": true,
+        "realtime_pass": false,
+        "timing_failures": [
+          "mean combined DSP exceeds 10 ms"
+        ],
+        "combined_mean_ms": 10.089324,
+        "tail_budget_ms": 16.238184,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "auto-rate",
+        "role": "answer",
+        "seed": 3718,
+        "data_seconds": 336.37474,
+        "bytes_received_each_direction": 540672,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 9.917062,
+        "tail_budget_ms": 15.616054,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 31200,
+            "b1_bit_errors": 55,
+            "standard_qualification": false
+          },
+          {
+            "tx": 24000,
+            "rx": 24000,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 26400,
+            "rx": 26400,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 26400,
+            "rx": 28800,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 26400,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 26400,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      }
+    ],
+    "functional_passes": 12,
+    "realtime_passes": 6
+  },
+  "confirmation": {
+    "pending": [],
+    "cases": [
+      {
+        "probe": "sustained-call",
+        "role": "call",
+        "seed": 3942,
+        "data_seconds": 605.909331,
+        "bytes_received_each_direction": 1081344,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 5.622146,
+        "tail_budget_ms": 9.504207,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "sustained-answer",
+        "role": "answer",
+        "seed": 3941,
+        "data_seconds": 600.447673,
+        "bytes_received_each_direction": 1097728,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 5.567799,
+        "tail_budget_ms": 9.43096,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "drift",
+        "role": "call",
+        "seed": 3701,
+        "data_seconds": 122.884901,
+        "bytes_received_each_direction": 212992,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 6.018256,
+        "tail_budget_ms": 10.386938,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "drift",
+        "role": "answer",
+        "seed": 3701,
+        "data_seconds": 127.642092,
+        "bytes_received_each_direction": 229376,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 5.985822,
+        "tail_budget_ms": 10.06543,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "peer-retrain",
+        "role": "call",
+        "seed": 3711,
+        "data_seconds": 27.03768,
+        "bytes_received_each_direction": 32768,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 5.405135,
+        "tail_budget_ms": 13.75539,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 28800,
+            "rx": 28800,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "peer-retrain",
+        "role": "answer",
+        "seed": 3711,
+        "data_seconds": 29.480204,
+        "bytes_received_each_direction": 32768,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 5.050507,
+        "tail_budget_ms": 11.580166,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 24000,
+            "rx": 24000,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "online-retrain",
+        "role": "call",
+        "seed": 3712,
+        "data_seconds": 55.562221,
+        "bytes_received_each_direction": 65536,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 5.723946,
+        "tail_budget_ms": 13.374266,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 28800,
+            "rx": 28800,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 26400,
+            "rx": 26400,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 28800,
+            "rx": 28800,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "online-retrain",
+        "role": "answer",
+        "seed": 3712,
+        "data_seconds": 59.347287,
+        "bytes_received_each_direction": 65536,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 5.484481,
+        "tail_budget_ms": 11.565036,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 21600,
+            "rx": 21600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 19200,
+            "rx": 19200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 21600,
+            "rx": 21600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "connected-rate",
+        "role": "call",
+        "seed": 3713,
+        "data_seconds": 61.757342,
+        "bytes_received_each_direction": 81920,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 6.078815,
+        "tail_budget_ms": 11.430339,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 31200,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 31200,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "connected-rate",
+        "role": "answer",
+        "seed": 3713,
+        "data_seconds": 62.124349,
+        "bytes_received_each_direction": 81920,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 5.938308,
+        "tail_budget_ms": 11.646546,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 31200,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 31200,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "auto-rollback",
+        "role": "answer",
+        "seed": 3717,
+        "data_seconds": 318.276081,
+        "bytes_received_each_direction": 540672,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 5.887962,
+        "tail_budget_ms": 10.27203,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      },
+      {
+        "probe": "auto-rate",
+        "role": "answer",
+        "seed": 3718,
+        "data_seconds": 308.792174,
+        "bytes_received_each_direction": 540672,
+        "functional_pass": true,
+        "realtime_pass": true,
+        "timing_failures": [],
+        "combined_mean_ms": 5.647575,
+        "tail_budget_ms": 9.747886,
+        "initial_b1_bit_errors": 0,
+        "compression": "NONE",
+        "rate_epochs": [
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 31200,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          },
+          {
+            "tx": 33600,
+            "rx": 33600,
+            "b1_bit_errors": 0,
+            "standard_qualification": true
+          }
+        ]
+      }
+    ],
+    "functional_passes": 12,
+    "realtime_passes": 12
+  }
+}

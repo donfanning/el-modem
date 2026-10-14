@@ -1,0 +1,15 @@
+El-Modem community source is offered under GNU GPL version 3 or, at your
+option, any later version (SPDX: GPL-3.0-or-later).
+
+This license applies to original El-Modem code and documentation, except where
+a file carries a different license. Copyright remains with the respective
+copyright holders. See LICENSE for the community license and CREDITS.md for
+provenance and third-party references.
+
+Separate commercial licensing may be offered by the rights holders for uses
+that require different terms, including proprietary incorporation. Contact
+me, Don Fanning (jfalcon; GitHub: donfanning), to discuss commercial terms.
+This notice does not itself grant a proprietary license or promise rights to third-party components.
+
+Third-party dependencies and the separate serialsim driver/patch retain their
+own licenses. Nothing here changes those licenses.

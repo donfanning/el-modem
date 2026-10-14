@@ -1,0 +1,37 @@
+name: Windows COM qualification
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Disposable Windows host
+        type: choice
+        options: [windows-2022, windows-2025]
+        default: windows-2022
+permissions:
+  contents: read
+jobs:
+  signed-driver-probe:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test official signed com0com without security policy changes
+        timeout-minutes: 6
+        shell: pwsh
+        run: ./packaging/windows/probe_com_driver.ps1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Actual Tera Term serial Hayes command path on published rc1
+        run: python packaging/windows/qualify_com_terminal.py
+      - name: Remove owned COM pair and temporary publisher consent
+        if: always()
+        timeout-minutes: 2
+        shell: pwsh
+        run: ./packaging/windows/cleanup_com_driver.ps1
+      - name: Retain reports only (no vendor binaries)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-com-driver-reports
+          path: com-reports/

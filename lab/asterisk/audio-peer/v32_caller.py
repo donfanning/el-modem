@@ -1,0 +1,533 @@
+"""V.32 caller transmitter (pure Python, no numpy).
+
+Implemented from ITU-T V.32 / V.32bis. The scrambler, differential coders, trellis
+encoder and constellation tables are derived from the Recommendation's Tables 1, 2 and
+5 and Figures 1 to 4 (see ``packaging/audit_v32_tables.py``). An earlier revision of this
+file was written while reading Fisher's modem source. This revision re-expresses
+those parts from the Recommendation and reproduces the earlier output bit for bit.
+Fisher's historical work remains credited; Rossi's MIT notice is not asserted to
+license the cached original Fisher files. See ``docs/SOURCE_PROVENANCE.md`` for
+the history and limits of this review. The signal was also checked against an
+independent V.32 answerer.
+Nothing here comes from the Smart Link blob.
+
+Signal: 2400 baud QAM on an 1800 Hz carrier, root-raised-cosine shaping (the
+answerer's transmit spectrum is flat 600-3000 Hz with ~300 Hz roll-offs, i.e. RRC
+with roll-off ~0.25), generated directly at the 8 kHz output instants: symbol k is
+centred at t = k/2400, output sample n at t = n/8000, so the pulse is needed at
+offsets (3n - 10k)/24000 -- a fixed table.
+
+Symbol stream (caller): silence; then
+    S      256 x ABAB...
+    S-bar   16 x CDCD...
+    TRN   8044 symbols from the caller's scrambler GPC (tap 18), reset to 0 and fed
+          with ones: the first 256 use only A/C, the rest all four points
+    rate signal: the 16-bit rate word repeated, MSB first, scrambled with GPC and
+          sent as 4800 bps differentially-coded dibits.
+"""
+
+from __future__ import annotations
+
+import cmath
+import math
+from collections import deque
+
+FS = 8000
+BAUD = 2400
+CARRIER = 1800.0
+SPS24 = 10                 # pulse-table points per symbol on the 24 kHz grid (8 kHz x 3)
+SPAN = 6                   # pulse half-width in symbols
+
+# Four-point constellation of the 4800 bit/s signal (V.32 Figure 2), in label order A, B, D, C.
+POINTS = [(-3 - 1j), (1 - 3j), (-1 + 3j), (3 + 1j)]
+A, B, D, C = POINTS[0], POINTS[1], POINTS[2], POINTS[3]
+
+
+def _quadrant_table():
+    """V.32bis Table 2: new label from (previous label, received dibit), indexed prev << 2 | dibit.
+    Labels A, B, D, C sit at successive Gray-coded quadrants; the dibit selects the phase step."""
+    angle_of_label = [0, 1, 3, 2]
+    label_of_angle = {angle: label for label, angle in enumerate(angle_of_label)}
+    quarter_turns = [1, 0, 2, 3]
+    return [label_of_angle[(angle_of_label[prev] + quarter_turns[dibit]) % 4]
+            for prev in range(4) for dibit in range(4)]
+
+
+NR_DIFF = _quadrant_table()
+
+# V.32bis rate bits and the base of the rate word
+# Table 5 numbers the 16 bits of the rate word B0 (first sent, MSB) to B15
+_RATE_POSITION = {4800: 5, 7200: 9, 9600: 6, 12000: 10, 14400: 12}
+RATE_BITS = {rate: 1 << (15 - pos) for rate, pos in _RATE_POSITION.items()}
+RATE_WORD_BASE = sum(1 << (15 - pos) for pos in (4, 7, 8, 11, 15))   # the fixed ones: 0x0991
+
+TRN_LENGTH = 8044          # measured from the Smart Link answerer; the rate word follows at once
+S_LENGTH, SBAR_LENGTH, TRN_AC_LENGTH = 256, 16, 256
+
+GPC = 18   # caller's scrambler tap (1 + x^-18 + x^-23)
+GPA = 5    # answerer's scrambler tap (1 + x^-5 + x^-23)
+
+
+def rate_word(*bps: int) -> int:
+    word = RATE_WORD_BASE
+    for rate in bps:
+        word |= RATE_BITS[rate]
+    return word
+
+
+class Scrambler:
+    """Self-synchronising scrambler / descrambler (V.32 section 5): the output is the input plus the
+    line signal delayed by ``tap`` symbols plus the line signal delayed by 23, generator
+    1 + x^-tap + x^-23. ``wd`` holds the last 23 line bits, newest in bit 22, oldest in bit 0."""
+
+    def __init__(self, tap: int):
+        self.tap = tap
+        self.wd = 0
+
+    def reset(self) -> None:
+        self.wd = 0
+
+    def _feedback(self) -> int:
+        return ((self.wd >> (23 - self.tap)) ^ self.wd) & 1
+
+    def _push(self, line_bit: int) -> None:
+        self.wd = (self.wd >> 1) | (line_bit << 22)
+
+    def fwd(self, bit: int) -> int:
+        """Scramble: the line bit is the output."""
+        out = bit ^ self._feedback()
+        self._push(out)
+        return out
+
+    def rev(self, bit: int) -> int:
+        """Descramble: the line bit is the input."""
+        out = bit ^ self._feedback()
+        self._push(bit)
+        return out
+
+
+def _trellis_diff(prev: int, dibit: int) -> int:
+    """V.32bis Table 1: differential quadrant coding when trellis coding is used."""
+    p1, p2, q1, q2 = prev >> 1, prev & 1, dibit >> 1, dibit & 1
+    return ((p1 ^ q1) << 1) | (p2 ^ q2 ^ (p1 & q1))
+
+
+TE_DIFF = [_trellis_diff(i >> 2, i & 3) for i in range(16)]       # indexed prev << 2 | dibit
+
+
+def _convolutional_step(state: int, y1y2: int) -> int:
+    """V.32bis Figure 1: three delay elements, held as state = d1 << 2 | d2 << 1 | d3. The
+    redundant bit Y0 is d3; the new state is (d3, next d2, next d3)."""
+    d1, d2, d3 = state >> 2, (state >> 1) & 1, state & 1
+    y1, y2 = y1y2 >> 1, y1y2 & 1
+    tap = d2 ^ y2
+    return (d3 << 2) | ((d1 ^ y1 ^ y2 ^ (tap & d3)) << 1) | (tap ^ (y1 & d3))
+
+
+TFSM = [[_convolutional_step(state, dibit) for dibit in range(4)] for state in range(8)]
+
+
+def _signal_points_16():
+    """V.32bis Figure 2-4 (7200 bit/s): the 16 signal points, indexed by the label Y0 Y1 Y2 Q3."""
+    rows_top_down = ((3, '0010 1000 0111 1110'), (1, '1011 0001 1101 0100'),
+                     (-1, '0110 1111 0011 1001'), (-3, '1100 0101 1010 0000'))
+    table = [0j] * 16
+    for imag, labels in rows_top_down:
+        for real, label in zip((-3, -1, 1, 3), labels.split()):
+            table[int(label, 2)] = complex(real, imag)
+    return table
+
+
+ZTAB4 = _signal_points_16()
+
+
+class Trellis7200Encoder:
+    """7200 bit/s: Q1 Q2 differentially coded, the pair run through the convolutional encoder,
+    Q3 uncoded. ``q`` is the previous differential output."""
+
+    def __init__(self, q: int = 0) -> None:
+        self.q = q & 3
+        self.t = 0
+
+    def encode(self, b: int) -> complex:
+        y = TE_DIFF[(self.q << 2) | (b >> 1)]
+        self.q = y
+        label = ((self.t & 1) << 3) | (y << 1) | (b & 1)
+        self.t = TFSM[self.t][y]
+        return ZTAB4[label]
+
+
+# V.32 9600 bps trellis-coded signal-state mapping, keyed (Y0, Y1, Y2, Q3, Q4) -> Re+Im*j.
+# Source: ITU-T V.32 Table 2 (trellis column) as reproduced in T. Lindebaum, "Design of a Simulation for
+# Trellis Coded Modulation" (Univ. of Cape Town), Table 3.2 and Fig. 3.4; checked against the Smart Link
+# answerer, whose transmitted symbols lie on exactly these 32 points.
+V32_TCM_9600 = {
+    (0,0,0,0,0):(-4,1),
+    (0,0,0,0,1):(0,-3),
+    (0,0,0,1,0):(0,1),
+    (0,0,0,1,1):(4,1),
+    (0,0,1,0,0):(4,-1),
+    (0,0,1,0,1):(0,3),
+    (0,0,1,1,0):(0,-1),
+    (0,0,1,1,1):(-4,-1),
+(0,1,0,0,0):(-2,3),
+    (0,1,0,0,1):(-2,-1),
+    (0,1,0,1,0):(2,3),
+    (0,1,0,1,1):(2,-1),
+    (0,1,1,0,0):(2,-3),
+    (0,1,1,0,1):(2,1),
+    (0,1,1,1,0):(-2,-3),
+    (0,1,1,1,1):(-2,1),
+(1,0,0,0,0):(-3,-2),
+    (1,0,0,0,1):(1,-2),
+    (1,0,0,1,0):(-3,2),
+    (1,0,0,1,1):(1,2),
+    (1,0,1,0,0):(3,2),
+    (1,0,1,0,1):(-1,2),
+    (1,0,1,1,0):(3,-2),
+    (1,0,1,1,1):(-1,-2),
+(1,1,0,0,0):(1,4),
+    (1,1,0,0,1):(-3,0),
+    (1,1,0,1,0):(1,0),
+    (1,1,0,1,1):(1,-4),
+    (1,1,1,0,0):(-1,-4),
+    (1,1,1,0,1):(3,0),
+    (1,1,1,1,0):(-1,0),
+    (1,1,1,1,1):(-1,4)
+}
+V32_TCM_9600 = {k: complex(*v) for k, v in V32_TCM_9600.items()}
+
+
+def _scaled(table, power=10.0):
+    """Label-string table -> {bit tuple: complex} scaled to the given average power."""
+    pts = {tuple(int(b) for b in k): complex(*v) for k, v in table.items()}
+    p = sum(abs(z) ** 2 for z in pts.values()) / len(pts)
+    f = (power / p) ** 0.5
+    return {k: z * f for k, z in pts.items()}
+
+
+# the V.32bis 12000/14400 figures are in their own units; scaled to the training power like 9600
+from v32bis_tables import V32BIS_12000, V32BIS_14400  # noqa: E402
+
+V32_TCM = {9600: V32_TCM_9600, 12000: _scaled(V32BIS_12000), 14400: _scaled(V32BIS_14400)}
+TCM_BITS = {9600: 4, 12000: 5, 14400: 6}              # data bits per symbol
+
+
+class TrellisEncoder:
+    """V.32/V.32bis TCM at 9600, 12000 or 14400 bps: Q1,Q2 -> differential (Y2Y1 = previous + Q2Q1
+    mod 4) -> 8-state encoder (state bit 0 is Y0, next state = TFSM[state][(Y1<<1)|Y2], the same code as
+    7200); Q3.. uncoded. The first scrambler bit is Q1. 9600 verified bit-for-bit against the blob and
+    on a real call; 12000/14400 use the ITU V.32bis figures (see v32bis_tables.py)."""
+
+    def __init__(self, rate: int = 9600) -> None:
+        self.table = V32_TCM[rate]
+        self.nbits = TCM_BITS[rate]
+        self.t = 0
+        self.y = 0
+
+    def encode(self, b: int) -> complex:
+        n = self.nbits
+        q1, q2 = (b >> (n - 1)) & 1, (b >> (n - 2)) & 1
+        rest = tuple((b >> (n - 3 - i)) & 1 for i in range(n - 2))
+        self.y = (self.y + ((q2 << 1) | q1)) & 3
+        y2, y1 = self.y >> 1, self.y & 1
+        z = self.table[(self.t & 1, y1, y2) + rest]
+        self.t = TFSM[self.t][(y1 << 1) | y2]
+        return z
+
+
+class Trellis9600Encoder(TrellisEncoder):
+    def __init__(self) -> None:
+        super().__init__(9600)
+
+
+class Differential4800Encoder:
+    """Non-redundant 4800 bps coding: two bits per symbol, differentially coded."""
+
+    def __init__(self) -> None:
+        self.q = 0                                  # previous label
+
+    def encode(self, dibit: int) -> complex:
+        self.q = NR_DIFF[(self.q << 2) | dibit]
+        return POINTS[self.q]
+
+
+def rrc_pulse(rolloff: float, span: int = SPAN, per_symbol: int = SPS24) -> list[float]:
+    """Root-raised-cosine pulse on a grid of ``per_symbol`` points per symbol (10 =
+    the 24 kHz grid used for 8 kHz output), returned over -span*per_symbol ..
+    +span*per_symbol (centre at ``span * per_symbol``)."""
+    b = rolloff
+    out = []
+    for j in range(-span * per_symbol, span * per_symbol + 1):
+        t = j / per_symbol
+        if j == 0:
+            v = 1.0 - b + 4.0 * b / math.pi
+        elif abs(abs(4.0 * b * t) - 1.0) < 1e-9:
+            v = (b / math.sqrt(2.0)) * (
+                (1 + 2 / math.pi) * math.sin(math.pi / (4 * b))
+                + (1 - 2 / math.pi) * math.cos(math.pi / (4 * b))
+            )
+        else:
+            v = (math.sin(math.pi * t * (1 - b)) + 4 * b * t * math.cos(math.pi * t * (1 + b))) / (
+                math.pi * t * (1 - (4 * b * t) ** 2)
+            )
+        out.append(v)
+    return out
+
+
+class V32CallerTx:
+    """Generates the caller's audio. Call ``start_training()`` when it is time (after
+    the answerer's R1), then ``tx_samples(n)`` for every 8 kHz block."""
+
+    def __init__(self, my_rates=(9600,), amplitude: float = 900.0, rolloff: float = 0.25,
+                 scrambler_tap: int = GPC, sample_rate: int = FS, span: int = SPAN,
+                 role: str = "caller", s_length: int = S_LENGTH, trn_length: int = TRN_LENGTH,
+                 carrier: float = CARRIER):
+        self.role = role
+        self.carrier = carrier
+        self.s_length = s_length
+        self.trn_length = trn_length
+        if role == "answerer" and scrambler_tap == GPC:
+            scrambler_tap = GPA
+        if sample_rate not in (8000, 9600):
+            raise ValueError("sample_rate must be 8000 or 9600")
+        self.fs = sample_rate
+        # grid: 24 kHz for 8 kHz output (3 grid steps per sample, 10 per symbol);
+        # the sample rate itself for 9.6 kHz output (1 step per sample, 4 per symbol)
+        self._g_sample = 3 if sample_rate == 8000 else 1
+        self._g_symbol = 10 if sample_rate == 8000 else 4
+        self.rate_word = rate_word(*my_rates)
+        self.amplitude = amplitude
+        self._span = span
+        self._pulse = rrc_pulse(rolloff, span, self._g_symbol)
+        self._centre = span * self._g_symbol
+        # Integer-grid polyphase support, preserving the original summation
+        # order. Only the symbol origin changes between samples of a phase.
+        gy = self._g_symbol
+        self._pulse_phases = [
+            [(offset, self._pulse[self._centre + phase - gy * offset])
+             for offset in range(-span + bool(phase), span + 1)]
+            for phase in range(gy)
+        ]
+        self._scr = Scrambler(scrambler_tap)
+        self._enc = Differential4800Encoder()
+        self._symbol_source = self._silence()
+        self._sym: dict[int, complex] = {}     # absolute symbol index -> value
+        self._k_next = 0                       # next symbol index to be generated
+        self._n = 0                            # absolute output sample index
+        self._ac_reversed = False
+        self._send_e = False
+        self._e_word = None
+        self.data_rate = max(my_rates)
+        self.bit_source = None
+        self._tx_bytes: deque[int] = deque()
+        self._byte_bits: deque[int] = deque()
+        self._current_byte = None
+        self._current_bits_left = 0
+        self.state = "silent"                  # silent | ac | training | rate
+
+    # -- symbol generators ----------------------------------------------------
+    @staticmethod
+    def _silence():
+        while True:
+            yield 0j
+
+    def _training(self, gap_symbols: int = 0):
+        scr = self._scr
+        scr.reset()
+        for _ in range(gap_symbols):                # silence between AC and S (answerer)
+            yield 0j
+        last = 0
+        s_len = self.s_length
+        for bc in range(s_len + SBAR_LENGTH + self.trn_length):
+            if bc < s_len:                          # S: ABAB...
+                yield POINTS[1] if bc & 1 else POINTS[0]
+            elif bc < s_len + SBAR_LENGTH:          # S-bar: CDCD...
+                yield POINTS[2] if bc & 1 else POINTS[3]
+            else:                                   # TRN
+                b1, b2 = scr.fwd(1), scr.fwd(1)
+                if bc < s_len + SBAR_LENGTH + TRN_AC_LENGTH:
+                    b2 = b1
+                last = (b1 << 1) | b2
+                yield POINTS[last]
+        self.state = "rate"
+        yield from self._rate_signal(last)
+
+    def _rate_signal(self, last_point: int = 0):
+        enc = self._enc
+        enc.q = last_point                          # differential coding continues from the TRN
+        scr = self._scr                             # ... and so does the scrambler
+        word = self.rate_word
+        bits = []                                   # the word starts right after the TRN
+        sent_e = False
+        while True:
+            if self._send_e and not sent_e and not bits:
+                # E: the agreed rate (one bit) with the top nibble set (the agreed rate with the top nibble set, 0xF000)
+                word_now, sent_e, self.state = (self._e_word if self._e_word is not None else (word | 0xF000)), True, "e"
+            elif sent_e:
+                word_now = None                     # after E: scrambled ones until data starts
+            else:
+                word_now = word
+            if word_now is None and self.data_rate in (7200, 9600, 12000, 14400):
+                break                               # E is out; switch to trellis data
+            if word_now is None:
+                bits += [self._next_data_bit() for _ in range(16)]
+            else:
+                bits += [(word_now >> (15 - i)) & 1 for i in range(16)]
+            while len(bits) >= 2:
+                b1 = scr.fwd(bits.pop(0))
+                b2 = scr.fwd(bits.pop(0))
+                yield enc.encode((b1 << 1) | b2)
+        # trellis modes: scrambled bits per symbol through the trellis encoder (E went out at 4800)
+        if self.data_rate in TCM_BITS:
+            tenc, nbits = TrellisEncoder(self.data_rate), TCM_BITS[self.data_rate]
+        else:
+            tenc, nbits = Trellis7200Encoder(0), 3
+        while True:
+            b = 0
+            for _ in range(nbits):
+                b = (b << 1) | scr.fwd(self._next_data_bit())
+            yield tenc.encode(b)
+
+    def feed_bytes(self, data: bytes) -> None:
+        """Queue application bytes; sent async-framed (start 0, 8 data LSB first, stop 1) once E
+        has been sent. Idle is ones (marks)."""
+        self._tx_bytes.extend(data)
+
+    def _frame_bit(self) -> int:
+        """Next bit of the async-framed byte queue (idle marks)."""
+        if not self._byte_bits and self._tx_bytes:
+            b = self._tx_bytes.popleft()
+            self._current_byte = b
+            self._current_bits_left = 10
+            self._byte_bits.extend([0] + [(b >> i) & 1 for i in range(8)] + [1])
+        bit = self._byte_bits.popleft() if self._byte_bits else 1
+        if self._current_bits_left:
+            self._current_bits_left -= 1
+            if not self._current_bits_left:
+                self._current_byte = None
+        return bit
+
+    def feed_marks(self, n: int) -> None:
+        """Queue ``n`` idle mark bits (lets a peer's async receiver resynchronise)."""
+        self._byte_bits.extend([1] * n)
+
+    def _next_data_bit(self) -> int:
+        if self.bit_source is not None:               # e.g. a V.42 layer owns the bit stream
+            return self.bit_source()
+        return self._frame_bit()
+
+    def request_e(self, rate: int | None = None) -> None:
+        """Send E (once) at the next rate-word boundary: the answerer's R3 has been seen.
+        ``rate`` picks the agreed rate (default: the highest we offered); E carries just that bit."""
+        if rate is not None:
+            self.data_rate = rate
+            self._e_word = 0xF000 | RATE_WORD_BASE | RATE_BITS[rate]
+        self._send_e = True
+
+    def start_rate_change(self, exchange):
+        """Install a section-8 symbol stream without resetting PCM clock/history.
+
+        Internal transmitter hook only. A live owner must validate receive
+        preamble/E and account for the pulse shaper's generated-ahead symbols
+        before declaring rate completion. Existing startup stays unchanged.
+        """
+        from v32_rate_change import RateChangeTx
+        if not isinstance(exchange, RateChangeTx):
+            raise TypeError('RateChangeTx required')
+        expected_role = 'call' if self.role == 'caller' else 'answer'
+        if exchange.role != expected_role or self.state not in ('e', 'data'):
+            raise ValueError('matching connected transmitter without active exchange required')
+        self._rate_change = exchange
+        self.rate_change_start_symbol = self._k_next
+        self.rate_change_data_symbol = None
+        self.rate_change_terminal_symbol = None
+        self.state = 'rrp_pending'
+        self._symbol_source = self._rate_change_symbols(exchange)
+        return self.rate_change_start_symbol
+
+    def _rate_change_symbols(self, exchange):
+        for symbol in exchange.symbols(self._next_data_bit):
+            self.state = 'data' if exchange.state == 'data' else 'rrp_' + exchange.state
+            if exchange.state in ('ones', 'data'):
+                self.data_rate = exchange.selected_rate
+            if exchange.state == 'data' and self.rate_change_data_symbol is None:
+                self.rate_change_data_symbol = self._k_next
+            yield symbol
+        self.state = 'rrp_cleared'
+        self.rate_change_terminal_symbol = self._k_next
+        yield from self._silence()
+
+    # -- answerer-side signals (used by the test rig to play the far end) ---------
+    def _alternating(self):
+        """AC: A and C alternating (600 + 3000 Hz); the order flips on ``reverse_ac``."""
+        while True:
+            first, second = (A, C) if not self._ac_reversed else (C, A)
+            yield first
+            yield second
+
+    def start_ac(self) -> None:
+        self._ac_reversed = False
+        self.state = "ac"
+        self._symbol_source = self._alternating()
+        self._sym = {k: 0j for k in self._sym}
+
+    def reverse_ac(self) -> None:
+        """Phase-reverse the alternating signal (AC <-> CA)."""
+        self._ac_reversed = not self._ac_reversed
+
+    def stop(self) -> None:
+        """Cease transmitting (the symbols already generated ahead still ramp out)."""
+        self.state = "silent"
+        self._symbol_source = self._silence()
+
+    def start_training_now(self, gap_symbols: int = 0) -> None:
+        """Begin S/S-bar/TRN from any state (the answerer does this after the AC/CA/AC dance;
+        the Smart Link answerer leaves ~29 symbols of silence between its AC and its S)."""
+        self.state = "training"
+        self._symbol_source = self._training(gap_symbols)
+        self._sym = {k: 0j for k in self._sym}
+
+    # -- control ------------------------------------------------------------
+    def start_training(self) -> None:
+        """Begin S/S-bar/TRN at the next symbol boundary."""
+        if self.state != "silent":
+            return
+        self.state = "training"
+        self._symbol_source = self._training()
+        # symbols already generated (look-ahead) stay silent; drop them so the
+        # training begins as soon as the pulse window allows
+        self._sym = {k: 0j for k in self._sym}
+
+    # -- audio -----------------------------------------------------------------
+    def _symbol(self, k: int) -> complex:
+        while self._k_next <= k:
+            self._sym[self._k_next] = next(self._symbol_source) * self.amplitude
+            self._k_next += 1
+        return self._sym.get(k, 0j)
+
+    def tx_samples(self, count: int) -> list[int]:
+        out = []
+        phases = self._pulse_phases
+        gs, gy = self._g_sample, self._g_symbol
+        symbols = self._sym
+        get_symbol = symbols.get
+        for _ in range(count):
+            n = self._n
+            origin, phase = divmod(gs * n, gy)
+            k_hi = origin + self._span
+            if self._k_next <= k_hi:
+                self._symbol(k_hi)
+            acc = 0j
+            for offset, coefficient in phases[phase]:
+                v = get_symbol(origin + offset, 0j)
+                if v:
+                    acc += v * coefficient
+            theta = 2.0 * math.pi * self.carrier * n / self.fs
+            out.append(round(acc.real * math.cos(theta) - acc.imag * math.sin(theta)))
+            self._n += 1
+        # forget symbols that can no longer influence the output
+        horizon = (gs * self._n) // gy - self._span - 2
+        for k in [k for k in self._sym if k < horizon]:
+            del self._sym[k]
+        return out

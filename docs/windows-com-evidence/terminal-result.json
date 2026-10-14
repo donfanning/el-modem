@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "scope": "Exact published rc1 TCP DTE through com0com/com2tcp and real Tera Term serial command path; no DSP call, modem-control signal or oldest-OS claim",
+  "cleanup": [
+    {
+      "pid": 1852,
+      "exit_code": 0
+    },
+    {
+      "pid": 3044,
+      "exit_code": 1
+    },
+    {
+      "pid": 1744,
+      "exit_code": 0
+    }
+  ]
+}

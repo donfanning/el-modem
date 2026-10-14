@@ -1,0 +1,179 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "run": "https://github.com/donfanning/el-modem/actions/runs/38643125397",
+  "source_commit": "2f364474dd7f5850648835414647e8a4d6e10da5",
+  "date": "2026-10-14",
+  "scope": "Exact published rc1 supervisor/worker through OS PTY and actual minicom; Hayes identity/readback/reset, two sessions with close/reopen, and clean shutdown on both macOS architectures.",
+  "results": [
+    {
+      "target": "macos-x86_64",
+      "result": {
+        "status": "PASS",
+        "target": "macos-x86_64",
+        "executable_sha256": "9cf4a1d863c6c780ab770d7c90e814c8cbe254909476b9040957ac3e217de18f",
+        "platform": "macOS-15.7.9-x86_64-i386-64bit",
+        "machine": "x86_64",
+        "scope": "Actual minicom \u2192 OS PTY \u2192 frozen supervisor/worker, Hayes commands, terminal close/reopen and clean teardown. No DSP/PSTN call or hardware RS232 signals.",
+        "pty_endpoint": "/dev/ttys000",
+        "minicom_version": "minicom version 2.11.1 (compiled Feb 28 2026)\nCopyright (C) Miquel van Smoorenburg.\n\nThis program is free software; you can redistribute it and/or\nmodify it under the terms of the GNU General Public License\nas published by the Free Software Foundation; either version\n2 of the License, or (at your option) any later version.",
+        "sessions": [
+          {
+            "application": "/usr/local/bin/minicom",
+            "argv": [
+              "/usr/local/bin/minicom",
+              "-o",
+              "-D",
+              "/var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/el-modem-pty-8vm77lp2/instances/modem-1/serial",
+              "-b",
+              "115200",
+              "-8",
+              "-C",
+              "/Users/runner/work/el-modem/el-modem/pty-reports/first-capture.txt",
+              "elmodem-qualification-64550c0198f540908d1e8d8ed737293b"
+            ],
+            "exit_code": 0,
+            "capture_sha256": "a3dedb10ccb8dd0b0b9b6838534da09721a9c59a00f1d6e0981cf819b97bb0eb",
+            "commands": [
+              "ATZ",
+              "ATE0",
+              "ATI3",
+              "ATS0=9",
+              "ATS0?",
+              "ATZ",
+              "ATE0",
+              "ATS0?"
+            ]
+          },
+          {
+            "application": "/usr/local/bin/minicom",
+            "argv": [
+              "/usr/local/bin/minicom",
+              "-o",
+              "-D",
+              "/var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/el-modem-pty-8vm77lp2/instances/modem-1/serial",
+              "-b",
+              "115200",
+              "-8",
+              "-C",
+              "/Users/runner/work/el-modem/el-modem/pty-reports/reopened-capture.txt",
+              "elmodem-qualification-73e1c38f1c164b26840cc2910c2264d5"
+            ],
+            "exit_code": 0,
+            "capture_sha256": "184604f1a3bbf99b4ebfa90a53f25b19a389de5db532339eea33e04e8aead7ea",
+            "commands": [
+              "ATZ",
+              "ATE0",
+              "ATI3",
+              "ATS0=9",
+              "ATS0?",
+              "ATZ",
+              "ATE0",
+              "ATS0?"
+            ]
+          }
+        ],
+        "cleanup": {
+          "supervisor_exit": 0,
+          "serial_link_removed": true
+        }
+      },
+      "evidence_sha256": {
+        "result.json": "6a7ce5c6a2ccbb8f0fd85f9f75d91af83fc408bd60affa5f99b02021b2a46e66",
+        "first-capture.txt": "a3dedb10ccb8dd0b0b9b6838534da09721a9c59a00f1d6e0981cf819b97bb0eb",
+        "reopened-capture.txt": "184604f1a3bbf99b4ebfa90a53f25b19a389de5db532339eea33e04e8aead7ea",
+        "first-ui.txt": "e465d9bf14619cbe9c95ed0a6f5683253889ce9bf5f51c1fecf6e9f1bc7aea0a",
+        "reopened-ui.txt": "e88e430c6b83398d188e2580e5ffdde4242a3c38903ecd36f57a92a7894d07fd",
+        "worker.log": "01b565a60ed543ff376a51ee456d2ffe121cc42dcca3f35bda9957e452408f78",
+        "supervisor.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "target": "macos-arm64",
+      "result": {
+        "status": "PASS",
+        "target": "macos-arm64",
+        "executable_sha256": "e85818e067caba2983a07b911bdbad66e77ad1c488a5c9f064d8b8286ddf4096",
+        "platform": "macOS-15.7.9-arm64-arm-64bit",
+        "machine": "arm64",
+        "scope": "Actual minicom \u2192 OS PTY \u2192 frozen supervisor/worker, Hayes commands, terminal close/reopen and clean teardown. No DSP/PSTN call or hardware RS232 signals.",
+        "pty_endpoint": "/dev/ttys000",
+        "minicom_version": "minicom version 2.11.1 (compiled Feb 28 2026)\nCopyright (C) Miquel van Smoorenburg.\n\nThis program is free software; you can redistribute it and/or\nmodify it under the terms of the GNU General Public License\nas published by the Free Software Foundation; either version\n2 of the License, or (at your option) any later version.",
+        "sessions": [
+          {
+            "application": "/opt/homebrew/bin/minicom",
+            "argv": [
+              "/opt/homebrew/bin/minicom",
+              "-o",
+              "-D",
+              "/var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T/el-modem-pty-lft2zodl/instances/modem-1/serial",
+              "-b",
+              "115200",
+              "-8",
+              "-C",
+              "/Users/runner/work/el-modem/el-modem/pty-reports/first-capture.txt",
+              "elmodem-qualification-63db1b3fe5e5415781afd6951e3fa265"
+            ],
+            "exit_code": 0,
+            "capture_sha256": "a3dedb10ccb8dd0b0b9b6838534da09721a9c59a00f1d6e0981cf819b97bb0eb",
+            "commands": [
+              "ATZ",
+              "ATE0",
+              "ATI3",
+              "ATS0=9",
+              "ATS0?",
+              "ATZ",
+              "ATE0",
+              "ATS0?"
+            ]
+          },
+          {
+            "application": "/opt/homebrew/bin/minicom",
+            "argv": [
+              "/opt/homebrew/bin/minicom",
+              "-o",
+              "-D",
+              "/var/folders/nj/vtw8zd2j31d1gdrtntc5y4600000gn/T/el-modem-pty-lft2zodl/instances/modem-1/serial",
+              "-b",
+              "115200",
+              "-8",
+              "-C",
+              "/Users/runner/work/el-modem/el-modem/pty-reports/reopened-capture.txt",
+              "elmodem-qualification-73a14e823c454b8a91b9427ab79918e2"
+            ],
+            "exit_code": 0,
+            "capture_sha256": "184604f1a3bbf99b4ebfa90a53f25b19a389de5db532339eea33e04e8aead7ea",
+            "commands": [
+              "ATZ",
+              "ATE0",
+              "ATI3",
+              "ATS0=9",
+              "ATS0?",
+              "ATZ",
+              "ATE0",
+              "ATS0?"
+            ]
+          }
+        ],
+        "cleanup": {
+          "supervisor_exit": 0,
+          "serial_link_removed": true
+        }
+      },
+      "evidence_sha256": {
+        "result.json": "f53dbedaf351ddb10311e01bd684b913ebc7ea517bb6084411cd68982c89e64f",
+        "first-capture.txt": "a3dedb10ccb8dd0b0b9b6838534da09721a9c59a00f1d6e0981cf819b97bb0eb",
+        "reopened-capture.txt": "184604f1a3bbf99b4ebfa90a53f25b19a389de5db532339eea33e04e8aead7ea",
+        "first-ui.txt": "ec1b5bd9453f719c79ca36a5a3f40805a704362bc5feaa314215c3ce4f861ce4",
+        "reopened-ui.txt": "1ff5479c3f16c6e6b4fe471b4ba602bd450fb90a4c7b4088dbb2c930fece1f8c",
+        "worker.log": "01b565a60ed543ff376a51ee456d2ffe121cc42dcca3f35bda9957e452408f78",
+        "supervisor.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  ],
+  "limits": [
+    "One passing run per architecture on macOS15.7.9; not oldest-OS qualification.",
+    "No connected DSP/PSTN payload, physical modem signals, GUI Gatekeeper/notarization, load or multiworker qualification.",
+    "First run38642695979 returned correct AT responses but failed harness terminal teardown; it is retained as failed, not counted as qualification."
+  ]
+}

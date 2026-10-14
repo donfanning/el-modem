@@ -1,0 +1,20 @@
+[
+    {
+        "Name":  "com0com - bus for serial port pair emulator 0 (COM41 \u003c-\u003e COM42)",
+        "PNPDeviceID":  "ROOT\\COM0COM\\0000",
+        "ConfigManagerErrorCode":  0,
+        "Status":  "OK"
+    },
+    {
+        "Name":  "com0com - serial port emulator CNCA0 (COM41)",
+        "PNPDeviceID":  "COM0COM\\PORT\\CNCA0",
+        "ConfigManagerErrorCode":  0,
+        "Status":  "OK"
+    },
+    {
+        "Name":  "com0com - serial port emulator CNCB0 (COM42)",
+        "PNPDeviceID":  "COM0COM\\PORT\\CNCB0",
+        "ConfigManagerErrorCode":  0,
+        "Status":  "OK"
+    }
+]
