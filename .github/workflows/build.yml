@@ -88,6 +88,13 @@ jobs:
           python packaging/inventory_portable.py "$exe" candidate-notices --lineage build/native-processing.jsonl
           python packaging/package_native_candidate.py "$exe" "build/el-modem-0.1.0-rc1-${CANDIDATE_TARGET}.zip" --target "$CANDIDATE_TARGET" --revision "$CANDIDATE_REVISION"
           python packaging/candidate_transport.py "build/el-modem-0.1.0-rc1-${CANDIDATE_TARGET}.zip" "encrypted-candidates/el-modem-0.1.0-rc1-${CANDIDATE_TARGET}.zip.age"
+      - name: Windows installer (downloads the Microsoft runtime at install time)
+        if: inputs.candidate_recipient != '' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./packaging/windows/build_installer.ps1 -Archive build/el-modem-0.1.0-rc1-windows-x86_64.zip -Version 0.1.0-rc1 -Out build/installer
+          $setup = (Get-ChildItem build/installer -Filter '*-setup.exe').FullName
+          python packaging/candidate_transport.py $setup "encrypted-candidates/el-modem-0.1.0-rc1-windows-x86_64-setup.exe.age"
       - name: Retain encrypted candidates only
         if: inputs.candidate_recipient != '' && success()
         uses: actions/upload-artifact@v4
