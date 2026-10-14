@@ -1,4 +1,7 @@
-"""Streaming V.32 caller modem (pure Python; written from scratch).
+"""Streaming V.32 caller modem in Python.
+
+Reference-informed design choices are credited in ``docs/SOURCE_PROVENANCE.md``;
+this module does not assert clean-room authorship.
 
 ``V32Modem`` has the same surface as the lab's other engines (``feed_pcm`` / ``tx_samples`` /
 ``feed_bytes`` / ``connected`` / ``bit_rate`` / ``pending_bits``) and runs the whole V.32 caller

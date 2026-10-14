@@ -21,6 +21,11 @@ from PyInstaller.archive.readers import CArchiveReader
 def sha(data):return hashlib.sha256(data).hexdigest()
 
 
+def is_notice(name):
+    return (not name.casefold().endswith(('.py','.pyc')) and
+            bool(re.search(r'(^|[/_.-])(licen[cs]es?|copying|notices?|copyrights?)([/_.-]|$)',name,re.I)))
+
+
 NATIVE_MAGIC=(b'MZ',b'\x7fELF',b'\xfe\xed\xfa\xce',b'\xfe\xed\xfa\xcf',b'\xce\xfa\xed\xfe',b'\xcf\xfa\xed\xfe',b'\xca\xfe\xba\xbe')
 
 
@@ -68,7 +73,7 @@ def inventory(executable,output,lineage=None):
             if not path.is_file():continue
             if path.suffix.lower() in ('.so','.dll','.pyd','.dylib') or '.so.' in path.name:
                 native_index.setdefault(path.name.casefold(),[]).append((path,name))
-            if re.search(r'(^|[/_.-])(licen[cs]e|copying|notice|copyright)([/_.-]|$)',str(file),re.I) and path.suffix not in ('.py','.pyc'):
+            if is_notice(str(file)) and path.suffix not in ('.py','.pyc'):
                 relative=Path(component)/Path(*[re.sub(r'[^A-Za-z0-9._-]','_',part) for part in Path(file).parts if part not in ('..','.')])
                 notice(path,name,relative);paths.append(str(Path('licenses')/relative))
         records.append(dict(name=name,version=dist.version,license_expression=dist.metadata.get('License-Expression'),declared_license=dist.metadata.get('License'),notices=paths))

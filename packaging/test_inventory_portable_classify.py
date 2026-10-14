@@ -1,8 +1,15 @@
 import unittest
-from inventory_portable import is_native
+from inventory_portable import is_native, is_notice
 
 
 class Classify(unittest.TestCase):
+    def test_component_notices_include_plural_names(self):
+        for name in ('LICENSES.third-party', 'LICENSE.thirdparty', 'LICENSE.txt',
+                     'package.dist-info/NOTICES', 'COPYING', 'COPYRIGHTS'):
+            self.assertTrue(is_notice(name),name)
+        for name in ('licensed_module.py', 'notices_api.py', 'licensee.txt'):
+            self.assertFalse(is_notice(name),name)
+
     def test_magic(self):
         self.assertTrue(is_native('a.dll', b'MZ\x90\x00'))
         self.assertTrue(is_native('libx', b'\x7fELF\x02'))

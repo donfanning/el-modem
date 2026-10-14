@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "9fd8af82f497b472869007c5623bb24063846ce9",
+  "public_base_revision": "5a407d5c23fbdb59b41a52dd371203541498ce1a",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -721,7 +721,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_rx.py": {
-      "sha256": "abff97ef1738a64356b66fd4f346d99ef2ff091b5bae812b5eb56cbef612cd50",
+      "sha256": "1c3f9f2f14cbb7d11d5ad442bdb73756543775e7ba46893c7547b360faa3eee0",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_sim_rx.py": {
@@ -729,7 +729,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_stream.py": {
-      "sha256": "5f1884c1019d4f14054d483f059816054adabbddb55360da6f5ea9b54ec3948e",
+      "sha256": "96aa34fa0abf639f221cd2e4b9005257e492ac458773f79c2945f67fb9674ce3",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_trn_clock.py": {
@@ -1201,11 +1201,11 @@
       "mode": "100644"
     },
     "packaging/inventory_binary.py": {
-      "sha256": "51e4d480c0c1869bd92c50d5adc9565a6bc33c1d03e15d18a225581ab4029f48",
+      "sha256": "d09b563aee488c49e5b28e5afaabc93ecc4c14c9d37522192fd167a19bd1de8e",
       "mode": "100644"
     },
     "packaging/inventory_portable.py": {
-      "sha256": "360fe33b4e9ed18b956bed1dbd411cea31a0ed4184e725104ed44c0dda9949ee",
+      "sha256": "feab90b744e4b543f0f508e4cce314421e5e085b976e5dcb33d6af3cf5ef42af",
       "mode": "100644"
     },
     "packaging/native_runtime.py": {
@@ -1265,7 +1265,7 @@
       "mode": "100644"
     },
     "packaging/test_inventory_portable_classify.py": {
-      "sha256": "1825ddd4dbd7fc47aad008de5f6a87cfc8d49ff5c1158ae87efce16d79e19799",
+      "sha256": "f465b69d368a3f603a087a7f058640b6832603d52be3c735953345b6696d0ec2",
       "mode": "100644"
     },
     "packaging/test_native_runtime.py": {

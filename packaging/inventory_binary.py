@@ -166,7 +166,7 @@ def inventory(executable, output):
                     if not identical:report['blockers'].append('metadata does not match builder: '+archive_name)
             for file in dist.files or []:
                 path = Path(dist.locate_file(file))
-                if re.search(r'(^|[/_.-])(licen[cs]e|copying|notice|copyright)([/_.-]|$)', str(file), re.I) and path.is_file() and path.suffix not in ('.py','.pyc'):
+                if re.search(r'(^|[/_.-])(licen[cs]es?|copying|notices?|copyrights?)([/_.-]|$)', str(file), re.I) and path.is_file() and path.suffix not in ('.py','.pyc'):
                     dest = Path('python-packages') / re.sub(r'[^a-zA-Z0-9_.-]', '_', name) / path.name
                     if copy_notice(path,dest,name):record['notices'].append(str(Path('licenses')/dest))
             if record['source_examples']:

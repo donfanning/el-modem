@@ -1,13 +1,16 @@
-"""V.32 receiver (written from scratch; Python, with an optional NumPy data-distance path).
+"""V.32 receiver in Python, with an optional NumPy data-distance path.
+
+The design used Fisher's receiver as an algorithm reference. See
+``docs/SOURCE_PROVENANCE.md`` for attribution and the review limits.
 
 Pipeline: real samples -> complex baseband at 1800 Hz -> low-pass -> resample to 2 samples
 per symbol (4800 Hz) -> T/2 complex LMS equalizer, trained on the known TRN sequence and then
 decision-directed with a small carrier PLL -> slicer -> differential decode -> descrambler ->
 bits (async framing is the application's business, see ``deframe_async``).
 
-This first version is "offline-friendly": ``V32Rx.run`` takes a whole capture and the
+The offline API ``V32Rx.run`` takes a whole capture and the
 approximate time the far end's TRN begins; it finds the exact symbol alignment by correlation
-against the expected scrambled sequence. A streaming wrapper is a later step.
+against the expected scrambled sequence. The live streaming wrapper is in ``v32_stream.py``.
 """
 
 from __future__ import annotations
