@@ -50,7 +50,8 @@ settings, status lights and an exclusive ASCII terminal. Configure SIP for your
 PBX or provider; no service account or trunk credentials are supplied.
 
 [Desktop and Hayes settings](docs/DESKTOP.md) ·
-[AT command reference](docs/AT_COMMANDS.md) · [Serial interfaces](docs/SERIAL.md)
+[AT command reference](docs/AT_COMMANDS.md) · [Serial interfaces](docs/SERIAL.md) ·
+[Release OS/runtime requirements](docs/RUNTIME_REQUIREMENTS.md)
 
 For source development, install NumPy, Numba and `textual==0.89.1`, then use:
 

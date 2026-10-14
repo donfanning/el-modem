@@ -1,0 +1,158 @@
+{
+  "schema": 1,
+  "date": "2026-10-14",
+  "scope": "Current rc1 native archives and Windows installer; necessary floors, declared prerequisites and actual tests kept separate",
+  "source_revision": "9fd8af82f497b472869007c5623bb24063846ce9",
+  "artifacts": [
+    {
+      "target": "linux-x86_64",
+      "executable_sha256": "836a8bf8a9959aefec5a227a31185f7ecfe43578188271cd7d36aa830a158afc",
+      "native_count": 98,
+      "floor": {
+        "version": "2.38",
+        "components": [
+          "libcrypto.so.3",
+          "libgomp.so.1.0.0",
+          "libpython3.11.so.1.0",
+          "libreadline.so.8",
+          "libstdc++.so.6",
+          "libuuid.so.1",
+          "python3.11/lib-dynload/_decimal.cpython-311-x86_64-linux-gnu.so",
+          "python3.11/lib-dynload/_pickle.cpython-311-x86_64-linux-gnu.so",
+          "python3.11/lib-dynload/math.cpython-311-x86_64-linux-gnu.so",
+          "python3.11/lib-dynload/pyexpat.cpython-311-x86_64-linux-gnu.so"
+        ],
+        "kind": "GLIBC symbol requirement",
+        "sufficient_for_all_OS_features": false
+      },
+      "special_glibc_requirements": [],
+      "external_msvc_dlls": [],
+      "archive_sha256": "d763afb9a4de8026d67c08f195553ba03246f1db4724c2dacb06aa253e425b01",
+      "bundled_python": "3.11.17",
+      "builder_system": "Linux",
+      "architecture": "x86_64",
+      "observed_tests": [
+        "GLIBC2.36 load rejected",
+        "GLIBC2.38 native offline33 gates PASS",
+        "Ubuntu24.04 local wire qualification12/12 on documented performance CPU profile"
+      ],
+      "architecture_mismatches": []
+    },
+    {
+      "target": "windows-x86_64",
+      "executable_sha256": "f98372c76cb648e1faaf92c925659ab8e6ba065b7e5fd249230ccf3fc82cd7a7",
+      "native_count": 48,
+      "floor": null,
+      "special_glibc_requirements": [],
+      "external_msvc_dlls": [
+        "MSVCP140.dll",
+        "VCOMP140.DLL",
+        "VCRUNTIME140.dll",
+        "VCRUNTIME140_1.dll"
+      ],
+      "archive_sha256": "5766d971843b03dec3a665d4809c5072731829ad193da7fcc15365e0d1ec84b3",
+      "bundled_python": "3.11.9",
+      "builder_system": "Windows",
+      "architecture": "AMD64",
+      "declared_os_floor": "Windows NT10.0 (Windows10+)",
+      "installer_vc_guard": "14.40 x64 or newer",
+      "oldest_vc_runtime_qualified": false,
+      "observed_tests": [
+        "WindowsServer2022 CI offline/worker smoke",
+        "installer on runtime-present CI host; clean runtime-less installation not qualified"
+      ],
+      "architecture_mismatches": []
+    },
+    {
+      "target": "macos-x86_64",
+      "executable_sha256": "9cf4a1d863c6c780ab770d7c90e814c8cbe254909476b9040957ac3e217de18f",
+      "native_count": 90,
+      "floor": {
+        "version": "10.15.0",
+        "components": [
+          "llvmlite/binding/libllvmlite.dylib",
+          "numba/_devicearray.cpython-311-darwin.so",
+          "numba/_dispatcher.cpython-311-darwin.so",
+          "numba/_dynfunc.cpython-311-darwin.so",
+          "numba/_helperlib.cpython-311-darwin.so",
+          "numba/core/runtime/_nrt_python.cpython-311-darwin.so",
+          "numba/core/typeconv/_typeconv.cpython-311-darwin.so",
+          "numba/cuda/cudadrv/_extras.cpython-311-darwin.so",
+          "numba/experimental/jitclass/_box.cpython-311-darwin.so",
+          "numba/mviewbuf.cpython-311-darwin.so",
+          "numba/np/ufunc/_internal.cpython-311-darwin.so",
+          "numba/np/ufunc/omppool.cpython-311-darwin.so",
+          "numba/np/ufunc/workqueue.cpython-311-darwin.so"
+        ],
+        "kind": "Mach-O deployment target",
+        "sufficient_for_all_OS_features": false
+      },
+      "special_glibc_requirements": [],
+      "external_msvc_dlls": [],
+      "archive_sha256": "a1aa43d732da560786b391cdedb4cdd07f8fa3f36f38dbe80c9666dab405fc8e",
+      "bundled_python": "3.11.9",
+      "builder_system": "Darwin",
+      "architecture": "x86_64",
+      "observed_tests": [
+        "macOS15 native CI offline/worker smoke; deployment-floor OS not executed"
+      ],
+      "architecture_mismatches": []
+    },
+    {
+      "target": "macos-arm64",
+      "executable_sha256": "e85818e067caba2983a07b911bdbad66e77ad1c488a5c9f064d8b8286ddf4096",
+      "native_count": 90,
+      "floor": {
+        "version": "11.1.0",
+        "components": [
+          "llvmlite/binding/libllvmlite.dylib",
+          "numba/_devicearray.cpython-311-darwin.so",
+          "numba/_dispatcher.cpython-311-darwin.so",
+          "numba/_dynfunc.cpython-311-darwin.so",
+          "numba/_helperlib.cpython-311-darwin.so",
+          "numba/core/runtime/_nrt_python.cpython-311-darwin.so",
+          "numba/core/typeconv/_typeconv.cpython-311-darwin.so",
+          "numba/cuda/cudadrv/_extras.cpython-311-darwin.so",
+          "numba/experimental/jitclass/_box.cpython-311-darwin.so",
+          "numba/mviewbuf.cpython-311-darwin.so",
+          "numba/np/ufunc/_internal.cpython-311-darwin.so",
+          "numba/np/ufunc/omppool.cpython-311-darwin.so",
+          "numba/np/ufunc/workqueue.cpython-311-darwin.so"
+        ],
+        "kind": "Mach-O deployment target",
+        "sufficient_for_all_OS_features": false
+      },
+      "special_glibc_requirements": [],
+      "external_msvc_dlls": [],
+      "archive_sha256": "463333a23edb426b5f819a2a4d4b22482c5ecdbba9d6e3bcaf9e7a1893fce46b",
+      "bundled_python": "3.11.9",
+      "builder_system": "Darwin",
+      "architecture": "arm64",
+      "observed_tests": [
+        "macOS15 native CI offline/worker smoke; deployment-floor OS not executed"
+      ],
+      "architecture_mismatches": []
+    }
+  ],
+  "windows_installer": {
+    "sha256": "bab1cb831fbf230e45532a30c4a9608a9d5f3218ff5cd706e5092f06e802fa40",
+    "source_sha256": "7da8964e5e3f9e6fbad5451c85fc7db3d98e68b8de25473499223c02acb97814",
+    "min_version": "10.0",
+    "vc_major": 14,
+    "vc_minor_minimum": 40,
+    "architecture": "x64compatible; ARM emulation not qualified",
+    "elevation_required": true,
+    "download_condition": "Runtime absent/older than guard, or explicit /ForceVCRedist=1"
+  },
+  "independent_checks": {
+    "macho_llvm_records": 180,
+    "parser_unit_tests": 6,
+    "linux_glibc238_payload_gates": 33
+  },
+  "limits": [
+    "Deployment/symbol floors are not complete oldest-OS qualification",
+    "Oldest Windows VC runtime and clean installation remain unqualified",
+    "No minimum universal CPU/RAM, multiworker or native COM capacity established",
+    "No raw recordings, provider configuration or proprietary peer redistributed"
+  ]
+}
