@@ -1,0 +1,20 @@
+name: Windows COM qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signed-driver-probe:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test official signed com0com without security policy changes
+        shell: pwsh
+        run: ./packaging/windows/probe_com_driver.ps1
+      - name: Retain reports only (no vendor binaries)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-com-driver-reports
+          path: com-reports/
