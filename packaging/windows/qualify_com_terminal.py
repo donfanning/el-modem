@@ -19,6 +19,13 @@ import zipfile
 
 
 def download(path, urls, digest):
+    cache = os.environ.get('EL_MODEM_COM_CACHE')
+    if cache:
+        fixture = Path(cache) / path.name
+        if hashlib.sha256(fixture.read_bytes()).hexdigest() != digest:
+            raise ValueError('Cached fixture digest mismatch: ' + path.name)
+        shutil.copyfile(fixture, path)
+        return 'local pinned fixture'
     errors = []
     for url in urls:
         try:
@@ -59,7 +66,7 @@ def run():
         for name, urls, digest in packages:
             path = root / (name + '.zip')
             url = download(path, urls, digest)
-            identities[name] = {'url': url, 'archive_sha256': digest}
+            identities[name] = {'url': urls[0], 'acquired_via': url, 'archive_sha256': digest}
             with zipfile.ZipFile(path) as z:
                 z.extractall(root / name)
         exe = next((root / 'modem').rglob('el-modem.exe'))

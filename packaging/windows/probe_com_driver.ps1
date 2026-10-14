@@ -16,11 +16,20 @@ public static class CodeIntegrityProbe {
 '@
     $ciOptions = [CodeIntegrityProbe]::Read()
     @{options=$ciOptions;enabled=([bool]($ciOptions -band 1));testsigning=([bool]($ciOptions -band 2));scope='Effective running-kernel code integrity, not only next-boot BCD'} | ConvertTo-Json | Set-Content "$report/code-integrity.json"
+    if ($env:EL_MODEM_REQUIRE_NORMAL_CI -eq '1' -and (($ciOptions -band 2) -or -not ($ciOptions -band 1))) { throw 'Normal-mode prerequisite failed: test signing allowed or enforcement disabled' }
     Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber | ConvertTo-Json | Set-Content "$report/os.json"
     $zip = Join-Path $env:RUNNER_TEMP 'com0com.zip'
     $downloads = @()
     $valid = $false
+    if ($env:EL_MODEM_COM_DRIVER_ARCHIVE) {
+        Copy-Item $env:EL_MODEM_COM_DRIVER_ARCHIVE $zip
+        $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+        $downloads += @{url='local pinned fixture';sha256=$hash;bytes=(Get-Item $zip).Length}
+        $valid = $hash -eq '6e5d4359865277430d4ae88c73fb7e648a0ed8e81aea5002478179cfcb0bb0e1'
+        if (-not $valid) { throw 'Local driver fixture digest mismatch' }
+    }
     foreach ($hostName in @('downloads.sourceforge.net', 'master.dl.sourceforge.net', 'phoenixnap.dl.sourceforge.net')) {
+        if ($valid) { break }
         try {
             $url = "https://$hostName/project/com0com/com0com/3.0.0.0/com0com-3.0.0.0-i386-and-x64-signed.zip"
             Invoke-WebRequest $url -TimeoutSec 30 -UserAgent 'Python-urllib/3.15' -OutFile $zip
@@ -68,7 +77,7 @@ public static class CodeIntegrityProbe {
     Start-Sleep -Seconds 5
     Get-CimInstance Win32_PnPEntity | Where-Object {$_.Name -match 'com0com|COM41|COM42'} | Select-Object Name,PNPDeviceID,ConfigManagerErrorCode,Status | ConvertTo-Json | Set-Content "$report/devices.json"
     Get-CimInstance Win32_SystemDriver | Where-Object {$_.Name -match 'com0com'} | Select-Object Name,State,StartMode,PathName | ConvertTo-Json | Set-Content "$report/service.json"
-    Add-Type -AssemblyName System.IO.Ports
+    if (-not ('System.IO.Ports.SerialPort' -as [type])) { Add-Type -AssemblyName System.IO.Ports }
     [System.IO.Ports.SerialPort]::GetPortNames() | Set-Content "$report/ports.txt"
     $a = New-Object System.IO.Ports.SerialPort 'COM41',115200
     $b = New-Object System.IO.Ports.SerialPort 'COM42',115200
