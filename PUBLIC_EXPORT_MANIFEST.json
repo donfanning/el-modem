@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "ca63c709a639666b3e97a0caae46f53691431ef5",
+  "public_base_revision": "c1ed38b900e3eb64581cec3031b1c7c5ade80160",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -1309,7 +1309,7 @@
       "mode": "100644"
     },
     "packaging/qualify_pty_terminal.py": {
-      "sha256": "95d3dc34fe2455096e0ad19d28c5729d5abe63b1a940999bdb2c993451728050",
+      "sha256": "fc815d73060be48bf14a509f8fc0cfdc77eb7e6381947c5a9319f69e8d023d93",
       "mode": "100644"
     },
     "packaging/qualify_tui.py": {

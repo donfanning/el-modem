@@ -81,10 +81,19 @@ def terminal_session(endpoint, root, name):
             read_until(expected, start)
             if expected != b'OK':
                 read_until(b'OK', start)
+        quit_start = len(data)
         os.write(master, b'\x01q')
-        time.sleep(.3)
+        read_until(b'Leave without reset', quit_start, seconds=5)
         os.write(master, b'\r')
-        proc.wait(timeout=10)
+        deadline = time.monotonic() + 10
+        while proc.poll() is None and time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], .1)
+            if ready:
+                try:
+                    data.extend(os.read(master, 16384))
+                except OSError:
+                    time.sleep(.05)
+        proc.wait(timeout=1)
         if proc.returncode != 0:
             raise RuntimeError('minicom exit status ' + str(proc.returncode))
         text = capture.read_text(errors='replace')
@@ -94,7 +103,11 @@ def terminal_session(endpoint, root, name):
     finally:
         if proc is not None and proc.poll() is None:
             os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=10)
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait(timeout=5)
         os.close(master)
         if slave is not None:
             os.close(slave)
@@ -145,7 +158,7 @@ def qualify(executable, target, root):
                     result['cleanup'] = {'supervisor_exit': proc.returncode, 'serial_link_removed': True}
                 finally:
                     if proc.poll() is None:
-                        os.killpg(proc.pid, signal.SIGTERM)
+                        proc.send_signal(signal.SIGTERM)
                         proc.wait(timeout=20)
                     worker_log = work / 'instances/modem-1/worker.log'
                     if worker_log.exists():
