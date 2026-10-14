@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "cc49b6527080d5aa3a4c602e5c526ce17bed8f94",
+  "public_base_revision": "29d0f5b1a3da60c0b48a150349cc1cfcd80dc1fa",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -13,7 +13,7 @@
       "mode": "100644"
     },
     ".github/workflows/windows-com.yml": {
-      "sha256": "2f29290c602a83e140dc610dd6e086484fdca1b7aca51fbf2e34aa4eb072405f",
+      "sha256": "652fec8dddf45847ecb661195e92b6aa103d36c063ced9948184ec63f58d00c4",
       "mode": "100644"
     },
     ".gitignore": {
@@ -1328,12 +1328,16 @@
       "sha256": "88e809fd885393034da9cba62f7eb7dc2a10d6a5b0204da6030214a1cbfc2b5c",
       "mode": "100644"
     },
+    "packaging/windows/cleanup_com_driver.ps1": {
+      "sha256": "79f84f554bf382c32138499168317aff5964ae6c5efeee5466855b2f19956a0d",
+      "mode": "100644"
+    },
     "packaging/windows/el-modem.iss": {
       "sha256": "7da8964e5e3f9e6fbad5451c85fc7db3d98e68b8de25473499223c02acb97814",
       "mode": "100644"
     },
     "packaging/windows/probe_com_driver.ps1": {
-      "sha256": "61f7e097f4805dd8c746c22e10e82d6006246506fc7c059a1f90ed882a0f1c96",
+      "sha256": "1e2a4e82f83bb257d21325da57111775891999c0ba0f54198ca032f673389fc9",
       "mode": "100644"
     },
     "packaging/windows/qualify_com_terminal.py": {

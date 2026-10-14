@@ -18,6 +18,11 @@ jobs:
           python-version: '3.11'
       - name: Actual Tera Term serial Hayes command path on published rc1
         run: python packaging/windows/qualify_com_terminal.py
+      - name: Remove owned COM pair and temporary publisher consent
+        if: always()
+        timeout-minutes: 2
+        shell: pwsh
+        run: ./packaging/windows/cleanup_com_driver.ps1
       - name: Retain reports only (no vendor binaries)
         if: always()
         uses: actions/upload-artifact@v4

@@ -43,8 +43,9 @@ try {
     # No root certificate, test-signing or code-integrity policy is changed.
     $certFile = Join-Path $env:RUNNER_TEMP 'verified-publisher.cer'
     [System.IO.File]::WriteAllBytes($certFile, $signature.SignerCertificate.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+    $newPublisher = -not (Test-Path "Cert:\LocalMachine\TrustedPublisher\$($signature.SignerCertificate.Thumbprint)")
     Import-Certificate -FilePath $certFile -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
-    @{subject=$signature.SignerCertificate.Subject;thumbprint=$signature.SignerCertificate.Thumbprint;store='LocalMachine/TrustedPublisher';scope='Disposable VM vendor installation consent; roots and code integrity unchanged'} | ConvertTo-Json | Set-Content "$report/publisher-consent.json"
+    @{newly_added=$newPublisher;subject=$signature.SignerCertificate.Subject;thumbprint=$signature.SignerCertificate.Thumbprint;store='LocalMachine/TrustedPublisher';scope='Disposable VM vendor installation consent; roots and code integrity unchanged'} | ConvertTo-Json | Set-Content "$report/publisher-consent.json"
     $pnputil = Start-Process pnputil -ArgumentList @('/add-driver', $inf.FullName, '/install') -PassThru -RedirectStandardOutput "$report/install.txt" -RedirectStandardError "$report/install-error.txt"
     if (-not $pnputil.WaitForExit(90000)) { $pnputil.Kill(); throw 'pnputil timeout' }
     "pnputil exit: $($pnputil.ExitCode)" | Add-Content "$report/install.txt"
