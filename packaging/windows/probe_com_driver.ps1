@@ -12,7 +12,7 @@ try {
     foreach ($hostName in @('downloads.sourceforge.net', 'master.dl.sourceforge.net', 'phoenixnap.dl.sourceforge.net')) {
         try {
             $url = "https://$hostName/project/com0com/com0com/3.0.0.0/com0com-3.0.0.0-i386-and-x64-signed.zip"
-            Invoke-WebRequest $url -UserAgent 'Python-urllib/3.15' -OutFile $zip
+            Invoke-WebRequest $url -TimeoutSec 30 -UserAgent 'Python-urllib/3.15' -OutFile $zip
             $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
             $downloads += @{url=$url;sha256=$hash;bytes=(Get-Item $zip).Length}
             if ($hash -eq '6e5d4359865277430d4ae88c73fb7e648a0ed8e81aea5002478179cfcb0bb0e1') { $valid=$true; break }
@@ -39,6 +39,7 @@ try {
     Start-Sleep -Seconds 5
     Get-CimInstance Win32_PnPEntity | Where-Object {$_.Name -match 'com0com|COM41|COM42'} | Select-Object Name,PNPDeviceID,ConfigManagerErrorCode,Status | ConvertTo-Json | Set-Content "$report/devices.json"
     Get-CimInstance Win32_SystemDriver | Where-Object {$_.Name -match 'com0com'} | Select-Object Name,State,StartMode,PathName | ConvertTo-Json | Set-Content "$report/service.json"
+    Add-Type -AssemblyName System.IO.Ports
     [System.IO.Ports.SerialPort]::GetPortNames() | Set-Content "$report/ports.txt"
     $a = New-Object System.IO.Ports.SerialPort 'COM41',115200
     $b = New-Object System.IO.Ports.SerialPort 'COM42',115200
