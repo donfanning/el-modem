@@ -1,0 +1,47 @@
+name: macOS PTY legacy terminal qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  legacy-terminal:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-15-intel, target: macos-x86_64, archive: a1aa43d732da560786b391cdedb4cdd07f8fa3f36f38dbe80c9666dab405fc8e}
+          - {os: macos-15, target: macos-arm64, archive: 463333a23edb426b5f819a2a4d4b22482c5ecdbba9d6e3bcaf9e7a1893fce46b}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install actual legacy terminal
+        run: brew install minicom
+      - name: Download immutable published rc1 (no build)
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCHIVE_SHA256: ${{ matrix.archive }}
+        run: |
+          python - <<'PY'
+          import hashlib, os, pathlib, urllib.request, zipfile
+          name='el-modem-0.1.0-rc1-'+os.environ['TARGET']+'.zip'
+          data=urllib.request.urlopen('https://github.com/donfanning/el-modem/releases/download/v0.1.0-rc1/'+name,timeout=90).read()
+          assert hashlib.sha256(data).hexdigest()==os.environ['ARCHIVE_SHA256'], 'Published archive mismatch'
+          pathlib.Path('published.zip').write_bytes(data)
+          with zipfile.ZipFile('published.zip') as z:z.extractall('published')
+          exe=next(pathlib.Path('published').rglob('el-modem'));exe.chmod(0o755)
+          pathlib.Path('executable-path.txt').write_text(str(exe.resolve()))
+          PY
+      - name: Actual minicom command path, close/reopen and cleanup
+        env:
+          TARGET: ${{ matrix.target }}
+        run: python packaging/qualify_pty_terminal.py "$(cat executable-path.txt)" --target "$TARGET" --reports pty-reports
+      - name: Retain reports and transcripts only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pty-reports-${{ matrix.target }}
+          path: pty-reports/

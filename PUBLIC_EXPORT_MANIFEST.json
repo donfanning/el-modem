@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "50eae1b33f3dc8756faef9955ab839fafe1a320a",
+  "public_base_revision": "ca63c709a639666b3e97a0caae46f53691431ef5",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -10,6 +10,10 @@
     },
     ".github/workflows/build.yml": {
       "sha256": "b252df41c385a969223a748f06b8a08e0dd2881e7d50cf734ad9ffeb4dab4868",
+      "mode": "100644"
+    },
+    ".github/workflows/macos-pty.yml": {
+      "sha256": "e3e65a78fb11a817e9ef463a3937cbda4604f73c1a1797138c8419ec7655f674",
       "mode": "100644"
     },
     ".github/workflows/windows-com.yml": {
@@ -1302,6 +1306,10 @@
     },
     "packaging/qualify_instances.py": {
       "sha256": "866e6c7ef1fade6debf56701cea69c084afe474edaf978e97b04ad46c3935b8c",
+      "mode": "100644"
+    },
+    "packaging/qualify_pty_terminal.py": {
+      "sha256": "95d3dc34fe2455096e0ad19d28c5729d5abe63b1a940999bdb2c993451728050",
       "mode": "100644"
     },
     "packaging/qualify_tui.py": {
