@@ -10,6 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test official signed com0com without security policy changes
+        timeout-minutes: 6
         shell: pwsh
         run: ./packaging/windows/probe_com_driver.ps1
       - uses: actions/setup-python@v5

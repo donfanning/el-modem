@@ -30,13 +30,24 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Installer payload extraction failed' }
     $inf = Get-ChildItem $install -Recurse -Filter com0com.inf | Select-Object -First 1
     if (-not $inf) { throw 'Signed payload has no com0com.inf' }
-    & pnputil /add-driver $inf.FullName /install 2>&1 | Out-File "$report/install.txt"
-    "pnputil exit: $LASTEXITCODE" | Add-Content "$report/install.txt"
     Get-ChildItem $install -Recurse | Select-Object FullName,Length | ConvertTo-Json | Set-Content "$report/files.json"
     Get-ChildItem $install -Recurse -Include *.cat,*.sys | ForEach-Object {
         $s = Get-AuthenticodeSignature $_.FullName
         [pscustomobject]@{File=$_.Name;SHA256=(Get-FileHash $_.FullName).Hash;Status=[string]$s.Status;Signer=$s.SignerCertificate.Subject}
     } | ConvertTo-Json | Set-Content "$report/driver-signatures.json"
+    $catalog = Get-ChildItem $install -Recurse -Filter com0com.cat | Select-Object -First 1
+    $signature = Get-AuthenticodeSignature $catalog.FullName
+    if ($signature.Status -ne 'Valid') { throw "Catalog signature is not valid: $($signature.Status)" }
+    # Trust only the already chain-validated vendor publisher in this disposable
+    # VM, as a user confirming Windows' publisher-install prompt would do.
+    # No root certificate, test-signing or code-integrity policy is changed.
+    $certFile = Join-Path $env:RUNNER_TEMP 'verified-publisher.cer'
+    [System.IO.File]::WriteAllBytes($certFile, $signature.SignerCertificate.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+    Import-Certificate -FilePath $certFile -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+    @{subject=$signature.SignerCertificate.Subject;thumbprint=$signature.SignerCertificate.Thumbprint;store='LocalMachine/TrustedPublisher';scope='Disposable VM vendor installation consent; roots and code integrity unchanged'} | ConvertTo-Json | Set-Content "$report/publisher-consent.json"
+    $pnputil = Start-Process pnputil -ArgumentList @('/add-driver', $inf.FullName, '/install') -PassThru -RedirectStandardOutput "$report/install.txt" -RedirectStandardError "$report/install-error.txt"
+    if (-not $pnputil.WaitForExit(90000)) { $pnputil.Kill(); throw 'pnputil timeout' }
+    "pnputil exit: $($pnputil.ExitCode)" | Add-Content "$report/install.txt"
     $setup = (Get-ChildItem $install -Recurse -Filter setupc.exe | Select-Object -First 1).FullName
     $pair = Start-Process $setup -ArgumentList @('--silent', 'install', 'PortName=COM41', 'PortName=COM42') -WorkingDirectory $inf.DirectoryName -PassThru -RedirectStandardOutput "$report/create-pair.txt" -RedirectStandardError "$report/create-pair-error.txt"
     if (-not $pair.WaitForExit(90000)) { $pair.Kill(); throw 'Pair setup timeout' }

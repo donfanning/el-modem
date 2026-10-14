@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "d804ea83eb30469464c4eeb9f7b9a5b7bee45d8a",
+  "public_base_revision": "b50b4c2d7066f535e2f87dbe727ca1fc8613bf37",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -13,7 +13,7 @@
       "mode": "100644"
     },
     ".github/workflows/windows-com.yml": {
-      "sha256": "c4f598b02b5439e2156d6a1ac92a0d7e2dde9c4ba5fcf8510845aba7fdb58ace",
+      "sha256": "2f29290c602a83e140dc610dd6e086484fdca1b7aca51fbf2e34aa4eb072405f",
       "mode": "100644"
     },
     ".gitignore": {
@@ -1333,7 +1333,7 @@
       "mode": "100644"
     },
     "packaging/windows/probe_com_driver.ps1": {
-      "sha256": "b5b15bcdeaaa7e2f2b647af8648d738ce0c6b827f435e939b5c2ca9673459c04",
+      "sha256": "61f7e097f4805dd8c746c22e10e82d6006246506fc7c059a1f90ed882a0f1c96",
       "mode": "100644"
     },
     "packaging/windows/qualify_com_terminal.py": {
