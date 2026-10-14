@@ -46,6 +46,11 @@ exact CRLF builder form accompanies the normal Git/LF form. The supplement's
 README and source index state the GNU runtime mappings and review limits.
 Existing executables and their initial manifest statuses are unchanged.
 
+I retain these documented provenance limits for the experimental GPL RC.
+Independent rights review is required before stable/commercial claims. This
+policy does not grant rights over somebody else's work or override dependency
+licenses; contributor/commercial terms remain to be finalized.
+
 The current CI artifacts use CPython 3.11.17 on Linux and 3.11.9 on Windows/macOS.
 The older qualified Linux LTO executable and its Debian source bundle are
 different builds. Do not substitute their dependency versions or qualification

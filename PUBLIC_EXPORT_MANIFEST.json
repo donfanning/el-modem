@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "4437b88c12c37d30222e984d79b1d8ad82694549",
+  "public_base_revision": "571ad391aadf33cf7255a782d7d556b1e7134a38",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -45,7 +45,7 @@
       "mode": "100644"
     },
     "docs/REDISTRIBUTION.md": {
-      "sha256": "9d79d8a1fffffa7997f6644f1b02a09c4a1ace96eafb47a9b786f663dadef5b3",
+      "sha256": "dd45611ddeb02224643ea15f65dd6f7c125cc5c4cdbec8a8211bcda80963e197",
       "mode": "100644"
     },
     "docs/SERIAL.md": {
