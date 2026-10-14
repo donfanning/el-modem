@@ -74,11 +74,12 @@ var
 begin
   { The download URL is a moving target, so a pinned hash is impossible. Require a valid
     Authenticode signature whose signer is Microsoft Corporation instead. The check runs from a
-    script file (no command-line quoting) and the verdict is logged so a refusal can be diagnosed. }
+    script file (no command-line quoting), with the machine module path (a PowerShell 7 parent otherwise leaks its modules into Windows PowerShell 5.1), and the verdict is logged so a refusal can be diagnosed. }
   ScriptFile := ExpandConstant('{tmp}\check-signature.ps1');
   Report := ExpandConstant('{tmp}\signature-check.txt');
   Script :=
     'param([string]$File, [string]$Report)' + #13#10 +
+    '$env:PSModulePath = [Environment]::GetEnvironmentVariable("PSModulePath", "Machine")' + #13#10 +
     '$ErrorActionPreference = "Stop"' + #13#10 +
     'try {' + #13#10 +
     '  $s = Get-AuthenticodeSignature -LiteralPath $File' + #13#10 +
