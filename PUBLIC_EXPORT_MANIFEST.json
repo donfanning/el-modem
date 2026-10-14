@@ -1,9 +1,19 @@
 {
-  "schema": 1,
-  "source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
+  "schema": 2,
+  "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
+  "public_base_revision": "9fd8af82f497b472869007c5623bb24063846ce9",
+  "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
       "sha256": "b39d7782634d2a332265d55f12444cb42037cf88151abb95437e3a8005a45477",
+      "mode": "100644"
+    },
+    ".github/workflows/build.yml": {
+      "sha256": "8cc6bb83a5b19e1df3474425d1fea4306b4a94aa7d204fdefc75afe68311442b",
+      "mode": "100644"
+    },
+    ".gitignore": {
+      "sha256": "20915503efb0f631c1a75f048ed2e5493f02f76a610a9ddbb41260bba38e0940",
       "mode": "100644"
     },
     "CONTRIBUTING.md": {
@@ -22,6 +32,10 @@
       "sha256": "6807223427e898a6efc42bcc4f9b34d0abacb61e4a359cadf1b6519dc967d4e2",
       "mode": "100644"
     },
+    "README.md": {
+      "sha256": "65dcd9158647b181704aed834ee30de8d85d64ff9b005ffc91f45276c01f1825",
+      "mode": "100644"
+    },
     "docs/AT_COMMANDS.md": {
       "sha256": "064c749596c4024e2d577873b3093aeebab274c702dbab7f7cb68688a2a5ca9f",
       "mode": "100644"
@@ -30,8 +44,16 @@
       "sha256": "99beef4b3a705d7517046c4d00f59931a386a412692fce35713752cc20d677dc",
       "mode": "100644"
     },
+    "docs/REDISTRIBUTION.md": {
+      "sha256": "406c2348c14a9ced50ecd3b991f2d9a5457875a088d35079702150b68c28e3f8",
+      "mode": "100644"
+    },
     "docs/SERIAL.md": {
       "sha256": "bc79500a81301244e5c7021da10483d6f50c07a541c2956c6d1327ab327d135e",
+      "mode": "100644"
+    },
+    "docs/SOURCE_PROVENANCE.md": {
+      "sha256": "684e100b83b93c5d0897e520c55f03cbd21d6f2c231aa4285d417c4cf758ccd9",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/analyze_envelope.py": {
@@ -223,7 +245,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_caller.py": {
-      "sha256": "570b78332a0b1cf4538a3a613532ec53fe75da94d35619c89fcec9751d8f3c80",
+      "sha256": "078eae40261875d924381249c62edf7ba2081385d740b7e565eef4acf9551a2c",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_capture.py": {
@@ -260,6 +282,10 @@
     },
     "lab/asterisk/audio-peer/test_v32_retrain_budget.py": {
       "sha256": "5ad34cb127abfdab036f344cf124df2cf3b2240ccc2614c86be873b43493667e",
+      "mode": "100644"
+    },
+    "lab/asterisk/audio-peer/test_v32_rewrite_equivalence.py": {
+      "sha256": "7e71fa82bd73b13b42692bdd2dd75bdd78904830f10352da7daace949c235d08",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_rx.py": {
@@ -675,7 +701,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_caller.py": {
-      "sha256": "ac8a28395bbaf05ee995b5734ab6b1c858df0b41aa8e102217aac649a29c39e8",
+      "sha256": "c18e54e79ab4493c5ddf371c8104e6b608a40a28b7526c7d659db0a3821f61df",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_loop.py": {
@@ -695,7 +721,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_rx.py": {
-      "sha256": "c277805df2ec13136f180ab4cf0271b6a6f04a2676b593b48a55347fd176d68b",
+      "sha256": "abff97ef1738a64356b66fd4f346d99ef2ff091b5bae812b5eb56cbef612cd50",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_sim_rx.py": {
@@ -1143,12 +1169,20 @@
       "mode": "100644"
     },
     "packaging/audit_v32_tables.py": {
-      "sha256": "e6713af131ad478db67f8f5cc5af194bb1c9a7dad419c26b52bad066689da533",
+      "sha256": "90f6f9cecac6c07322d6c63d0003aa93a36c0da11811acf154268f87fb57f4c6",
       "mode": "100644"
     },
     "packaging/build.sh": {
       "sha256": "2bdc00d7a1d45082d379935d0f0143c2f0e45068fc2631fc1bef6572e2284aa8",
       "mode": "100755"
+    },
+    "packaging/build_with_lineage.py": {
+      "sha256": "78bdbac9f89dd3d8dde3cf1b3aab1a1054235a8563bcceefdf91b568ee38079f",
+      "mode": "100644"
+    },
+    "packaging/candidate_transport.py": {
+      "sha256": "796b882d5886b951f8df60245dcdd98287cb7ed4ea6285a499933e00b42a4e20",
+      "mode": "100644"
     },
     "packaging/collect_binary_sources.py": {
       "sha256": "760349b68e209ed5655a0b1224dc2a83c22b1295fbcba5b70bd8b79df44faea4",
@@ -1163,15 +1197,27 @@
       "mode": "100644"
     },
     "packaging/el_modem.spec": {
-      "sha256": "40c3a516c998b71ca27ffacc4273c9e24936e77b0f4db1450920f79afc513d1f",
+      "sha256": "ada0ed57e5550ece23ba703635726884db0f829f4f03f99b56eb693fec1829e6",
       "mode": "100644"
     },
     "packaging/inventory_binary.py": {
       "sha256": "51e4d480c0c1869bd92c50d5adc9565a6bc33c1d03e15d18a225581ab4029f48",
       "mode": "100644"
     },
+    "packaging/inventory_portable.py": {
+      "sha256": "360fe33b4e9ed18b956bed1dbd411cea31a0ed4184e725104ed44c0dda9949ee",
+      "mode": "100644"
+    },
     "packaging/native_runtime.py": {
       "sha256": "04429b6187261ecf1fc52db77a8483ead4ab66d6eda7b9d14609fadff4ab4bf8",
+      "mode": "100644"
+    },
+    "packaging/package_native_candidate.py": {
+      "sha256": "e5a82e7ff837ebc8c14ad03fb8d4ef0fd773944d3ec4855e9b0d71fcc873af0f",
+      "mode": "100644"
+    },
+    "packaging/public_manifest.py": {
+      "sha256": "2e1704fdeeefba1e4a923b4cb776df7c4ee4c55e690cc6f6b6976b13c074504d",
       "mode": "100644"
     },
     "packaging/qualify_controls.py": {
@@ -1184,6 +1230,10 @@
     },
     "packaging/qualify_tui.py": {
       "sha256": "65b68b501af3c4a33d275294584e34de5f30968ce3aa0bfd2bad20636f24efb9",
+      "mode": "100644"
+    },
+    "packaging/serial/COPYING": {
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
       "mode": "100644"
     },
     "packaging/serial/README.md": {
@@ -1206,80 +1256,44 @@
       "sha256": "28796a24e3be8036e67d262b55be4d2988f2c97bade660f14f2012cc8036fc26",
       "mode": "100644"
     },
-    "packaging/test_native_runtime.py": {
-      "sha256": "b092445d54693a9d35c481cc835f0564b9e1704abdafd445c037100df64de907",
-      "mode": "100644"
-    },
-    "packaging/verify_binary_sources.py": {
-      "sha256": "0452a909a2d5ed3c6bdb25e0926de56bc9bf9f8a800790dc858526366e47f33c",
-      "mode": "100644"
-    },
-    "README.md": {
-      "sha256": "65dcd9158647b181704aed834ee30de8d85d64ff9b005ffc91f45276c01f1825",
-      "mode": "100644"
-    },
-    "docs/REDISTRIBUTION.md": {
-      "sha256": "f271ef70a2467c276141e28adc538e8117646b680c6c0057e9bb47d5e0b736ee",
-      "mode": "100644"
-    },
-    ".github/workflows/build.yml": {
-      "sha256": "7901e7e69faa0eadee7235fc4666d27c2fc8da58ca9bb83515e336061c81ebf7",
-      "mode": "100644"
-    },
-    ".gitignore": {
-      "sha256": "20915503efb0f631c1a75f048ed2e5493f02f76a610a9ddbb41260bba38e0940",
-      "mode": "100644"
-    },
-    "packaging/candidate_transport.py": {
-      "sha256": "796b882d5886b951f8df60245dcdd98287cb7ed4ea6285a499933e00b42a4e20",
-      "mode": "100644"
-    },
-    "packaging/inventory_portable.py": {
-      "sha256": "48304535fdfb44a0e3bded148e51753d8c7036d74c606518b7b635b8a0c6738a",
-      "mode": "100644"
-    },
-    "packaging/package_native_candidate.py": {
-      "sha256": "f69fd90b387818b92cf6ae8fb093f3389dc9473e48ccf69b6cbf34f57b81963e",
+    "packaging/test_build_with_lineage.py": {
+      "sha256": "5e8b54b83eb78fca848f220a140dfa95fb4083ff9c8773ea5499bc53119cae2b",
       "mode": "100644"
     },
     "packaging/test_candidate_transport.py": {
       "sha256": "cbf855cd5aff2414d4a325b26ad05067d6db31a72f228e90037a37f968fd4b96",
       "mode": "100644"
     },
+    "packaging/test_inventory_portable_classify.py": {
+      "sha256": "1825ddd4dbd7fc47aad008de5f6a87cfc8d49ff5c1158ae87efce16d79e19799",
+      "mode": "100644"
+    },
+    "packaging/test_native_runtime.py": {
+      "sha256": "b092445d54693a9d35c481cc835f0564b9e1704abdafd445c037100df64de907",
+      "mode": "100644"
+    },
     "packaging/test_package_native_candidate.py": {
       "sha256": "452975b61f6d9a38e2a4eaa99230b237b6094c211b21b1f9df8a48076c0b5d24",
       "mode": "100644"
     },
-    "packaging/build_with_lineage.py": {
-      "sha256": "78bdbac9f89dd3d8dde3cf1b3aab1a1054235a8563bcceefdf91b568ee38079f",
+    "packaging/test_public_manifest.py": {
+      "sha256": "1626ea8f41fb6342a9c06974ced89ab4153f0c9d062f0acb1cc88a261866a974",
       "mode": "100644"
     },
-    "packaging/test_build_with_lineage.py": {
-      "sha256": "5e8b54b83eb78fca848f220a140dfa95fb4083ff9c8773ea5499bc53119cae2b",
+    "packaging/verify_binary_sources.py": {
+      "sha256": "0452a909a2d5ed3c6bdb25e0926de56bc9bf9f8a800790dc858526366e47f33c",
       "mode": "100644"
     },
-    "packaging/serial/COPYING": {
-      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+    "packaging/windows/build_installer.ps1": {
+      "sha256": "88e809fd885393034da9cba62f7eb7dc2a10d6a5b0204da6030214a1cbfc2b5c",
+      "mode": "100644"
+    },
+    "packaging/windows/el-modem.iss": {
+      "sha256": "7da8964e5e3f9e6fbad5451c85fc7db3d98e68b8de25473499223c02acb97814",
       "mode": "100644"
     }
   },
-  "excluded_count": 1131,
-  "findings": [
-    {
-      "path": "lab/asterisk/test_sip_auth.py",
-      "line": 91,
-      "rule": "literal-credential-review"
-    }
-  ],
-  "status": "REVIEW_REQUIRED",
-  "blockers": [
-    "Original-code provenance review and commercial/contributor agreements pending",
-    "Targeted scan requires human review and independent secret scanning",
-    "Binary dependency notice inventory and sustained timing qualification pending"
-  ],
-  "history_included": false,
-  "external_calls_placed": false,
-  "public_overlays": [
+  "historical_public_overlays": [
     {
       "path": "CREDITS.md",
       "public_commit": "822c0997f081c051d062539a0535253b6a4439eb",

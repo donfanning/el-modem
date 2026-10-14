@@ -3,10 +3,10 @@
 The community license is GPL-3.0-or-later, with a separate commercial licensing
 route I selected. Commercial terms and the contributor agreement
 remain to be finalized. Attribution is not a license grant.
-The existing credits describe the project's claimed provenance; this review
-does not independently prove that every algorithm/table was written from scratch.
-In particular, V.32 source comments refer to Fisher's implementation and tables:
-review those references before declaring the original-code provenance settled.
+The credits and [source provenance record](SOURCE_PROVENANCE.md) preserve the
+reference history, including Fisher's attribution request and the subsequent
+spec-derived V.32 re-expression. I do not assert that Rossi's MIT notice licenses
+the cached original Fisher files or that the re-expression was clean-room.
 
 | Component | Role | Publication handling |
 | --- | --- | --- |
@@ -31,13 +31,27 @@ Primary references:
 - [Python license](https://docs.python.org/3/license.html)
 - [NumPy license](https://github.com/numpy/numpy/blob/main/LICENSE.txt)
 
-Before publishing binaries, inventory the exact frozen artifact's bundled
-packages and shared libraries, include their license texts, and supply any
-corresponding source required by their licenses. The existing build specification
-only explicitly adds the optimized interpreter license; it is not a complete
-binary-notice inventory. Source-preview readiness and binary-release readiness
-are separate gates.
+Experimental `v0.1.0-rc1` binaries are already published. Each archive includes
+the actual executable's package/native-library inventory, collected notices,
+qualification reports and member hashes. This collection identifies build
+providers; it does not by itself close static/transitive-code or corresponding
+source review. Each archive currently records `REVIEW_REQUIRED`.
 
-The private repository contains historical notes and recordings. Publish a
-new repository from the reviewed export. Do not change the private repository's
-visibility or push its branches/tags into the public repository.
+The current CI artifacts use CPython 3.11.17 on Linux and 3.11.9 on Windows/macOS.
+The older qualified Linux LTO executable and its Debian source bundle are
+different builds. Do not substitute their dependency versions or qualification
+results for the released executables. Windows deliberately excludes Microsoft
+runtime DLLs; the x64 Visual C++ Redistributable is a prerequisite downloaded
+from Microsoft by the optional installer.
+
+The application source and build scripts for the existing release are at
+[the immutable release source revision](https://github.com/donfanning/el-modem/tree/9fd8af82f497b472869007c5623bb24063846ce9).
+Corrections on the main branch do not change the source embedded in those bytes.
+Supply exact required dependency sources and retained notices alongside the
+binary downloads; local-only source archives are not public source delivery.
+The [GPLv3 network-distribution conditions](https://www.gnu.org/licenses/gpl-3.0.html#section6)
+are the primary reference for that delivery review.
+
+Private historical notes, credentials, service configuration and recordings
+remain excluded. Public updates come from reviewed explicit source paths;
+private Git branches/tags and sibling reference projects are not published.

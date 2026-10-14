@@ -3,10 +3,12 @@
 Implemented from ITU-T V.32 / V.32bis. The scrambler, differential coders, trellis
 encoder and constellation tables are derived from the Recommendation's Tables 1, 2 and
 5 and Figures 1 to 4 (see ``packaging/audit_v32_tables.py``). An earlier revision of this
-file was written while reading the MIT-licensed ``fisher-modem``; this revision
-re-derives those parts from the Recommendation and reproduces the earlier revision's
-output bit for bit (see ``lab/V32_PROVENANCE_REWRITE_2026_10_13.md``). The signal was
-also checked against what a V.32 answerer actually sends (lab/slmodem-peer/README.md).
+file was written while reading Fisher's modem source. This revision re-expresses
+those parts from the Recommendation and reproduces the earlier output bit for bit.
+Fisher's historical work remains credited; Rossi's MIT notice is not asserted to
+license the cached original Fisher files. See ``docs/SOURCE_PROVENANCE.md`` for
+the history and limits of this review. The signal was also checked against an
+independent V.32 answerer.
 Nothing here comes from the Smart Link blob.
 
 Signal: 2400 baud QAM on an 1800 Hz carrier, root-raised-cosine shaping (the

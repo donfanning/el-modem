@@ -23,6 +23,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install numpy==1.26.4 numba==0.61.2 textual==0.89.1
+      - name: Verify reviewed public source manifest
+        run: |
+          python packaging/public_manifest.py
+          python -m unittest discover -s packaging -p test_public_manifest.py
       - name: Source and settings tests without private fixtures or calls
         env:
           PYTHONPATH: lab/asterisk:lab/asterisk/audio-peer:packaging
