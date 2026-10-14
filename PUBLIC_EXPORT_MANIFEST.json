@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "31d1ddfda064a1e7aa9e10bffbf601dc4bb0d4af",
+  "public_base_revision": "3ad2178b005c5046d21d91eb7e98e03e9709522f",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -1333,7 +1333,7 @@
       "mode": "100644"
     },
     "packaging/windows/probe_com_driver.ps1": {
-      "sha256": "2ed7e521ac9480f7423174b9ef22d26133ba74a715670422d930362457bdb9db",
+      "sha256": "ba1b5d137c4bfcb5c361e39819b4ca80960645180af223d5dd5d56e9da0a0caf",
       "mode": "100644"
     }
   },

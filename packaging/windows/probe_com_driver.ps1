@@ -7,9 +7,19 @@ try {
     & bcdedit /enum '{current}' 2>&1 | Out-File "$report/boot-policy.txt"
     Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber | ConvertTo-Json | Set-Content "$report/os.json"
     $zip = Join-Path $env:RUNNER_TEMP 'com0com.zip'
-    Invoke-WebRequest 'https://downloads.sourceforge.net/project/com0com/com0com/3.0.0.0/com0com-3.0.0.0-i386-and-x64-signed.zip' -OutFile $zip
-    $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-    if ($hash -ne '6e5d4359865277430d4ae88c73fb7e648a0ed8e81aea5002478179cfcb0bb0e1') { throw 'Driver archive digest mismatch' }
+    $downloads = @()
+    $valid = $false
+    foreach ($hostName in @('downloads.sourceforge.net', 'master.dl.sourceforge.net', 'phoenixnap.dl.sourceforge.net')) {
+        try {
+            $url = "https://$hostName/project/com0com/com0com/3.0.0.0/com0com-3.0.0.0-i386-and-x64-signed.zip"
+            Invoke-WebRequest $url -UserAgent 'Python-urllib/3.15' -OutFile $zip
+            $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+            $downloads += @{url=$url;sha256=$hash;bytes=(Get-Item $zip).Length}
+            if ($hash -eq '6e5d4359865277430d4ae88c73fb7e648a0ed8e81aea5002478179cfcb0bb0e1') { $valid=$true; break }
+        } catch { $downloads += @{url=$url;error=$_.Exception.Message} }
+    }
+    $downloads | ConvertTo-Json | Set-Content "$report/downloads.json"
+    if (-not $valid) { throw 'No official mirror returned the pinned driver archive' }
     $extract = Join-Path $env:RUNNER_TEMP 'com0com-download'
     Expand-Archive $zip $extract -Force
     $installer = Join-Path $extract 'Setup_com0com_v3.0.0.0_W7_x64_signed.exe'
@@ -24,7 +34,7 @@ try {
         [pscustomobject]@{File=$_.Name;SHA256=(Get-FileHash $_.FullName).Hash;Status=[string]$s.Status;Signer=$s.SignerCertificate.Subject}
     } | ConvertTo-Json | Set-Content "$report/driver-signatures.json"
     $setup = Join-Path $install 'setupc.exe'
-    & $setup '--no-update' install PortName=COM41 PortName=COM42 2>&1 | Out-File "$report/create-pair.txt"
+    & $setup install PortName=COM41 PortName=COM42 2>&1 | Out-File "$report/create-pair.txt"
     & $setup list 2>&1 | Out-File "$report/pairs.txt"
     Start-Sleep -Seconds 5
     Get-CimInstance Win32_PnPEntity | Where-Object {$_.Name -match 'com0com|COM41|COM42'} | Select-Object Name,PNPDeviceID,ConfigManagerErrorCode,Status | ConvertTo-Json | Set-Content "$report/devices.json"
