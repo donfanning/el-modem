@@ -5,6 +5,17 @@ New-Item -ItemType Directory -Force $report | Out-Null
 Start-Transcript -Path "$report/probe.txt"
 try {
     & bcdedit /enum '{current}' 2>&1 | Out-File "$report/boot-policy.txt"
+    Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class CodeIntegrityProbe {
+    [StructLayout(LayoutKind.Sequential)] public struct Info { public uint Length; public uint Options; }
+    [DllImport("ntdll.dll")] public static extern int NtQuerySystemInformation(int informationClass, ref Info info, int size, out int returnedLength);
+    public static uint Read() { Info info = new Info {Length=8}; int returned; int status = NtQuerySystemInformation(103, ref info, 8, out returned); if(status != 0) throw new Exception("NtQuerySystemInformation: " + status); return info.Options; }
+}
+'@
+    $ciOptions = [CodeIntegrityProbe]::Read()
+    @{options=$ciOptions;enabled=([bool]($ciOptions -band 1));testsigning=([bool]($ciOptions -band 2));scope='Effective running-kernel code integrity, not only next-boot BCD'} | ConvertTo-Json | Set-Content "$report/code-integrity.json"
     Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber | ConvertTo-Json | Set-Content "$report/os.json"
     $zip = Join-Path $env:RUNNER_TEMP 'com0com.zip'
     $downloads = @()

@@ -1,11 +1,17 @@
 name: Windows COM qualification
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Disposable Windows host
+        type: choice
+        options: [windows-2022, windows-2025]
+        default: windows-2022
 permissions:
   contents: read
 jobs:
   signed-driver-probe:
-    runs-on: windows-2022
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
