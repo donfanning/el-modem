@@ -88,7 +88,7 @@ IPC. Full PCM/DSP recording is enabled by default, bounded to 600 seconds per
 call; each worker run has its own capture directory. Recording duration and
 enabling are configurable named settings applied after restart.
 
-See the current handoff for which packaged/live gates have actually run. An
+See the README for the source preview qualification limits. An
 implemented feature is not a claim of qualification on every modem, kernel, or
 host. Windows/macOS native serial qualification and native IAX remain future work.
 

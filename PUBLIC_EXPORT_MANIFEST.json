@@ -1,7 +1,7 @@
 {
   "schema": 2,
-  "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "443bc00f5de63ee529e17698d040e699e193344c",
+  "baseline_private_source_commit": "a5b014cfb6dc2085673b85acfe21147319d06d14",
+  "public_base_revision": "e739fe45a81ffd0c9241a4e4d7f311af409aeced",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -29,7 +29,7 @@
       "mode": "100644"
     },
     "CREDITS.md": {
-      "sha256": "8940135e61be559e28166fab438b5006593d505325e7e9c87eb79b090dc9b822",
+      "sha256": "053430a37aa021bcd6ea1b47b4bf3ada2a55b56d3eef8527c32409ade5a0a433",
       "mode": "100644"
     },
     "LICENSE": {
@@ -49,7 +49,7 @@
       "mode": "100644"
     },
     "docs/DESKTOP.md": {
-      "sha256": "99beef4b3a705d7517046c4d00f59931a386a412692fce35713752cc20d677dc",
+      "sha256": "a1a101b04fc85b5f5b27a20f9a2d799e6a1534fa701f337e1ecdecbc751cfa26",
       "mode": "100644"
     },
     "docs/LINUX_QUALIFICATION.json": {
@@ -94,6 +94,14 @@
     },
     "docs/WINDOWS_COM_QUALIFICATION.md": {
       "sha256": "d4f3d2edccc4f7b423b3793b13a96170764a3c173a50076b2d6155a3efb9c350",
+      "mode": "100644"
+    },
+    "docs/WINDOWS_INSTALLER_QUALIFICATION.json": {
+      "sha256": "60ee68a818b7bed15387b5c8025e35e88cad540d078eb80e61f19ef216597a22",
+      "mode": "100644"
+    },
+    "docs/WINDOWS_INSTALLER_QUALIFICATION.md": {
+      "sha256": "054e1af265a24ad5f7f5eb4fa3b5313d75573b3e73767f2e98a9ad431f6f1c21",
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-arm64/first-capture.txt": {
@@ -194,6 +202,46 @@
     },
     "docs/windows-com-evidence/terminal.log": {
       "sha256": "fedbae441e18de76657f49fca941240c184de1ca7403eec749aa930fb763d3ef",
+      "mode": "100644"
+    },
+    "docs/windows-installer-evidence/code-integrity.json": {
+      "sha256": "22755f2048e45d935c18f7756f87f1362e6cea6bbca1bf1d52cbbeb693b10fe2",
+      "mode": "100644"
+    },
+    "docs/windows-installer-evidence/continuation-result.json": {
+      "sha256": "54bd97a8cd624143739dbedd9d542fde113253bd79e47027e32052b5f983e2d2",
+      "mode": "100644"
+    },
+    "docs/windows-installer-evidence/installer-summary.json": {
+      "sha256": "7d05a7d42310c47e76d1ed6ee8ab74877d10fb5b7e466e043119ee5ab5b50054",
+      "mode": "100644"
+    },
+    "docs/windows-installer-evidence/launch-closed.json": {
+      "sha256": "f7dec123799c6740983549cd215465494243d655a53201d18befad79b0370dbc",
+      "mode": "100644"
+    },
+    "docs/windows-installer-evidence/launch-ready.json": {
+      "sha256": "aa88bf690a6c3520b0f47ddebf064e4a665f9b4d288dc1e4382fcc3ee391a457",
+      "mode": "100644"
+    },
+    "docs/windows-installer-evidence/os.json": {
+      "sha256": "7e3b9b85019de947358a68e9a35ec780da74b0065abaa2dc90c223d0c0fd55a2",
+      "mode": "100644"
+    },
+    "docs/windows-installer-evidence/runtime-after.json": {
+      "sha256": "835c0cfb2c1f73ed2e2373a6c6ca5efa2373df69815e985f14e9cd96c5d0ba12",
+      "mode": "100644"
+    },
+    "docs/windows-installer-evidence/runtime-before.json": {
+      "sha256": "8ad871ee536320e68ec6fdd9744a1bb2c8a2d0fc27f3c2508c6ad20676130fe1",
+      "mode": "100644"
+    },
+    "docs/windows-installer-evidence/self-test-continuation.json": {
+      "sha256": "21680b30fdaf9dd5021398e4e9891b096c902aa55bdff333cfa5c584932a8389",
+      "mode": "100644"
+    },
+    "docs/windows-installer-evidence/shortcut-continuation.json": {
+      "sha256": "5a6711b2ea3477f27873842592f0c8c8bfbf862fe8ed9eb1f36d49fbb93553d4",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/analyze_envelope.py": {

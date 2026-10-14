@@ -1,8 +1,9 @@
 # Credits and acknowledgments
 
+**Don Fanning (jfalcon)** — [gh:donfanning](https://github.com/donfanning)
 
-Created and maintain El-Modem by **Don Fanning (jfalcon)** — [gh:donfanning](https://github.com/donfanning)
-and I direct its development, interoperability testing and intended behavior.
+I created and maintain El-Modem, and I direct its development, interoperability
+testing and intended behavior.
 
 I have used **OpenCode**, **Anthropic Claude**,
 **GitHub Copilot**, and **OpenAI ChatGPT/Codex** for implementation, research,
@@ -113,3 +114,9 @@ certification. Private PBX configuration, credentials and call records remain
 outside the public source preview.
 
 Corrections and additional attributable contributions are welcome.
+
+## Public source preview
+
+Reference submodules, lab peers, provider configurations and all recordings
+are excluded from this export. The community license is GPL-3.0-or-later;
+provenance review remains open. See NOTICE and docs/REDISTRIBUTION.md.

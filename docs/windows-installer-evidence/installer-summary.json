@@ -1,0 +1,9 @@
+{
+  "setup_sha256": "bab1cb831fbf230e45532a30c4a9608a9d5f3218ff5cd706e5092f06e802fa40",
+  "arguments": ["/LOG=C:\\installer-qualification\\reports\\install.log"],
+  "silent": false,
+  "force_runtime": false,
+  "runtime_signature": "Valid Microsoft Corporation signature; verifier exit 0",
+  "runtime_installer_started": true,
+  "runtime_installer_exit_code": 0
+}
