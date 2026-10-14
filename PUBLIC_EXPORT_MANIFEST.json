@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "571ad391aadf33cf7255a782d7d556b1e7134a38",
+  "public_base_revision": "dc9170ddc8310f23bc10be56d4601e53bfb03573",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -33,7 +33,7 @@
       "mode": "100644"
     },
     "README.md": {
-      "sha256": "65dcd9158647b181704aed834ee30de8d85d64ff9b005ffc91f45276c01f1825",
+      "sha256": "7f55515b18f55151177ce9f692abffcbfc30df2dcd402d28ee4d01eabbf78920",
       "mode": "100644"
     },
     "docs/AT_COMMANDS.md": {
@@ -42,6 +42,14 @@
     },
     "docs/DESKTOP.md": {
       "sha256": "99beef4b3a705d7517046c4d00f59931a386a412692fce35713752cc20d677dc",
+      "mode": "100644"
+    },
+    "docs/LINUX_QUALIFICATION.json": {
+      "sha256": "69c6118024df0d1b3756cefb12312ef0d9c07bd6e297af2192e526f77816cb2d",
+      "mode": "100644"
+    },
+    "docs/LINUX_QUALIFICATION.md": {
+      "sha256": "17756172a1fed3f164846168b312deed5845abb7d3b10108ecf5fcae3d5c80d7",
       "mode": "100644"
     },
     "docs/REDISTRIBUTION.md": {

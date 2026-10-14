@@ -12,9 +12,12 @@ cancellation. Native IAX calling is not implemented; IAX settings are stored.
 This is an experimental Linux-first source preview, not a stable release.
 Real PSTN calls have reached V.34/LAPM and PPP, including login and communication
 with the far-end PPP gateway. Short independent-peer tests and local exact-data
-tests pass. A qualified Linux desktop artifact has passed sustained local payload/timing
-and TUI checks. New native build candidates need their own qualification;
-those Linux results do not establish Windows/macOS real-time performance.
+tests pass. The exact published Linux rc1 executable has passed ten-minute
+transfers, drift and recovery gates on the documented performance CPU profile;
+the retained dynamic-policy baseline passed data checks but failed timing gates
+on six calls. See [Linux qualification and limits](docs/LINUX_QUALIFICATION.md).
+New native build candidates need their own qualification; these Linux results
+do not establish Windows/macOS real-time performance.
 Multiple modem processes work, but their real-time capacity depends on the host.
 Windows/macOS builds are not a claim of qualified native virtual COM support.
 
