@@ -11,7 +11,7 @@ from v32_caller import (
 
 
 def decode_dibits(symbols):
-    """Fisher's 4800 bps decoder: quadrant slicer + differential table."""
+    """Reference 4800 bps decoder: quadrant slicer + differential table."""
     q, bits = 0, []
     for v in symbols:
         q = ((q << 1) | int(2.0 * v.imag > -v.real)) & 0xFF

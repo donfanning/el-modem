@@ -1,8 +1,13 @@
-"""V.32 caller transmitter (written from scratch; pure Python, no numpy).
+"""V.32 caller transmitter (pure Python, no numpy).
 
-Structure follows ITU-T V.32 as implemented in the MIT-licensed ``fisher-modem``
-(read for the algorithm) and was checked against what a V.32 answerer actually
-sends (see lab/slmodem-peer/README.md). Nothing here comes from the Smart Link blob.
+Implemented from ITU-T V.32 / V.32bis. The scrambler, differential coders, trellis
+encoder and constellation tables are derived from the Recommendation's Tables 1, 2 and
+5 and Figures 1 to 4 (see ``packaging/audit_v32_tables.py``). An earlier revision of this
+file was written while reading the MIT-licensed ``fisher-modem``; this revision
+re-derives those parts from the Recommendation and reproduces the earlier revision's
+output bit for bit (see ``lab/V32_PROVENANCE_REWRITE_2026_10_13.md``). The signal was
+also checked against what a V.32 answerer actually sends (lab/slmodem-peer/README.md).
+Nothing here comes from the Smart Link blob.
 
 Signal: 2400 baud QAM on an 1800 Hz carrier, root-raised-cosine shaping (the
 answerer's transmit spectrum is flat 600-3000 Hz with ~300 Hz roll-offs, i.e. RRC
@@ -31,15 +36,28 @@ CARRIER = 1800.0
 SPS24 = 10                 # pulse-table points per symbol on the 24 kHz grid (8 kHz x 3)
 SPAN = 6                   # pulse half-width in symbols
 
-#            A         B         D         C            (fisher's ztab2 order)
+# Four-point constellation of the 4800 bit/s signal (V.32 Figure 2), in label order A, B, D, C.
 POINTS = [(-3 - 1j), (1 - 3j), (-1 + 3j), (3 + 1j)]
 A, B, D, C = POINTS[0], POINTS[1], POINTS[2], POINTS[3]
 
-NR_DIFF = [1, 0, 3, 2, 3, 1, 2, 0, 0, 2, 1, 3, 2, 3, 0, 1]
+
+def _quadrant_table():
+    """V.32bis Table 2: new label from (previous label, received dibit), indexed prev << 2 | dibit.
+    Labels A, B, D, C sit at successive Gray-coded quadrants; the dibit selects the phase step."""
+    angle_of_label = [0, 1, 3, 2]
+    label_of_angle = {angle: label for label, angle in enumerate(angle_of_label)}
+    quarter_turns = [1, 0, 2, 3]
+    return [label_of_angle[(angle_of_label[prev] + quarter_turns[dibit]) % 4]
+            for prev in range(4) for dibit in range(4)]
+
+
+NR_DIFF = _quadrant_table()
 
 # V.32bis rate bits and the base of the rate word
-RATE_BITS = {4800: 0x0400, 7200: 0x0040, 9600: 0x0200, 12000: 0x0020, 14400: 0x0008}   # fisher modem.h (verified: 4800 and 9600 against the blob)
-RATE_WORD_BASE = 0x0991
+# Table 5 numbers the 16 bits of the rate word B0 (first sent, MSB) to B15
+_RATE_POSITION = {4800: 5, 7200: 9, 9600: 6, 12000: 10, 14400: 12}
+RATE_BITS = {rate: 1 << (15 - pos) for rate, pos in _RATE_POSITION.items()}
+RATE_WORD_BASE = sum(1 << (15 - pos) for pos in (4, 7, 8, 11, 15))   # the fixed ones: 0x0991
 
 TRN_LENGTH = 8044          # measured from the Smart Link answerer; the rate word follows at once
 S_LENGTH, SBAR_LENGTH, TRN_AC_LENGTH = 256, 16, 256
@@ -56,7 +74,9 @@ def rate_word(*bps: int) -> int:
 
 
 class Scrambler:
-    """Self-synchronising scrambler 1 + x^-tap + x^-23 (fisher's scrambler)."""
+    """Self-synchronising scrambler / descrambler (V.32 section 5): the output is the input plus the
+    line signal delayed by ``tap`` symbols plus the line signal delayed by 23, generator
+    1 + x^-tap + x^-23. ``wd`` holds the last 23 line bits, newest in bit 22, oldest in bit 0."""
 
     def __init__(self, tap: int):
         self.tap = tap
@@ -65,42 +85,74 @@ class Scrambler:
     def reset(self) -> None:
         self.wd = 0
 
-    def _taps(self) -> int:
-        return ((self.wd >> (23 - self.tap)) & 1) ^ (self.wd & 1)
+    def _feedback(self) -> int:
+        return ((self.wd >> (23 - self.tap)) ^ self.wd) & 1
+
+    def _push(self, line_bit: int) -> None:
+        self.wd = (self.wd >> 1) | (line_bit << 22)
 
     def fwd(self, bit: int) -> int:
-        out = bit ^ self._taps()
-        self.wd = (self.wd >> 1) | (out << 22)
+        """Scramble: the line bit is the output."""
+        out = bit ^ self._feedback()
+        self._push(out)
         return out
 
     def rev(self, bit: int) -> int:
-        out = bit ^ self._taps()
-        self.wd = (self.wd >> 1) | (bit << 22)
+        """Descramble: the line bit is the input."""
+        out = bit ^ self._feedback()
+        self._push(bit)
         return out
 
 
-# 16-point constellation and 8-state trellis of the 7200 bps mode (fisher's coder.C)
-ZTAB4 = [(3 - 3j), (-1 + 1j), (-3 + 3j), (1 - 1j), (3 + 1j), (-1 - 3j), (-3 - 1j), (1 + 3j),
-         (-1 + 3j), (3 - 1j), (1 - 3j), (-3 + 1j), (-3 - 3j), (1 + 1j), (3 + 3j), (-1 - 1j)]
-TFSM = [[0, 3, 2, 1], [4, 5, 7, 6], [1, 2, 3, 0], [7, 6, 4, 5],
-        [2, 1, 0, 3], [6, 7, 5, 4], [3, 0, 1, 2], [5, 4, 6, 7]]
-TE_DIFF = [0, 1, 2, 3, 1, 0, 3, 2, 2, 3, 1, 0, 3, 2, 0, 1]
+def _trellis_diff(prev: int, dibit: int) -> int:
+    """V.32bis Table 1: differential quadrant coding when trellis coding is used."""
+    p1, p2, q1, q2 = prev >> 1, prev & 1, dibit >> 1, dibit & 1
+    return ((p1 ^ q1) << 1) | (p2 ^ q2 ^ (p1 & q1))
+
+
+TE_DIFF = [_trellis_diff(i >> 2, i & 3) for i in range(16)]       # indexed prev << 2 | dibit
+
+
+def _convolutional_step(state: int, y1y2: int) -> int:
+    """V.32bis Figure 1: three delay elements, held as state = d1 << 2 | d2 << 1 | d3. The
+    redundant bit Y0 is d3; the new state is (d3, next d2, next d3)."""
+    d1, d2, d3 = state >> 2, (state >> 1) & 1, state & 1
+    y1, y2 = y1y2 >> 1, y1y2 & 1
+    tap = d2 ^ y2
+    return (d3 << 2) | ((d1 ^ y1 ^ y2 ^ (tap & d3)) << 1) | (tap ^ (y1 & d3))
+
+
+TFSM = [[_convolutional_step(state, dibit) for dibit in range(4)] for state in range(8)]
+
+
+def _signal_points_16():
+    """V.32bis Figure 2-4 (7200 bit/s): the 16 signal points, indexed by the label Y0 Y1 Y2 Q3."""
+    rows_top_down = ((3, '0010 1000 0111 1110'), (1, '1011 0001 1101 0100'),
+                     (-1, '0110 1111 0011 1001'), (-3, '1100 0101 1010 0000'))
+    table = [0j] * 16
+    for imag, labels in rows_top_down:
+        for real, label in zip((-3, -1, 1, 3), labels.split()):
+            table[int(label, 2)] = complex(real, imag)
+    return table
+
+
+ZTAB4 = _signal_points_16()
 
 
 class Trellis7200Encoder:
-    """3 bits/symbol: bits 1-2 differentially coded, convolutional encoder on those, bit 3 uncoded."""
+    """7200 bit/s: Q1 Q2 differentially coded, the pair run through the convolutional encoder,
+    Q3 uncoded. ``q`` is the previous differential output."""
 
     def __init__(self, q: int = 0) -> None:
-        self.q = q
+        self.q = q & 3
         self.t = 0
 
     def encode(self, b: int) -> complex:
-        self.q = ((self.q << 2) | (b >> 1)) & 0xF
-        k = TE_DIFF[self.q]
-        self.q = (self.q & 0xC) | k
-        e = ((self.t & 1) << 3) | (k << 1) | (b & 1)
-        self.t = TFSM[self.t][k]
-        return ZTAB4[e]
+        y = TE_DIFF[(self.q << 2) | (b >> 1)]
+        self.q = y
+        label = ((self.t & 1) << 3) | (y << 1) | (b & 1)
+        self.t = TFSM[self.t][y]
+        return ZTAB4[label]
 
 
 # V.32 9600 bps trellis-coded signal-state mapping, keyed (Y0, Y1, Y2, Q3, Q4) -> Re+Im*j.
@@ -191,13 +243,11 @@ class Differential4800Encoder:
     """Non-redundant 4800 bps coding: two bits per symbol, differentially coded."""
 
     def __init__(self) -> None:
-        self.q = 0
+        self.q = 0                                  # previous label
 
     def encode(self, dibit: int) -> complex:
-        self.q = ((self.q << 2) | dibit) & 0xF
-        k = NR_DIFF[self.q & 0xF]
-        self.q = (self.q & 0xC) | k
-        return POINTS[k]
+        self.q = NR_DIFF[(self.q << 2) | dibit]
+        return POINTS[self.q]
 
 
 def rrc_pulse(rolloff: float, span: int = SPAN, per_symbol: int = SPS24) -> list[float]:
@@ -310,7 +360,7 @@ class V32CallerTx:
         sent_e = False
         while True:
             if self._send_e and not sent_e and not bits:
-                # E: the agreed rate (one bit) with the top nibble set (fisher: rateword | 0xf000)
+                # E: the agreed rate (one bit) with the top nibble set (the agreed rate with the top nibble set, 0xF000)
                 word_now, sent_e, self.state = (self._e_word if self._e_word is not None else (word | 0xF000)), True, "e"
             elif sent_e:
                 word_now = None                     # after E: scrambled ones until data starts
@@ -339,7 +389,7 @@ class V32CallerTx:
 
     def feed_bytes(self, data: bytes) -> None:
         """Queue application bytes; sent async-framed (start 0, 8 data LSB first, stop 1) once E
-        has been sent. Idle is ones (marks), as in fisher's putasync."""
+        has been sent. Idle is ones (marks)."""
         self._tx_bytes.extend(data)
 
     def _frame_bit(self) -> int:

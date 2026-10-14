@@ -1,6 +1,7 @@
 """Check V.32bis numeric tables independently against the 02/1991 standard.
 
-Read application constants through AST only: no modem module is imported.
+Evaluates the first-party pure-Python V.32 module and compares its tables with values
+re-derived here from the Recommendation.
 This is standards conformance evidence, not a determination of copyright rights.
 """
 import argparse
@@ -67,12 +68,18 @@ def expected():
 
 def audit(source):
     tables = expected()
-    found = {}
-    for node in ast.parse(source.read_text()).body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id in tables:
-                    found[target.id] = literal(node.value)
+    # The tables are now generated from the Recommendation's formulas, so read the evaluated values.
+    # The module is first-party pure Python; import it with its own directory on the path.
+    import importlib.util
+    import sys
+    sys.path.insert(0, str(source.parent))
+    try:
+        spec = importlib.util.spec_from_file_location('_v32_audited', source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+    found = {name: getattr(module, name, None) for name in tables}
     results = {name: found.get(name) == value for name, value in tables.items()}
     return dict(source=str(source), source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
                 standard='ITU-T V.32bis (02/1991)', checks=results,

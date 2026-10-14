@@ -16,7 +16,8 @@ import cmath
 import math
 import os
 
-from v32_caller import GPA, NR_DIFF, POINTS, Scrambler, TCM_BITS, TFSM, V32_TCM, V32_TCM_9600, ZTAB4
+from v32_caller import (GPA, NR_DIFF, POINTS, Scrambler, TCM_BITS, TFSM, TE_DIFF, V32_TCM, V32_TCM_9600,
+                        ZTAB4)
 
 BAUD = 2400
 CARRIER = 1800.0
@@ -104,13 +105,17 @@ class Equalizer:
 
 
 def slice4(z: complex) -> int:
-    """Index of the nearest of A, B, D, C (quadrant slicer of fisher's 4800 decoder)."""
+    """Index of the nearest of A, B, D, C."""
     b1 = int(2.0 * z.imag > -z.real)
     b2 = int(z.real > z.imag)
     return (b1 << 1) | b2
 
 
-TD_DIFF = [0, 1, 2, 3, 1, 0, 3, 2, 3, 2, 0, 1, 2, 3, 1, 0]
+# Inverse of V.32bis Table 1: the dibit that took the differential coder from `prev` to `new`,
+# indexed prev << 2 | new.
+TD_DIFF = [next(d for d in range(4) if TE_DIFF[(i >> 2) << 2 | d] == i & 3) for i in range(16)]
+# Trace-back depth and the 0.99 survivor-metric decay in ViterbiStream.push are borrowed design
+# parameters from fisher-modem's decoder; they are tuning choices, not part of the Recommendation.
 TLEN = 20
 
 
@@ -350,7 +355,7 @@ class V32Rx:
 
 
 def deframe_async(bits) -> bytes:
-    """Start bit 0, 8 data bits LSB first, stop bit 1; ones while idle (fisher's getasync)."""
+    """Start bit 0, 8 data bits LSB first, stop bit 1; ones while idle."""
     out = bytearray()
     i = 0
     while i + 10 <= len(bits):
