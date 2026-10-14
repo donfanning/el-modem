@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "eb90fae3ef2bcd725230bf7901cdcbc56472f876",
+  "public_base_revision": "50eae1b33f3dc8756faef9955ab839fafe1a320a",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -69,11 +69,63 @@
       "mode": "100644"
     },
     "docs/SERIAL.md": {
-      "sha256": "bc79500a81301244e5c7021da10483d6f50c07a541c2956c6d1327ab327d135e",
+      "sha256": "988d9c4f3089bc638b6a1c53523893f1130d64ef48c09af894a58ac11805e3cf",
       "mode": "100644"
     },
     "docs/SOURCE_PROVENANCE.md": {
       "sha256": "684e100b83b93c5d0897e520c55f03cbd21d6f2c231aa4285d417c4cf758ccd9",
+      "mode": "100644"
+    },
+    "docs/WINDOWS_COM_QUALIFICATION.json": {
+      "sha256": "94d7225cdd866df80524aa7cf167e1750a063dadde2a2f1833ce1574edad3641",
+      "mode": "100644"
+    },
+    "docs/WINDOWS_COM_QUALIFICATION.md": {
+      "sha256": "d4f3d2edccc4f7b423b3793b13a96170764a3c173a50076b2d6155a3efb9c350",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/code-integrity.json": {
+      "sha256": "351b7f2eeafdd39158763c6bd5ee0140d55775e9506e797c12cf471f5cc88d40",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/devices.json": {
+      "sha256": "37f5f113c30e1f46b1e438d7aad1eda4865a2a7c153d850d966a49b3d77e1083",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/driver-cleanup.json": {
+      "sha256": "07d2a72e550bcb4c092e82803d4658e1e5d60f7422b3c355bb9516d09e10b138",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/driver-signatures.json": {
+      "sha256": "3cdbf773451927d022a0901ce11609d6f593615f68be59e8523a711e9e16819e",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/guest-result.json": {
+      "sha256": "c0c088af5c2118487f4f03feafab39e937298d584196f5b7b73c401705fda319",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/os.json": {
+      "sha256": "7e3b9b85019de947358a68e9a35ec780da74b0065abaa2dc90c223d0c0fd55a2",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/runtime-after.json": {
+      "sha256": "4c9ac6dbacbedda22d492b575a84b5aa9f951937857325faa8fb994fc212f682",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/service.json": {
+      "sha256": "716c9a0868f94fae3f438bd8a377dbf561c8ca95cdc3d15f7bb3e5bc8fdec632",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/terminal-identities.json": {
+      "sha256": "2bd941286f84008f21ccb864a6f2b1d046a2a4d8a0c3d9d85c4b2a3fe56c0a51",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/terminal-result.json": {
+      "sha256": "7e8f2c091a0b706eb27b3d63c1ffcc59554b52c656891b03d1dd70a9db90459a",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/terminal.log": {
+      "sha256": "fedbae441e18de76657f49fca941240c184de1ca7403eec749aa930fb763d3ef",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/analyze_envelope.py": {

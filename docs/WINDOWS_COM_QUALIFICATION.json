@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "date": "2026-10-14",
+  "scope": "Exact published Windows rc1 through a real kernel COM pair, raw TCP bridge and Tera Term; identity, S-register readback/reset and teardown. No DSP call or RS232 signal qualification.",
+  "environment": {
+    "os": {
+      "Caption": "Microsoft Windows Server 2022 Standard Evaluation",
+      "Version": "10.0.20348",
+      "BuildNumber": "20348"
+    },
+    "virtualization": "Local KVM/QEMU 11.1.2, stock BIOS; Secure Boot/HVCI not qualified",
+    "kernel_integrity": {
+      "scope": "Effective running-kernel code integrity, not only next-boot BCD",
+      "testsigning": false,
+      "options": 1,
+      "enabled": true
+    },
+    "runtime": {
+      "Installed": 1,
+      "Version": "v14.44.35211.00",
+      "Major": 14,
+      "Minor": 44,
+      "Bld": 35211
+    }
+  },
+  "identities": {
+    "modem": {
+      "url": "https://github.com/donfanning/el-modem/releases/download/v0.1.0-rc1/el-modem-0.1.0-rc1-windows-x86_64.zip",
+      "acquired_via": "local pinned fixture",
+      "archive_sha256": "5766d971843b03dec3a665d4809c5072731829ad193da7fcc15365e0d1ec84b3",
+      "executable_sha256": "f98372c76cb648e1faaf92c925659ab8e6ba065b7e5fd249230ccf3fc82cd7a7"
+    },
+    "terminal": {
+      "url": "https://github.com/TeraTermProject/teraterm/releases/download/v5.7.1/teraterm-5.7.1-x64.zip",
+      "acquired_via": "local pinned fixture",
+      "archive_sha256": "68521f36a07754396eb925aabb0cd1f2092b15fffac74d330b428952552adafc"
+    },
+    "bridge": {
+      "url": "https://downloads.sourceforge.net/project/com0com/com2tcp/1.3.0.0/com2tcp-1.3.0.0-386.zip",
+      "acquired_via": "local pinned fixture",
+      "archive_sha256": "c13cd062187b84cdc25b5e774c8a45be83dad14721755d44c9bf9494ca460b8b"
+    }
+  },
+  "commands": [
+    "ATZ",
+    "ATE0",
+    "ATI3",
+    "ATS0=9",
+    "ATS0? -> 9",
+    "ATZ",
+    "ATE0",
+    "ATS0? -> 0"
+  ],
+  "cleanup": {
+    "scope": "Owned pair removed; temporary publisher consent removed if added. Remaining driver store disappears with disposable VM.",
+    "present_owned_devices": 0,
+    "passed": true
+  },
+  "evidence_sha256": {
+    "code-integrity.json": "351b7f2eeafdd39158763c6bd5ee0140d55775e9506e797c12cf471f5cc88d40",
+    "devices.json": "37f5f113c30e1f46b1e438d7aad1eda4865a2a7c153d850d966a49b3d77e1083",
+    "driver-cleanup.json": "07d2a72e550bcb4c092e82803d4658e1e5d60f7422b3c355bb9516d09e10b138",
+    "driver-signatures.json": "3cdbf773451927d022a0901ce11609d6f593615f68be59e8523a711e9e16819e",
+    "guest-result.json": "c0c088af5c2118487f4f03feafab39e937298d584196f5b7b73c401705fda319",
+    "os.json": "7e3b9b85019de947358a68e9a35ec780da74b0065abaa2dc90c223d0c0fd55a2",
+    "service.json": "716c9a0868f94fae3f438bd8a377dbf561c8ca95cdc3d15f7bb3e5bc8fdec632",
+    "terminal-identities.json": "2bd941286f84008f21ccb864a6f2b1d046a2a4d8a0c3d9d85c4b2a3fe56c0a51",
+    "terminal-result.json": "7e8f2c091a0b706eb27b3d63c1ffcc59554b52c656891b03d1dd70a9db90459a",
+    "terminal.log": "fedbae441e18de76657f49fca941240c184de1ca7403eec749aa930fb763d3ef",
+    "runtime-after.json": "4c9ac6dbacbedda22d492b575a84b5aa9f951937857325faa8fb994fc212f682"
+  },
+  "limits": [
+    "One retained final normal-mode result; report-upload failure caused unintended fixture retries, not a documented multi-seed campaign.",
+    "Hosted Server 2022/2025 passes used preconfigured test-signing and do not establish normal-mode deployment.",
+    "No Win10/Win11, Secure Boot/HVCI, native driver bundling, DCD/RI/CTS, connected DSP/PSTN data, or original Windows installer qualification."
+  ]
+}
