@@ -69,19 +69,27 @@ end;
 function SignedByMicrosoft(const FileName: String): Boolean;
 var
   Code: Integer;
-  Script, Report, Outcome: String;
+  Script, ScriptFile, Report, Outcome: String;
   Raw: AnsiString;
 begin
   { The download URL is a moving target, so a pinned hash is impossible. Require a valid
-    Authenticode signature whose signer is Microsoft Corporation instead. The verdict and the
-    reason are logged so a refusal can be diagnosed. }
+    Authenticode signature whose signer is Microsoft Corporation instead. The check runs from a
+    script file (no command-line quoting) and the verdict is logged so a refusal can be diagnosed. }
+  ScriptFile := ExpandConstant('{tmp}\check-signature.ps1');
   Report := ExpandConstant('{tmp}\signature-check.txt');
-  Script := '$s = Get-AuthenticodeSignature -LiteralPath ''' + FileName + '''; ' +
-            '$subject = if ($s.SignerCertificate) { $s.SignerCertificate.Subject } else { ''(none)'' }; ' +
-            '"$($s.Status)|$subject" | Out-File -LiteralPath ''' + Report + ''' -Encoding ascii; ' +
-            'if ($s.Status -eq ''Valid'' -and $subject -match ''O=Microsoft Corporation'') { exit 0 } else { exit 1 }';
+  Script :=
+    'param([string]$File, [string]$Report)' + #13#10 +
+    '$ErrorActionPreference = "Stop"' + #13#10 +
+    'try {' + #13#10 +
+    '  $s = Get-AuthenticodeSignature -LiteralPath $File' + #13#10 +
+    '  $subject = "(none)"' + #13#10 +
+    '  if ($s.SignerCertificate) { $subject = $s.SignerCertificate.Subject }' + #13#10 +
+    '  "$($s.Status)|$subject" | Out-File -LiteralPath $Report -Encoding ascii' + #13#10 +
+    '  if ($s.Status -eq "Valid" -and $subject -match "O=Microsoft Corporation") { exit 0 } else { exit 1 }' + #13#10 +
+    '} catch { "error|$($_.Exception.Message)" | Out-File -LiteralPath $Report -Encoding ascii; exit 2 }' + #13#10;
+  SaveStringToFile(ScriptFile, Script, False);
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-                 '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Script + '"',
+                 '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptFile + '" "' + FileName + '" "' + Report + '"',
                  '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
   Outcome := '(no report)';
   if LoadStringFromFile(Report, Raw) then Outcome := Trim(String(Raw));
