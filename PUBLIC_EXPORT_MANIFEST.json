@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "b50b4c2d7066f535e2f87dbe727ca1fc8613bf37",
+  "public_base_revision": "cc49b6527080d5aa3a4c602e5c526ce17bed8f94",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -1337,7 +1337,7 @@
       "mode": "100644"
     },
     "packaging/windows/qualify_com_terminal.py": {
-      "sha256": "75bd07acde072d4dcbd39d275ce8e00f4ef2b66494ffb391812a8a269198ca52",
+      "sha256": "15d6db4bd345044ad992bf03dd7b83ab6a3407d484b91b4f9ea16fb36214800c",
       "mode": "100644"
     }
   },
