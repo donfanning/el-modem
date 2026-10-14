@@ -1,0 +1,33 @@
+[!p[?3;4l[4l>[0m(B[37;40m[?1h=[H[2J[0m(B[37;41m[30;1H[K[?12l[?25h[?25l                                                                                                   [?12l[?25h[?12l[?25h[?25lCTRL-A Z for help | 115200 8N1 | NOR | Minicom 2.11.1 | VT102 | Offline | /instances/modem-1/serial[?12l[?25h[1;1H
+[0m(B[37;40mWelcome to minicom 2.11.1
+
+OPTIONS: 
+Compiled on Feb 28 2026, 10:51:05.
+Port /var/folders/20/jp1_0n3n7kndh6rnbqb5344m0000gn/T/el-modem-pty-8vm77lp2/instances/modem-1/serial[6;100H,[6;100H [6;100H2[6;100H1[6;100H:[6;100H4[6;100H9[6;100H:[6;100H5[6;100H2[6;100H [6;100H[[6;100HF[6;100H][6;100H
+
+Press CTRL-A Z for help on special keys
+
+ATZ
+OK
+ATE0
+OK
+
+El-Modem Software Modem
+Build date: 10/14/26
+Revision: 0.1.0
+https://github.com/donfanning/el-modem
+
+OK
+
+OK
+
+9
+OK
+
+OK
+ATE0
+OK[1;29r[29;1H
+[1;30r[29;1H[1;29r[29;1H
+[1;30r[29;1H0[1;29r[29;1H
+[1;30r[29;1HOK[1;29r[29;1H
+[1;30r[29;1H[8;40H[?25l[0m(B[33;44m[1m+----------------------+[9;40H| Leave without reset? |[10;40H|               No     |[11;40H+----------------------+[10;61H[?25l[10;43H[0m(B[33;44m[7m[1m   Yes  [?12l[?25h[8;1H[0m(B[37;40mATE0                                                           [9;1HOK                                                             [10;1H                                                               [11;1HEl-Modem Software Modem                                        [29;1H[?12l[?25h[?12l[?25h[H[2J[?12l[?25h[?1l>[!p[?3;4l[4l>

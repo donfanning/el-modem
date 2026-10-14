@@ -11,6 +11,12 @@ their signal behavior differs from native virtual serial.
 The program prints the PTY name and, with `--link`, creates the symlink. Closing the terminal drops DTR; the modem hangs
 up according to `AT&D` (default: hang up). Run minicom with a hang-up string of `~~+++~~ATH`.
 
+The exact published macOS rc1 passed real minicom command sessions, close/reopen
+on the same PTY and clean teardown on both Intel and ARM macOS15.7.9. See
+[macOS qualification and usage](MACOS_PTY_QUALIFICATION.md). Disable minicom's
+hardware/software flow control for this PTY. This does not qualify physical
+modem-control signals or connected-call hangup behavior.
+
 ## Every OS, and the only mode on Windows: TCP serial
     el-modem --serial-tcp 127.0.0.1:9100 ...
 The modem listens on that port; one client at a time is the terminal. Disconnecting is a DTR drop. On Windows this is the

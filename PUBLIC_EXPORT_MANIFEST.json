@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "c1ed38b900e3eb64581cec3031b1c7c5ade80160",
+  "public_base_revision": "2f364474dd7f5850648835414647e8a4d6e10da5",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -60,6 +60,14 @@
       "sha256": "17756172a1fed3f164846168b312deed5845abb7d3b10108ecf5fcae3d5c80d7",
       "mode": "100644"
     },
+    "docs/MACOS_PTY_QUALIFICATION.json": {
+      "sha256": "3be588e8baa9c034788f68fd57dd00c52f34f8fbfb57499db341bdf83a57da07",
+      "mode": "100644"
+    },
+    "docs/MACOS_PTY_QUALIFICATION.md": {
+      "sha256": "39e33f2eae60d9aba4b49dd13c0eaf6dc217b6769bc56d7d9a8e1679811e29a7",
+      "mode": "100644"
+    },
     "docs/REDISTRIBUTION.md": {
       "sha256": "dd45611ddeb02224643ea15f65dd6f7c125cc5c4cdbec8a8211bcda80963e197",
       "mode": "100644"
@@ -69,11 +77,11 @@
       "mode": "100644"
     },
     "docs/RUNTIME_REQUIREMENTS.md": {
-      "sha256": "ae0e99d379e780a9815f0fe7c8131793cf1150d7b0229c07701d462c0b8fc3fa",
+      "sha256": "f4e1c99075d03e4d713dbac82a86ad6519ccabccda595ed95db223f90f7d91be",
       "mode": "100644"
     },
     "docs/SERIAL.md": {
-      "sha256": "988d9c4f3089bc638b6a1c53523893f1130d64ef48c09af894a58ac11805e3cf",
+      "sha256": "f37f5998466bc66ffe98028d0e2d4842839c656f9083fb5e626e08cad40d3696",
       "mode": "100644"
     },
     "docs/SOURCE_PROVENANCE.md": {
@@ -86,6 +94,62 @@
     },
     "docs/WINDOWS_COM_QUALIFICATION.md": {
       "sha256": "d4f3d2edccc4f7b423b3793b13a96170764a3c173a50076b2d6155a3efb9c350",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-arm64/first-capture.txt": {
+      "sha256": "a3dedb10ccb8dd0b0b9b6838534da09721a9c59a00f1d6e0981cf819b97bb0eb",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-arm64/first-ui.txt": {
+      "sha256": "ec1b5bd9453f719c79ca36a5a3f40805a704362bc5feaa314215c3ce4f861ce4",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-arm64/reopened-capture.txt": {
+      "sha256": "184604f1a3bbf99b4ebfa90a53f25b19a389de5db532339eea33e04e8aead7ea",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-arm64/reopened-ui.txt": {
+      "sha256": "1ff5479c3f16c6e6b4fe471b4ba602bd450fb90a4c7b4088dbb2c930fece1f8c",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-arm64/result.json": {
+      "sha256": "f53dbedaf351ddb10311e01bd684b913ebc7ea517bb6084411cd68982c89e64f",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-arm64/supervisor.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-arm64/worker.log": {
+      "sha256": "01b565a60ed543ff376a51ee456d2ffe121cc42dcca3f35bda9957e452408f78",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-x86_64/first-capture.txt": {
+      "sha256": "a3dedb10ccb8dd0b0b9b6838534da09721a9c59a00f1d6e0981cf819b97bb0eb",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-x86_64/first-ui.txt": {
+      "sha256": "e465d9bf14619cbe9c95ed0a6f5683253889ce9bf5f51c1fecf6e9f1bc7aea0a",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-x86_64/reopened-capture.txt": {
+      "sha256": "184604f1a3bbf99b4ebfa90a53f25b19a389de5db532339eea33e04e8aead7ea",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-x86_64/reopened-ui.txt": {
+      "sha256": "e88e430c6b83398d188e2580e5ffdde4242a3c38903ecd36f57a92a7894d07fd",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-x86_64/result.json": {
+      "sha256": "6a7ce5c6a2ccbb8f0fd85f9f75d91af83fc408bd60affa5f99b02021b2a46e66",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-x86_64/supervisor.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "100644"
+    },
+    "docs/macos-pty-evidence/macos-x86_64/worker.log": {
+      "sha256": "01b565a60ed543ff376a51ee456d2ffe121cc42dcca3f35bda9957e452408f78",
       "mode": "100644"
     },
     "docs/windows-com-evidence/code-integrity.json": {

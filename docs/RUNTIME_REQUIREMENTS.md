@@ -81,8 +81,10 @@ GLIBC 2.36 result does not apply to this rc1 Linux ZIP.
 - Calls need configured SIP credentials/routing and reachable SIP/RTP endpoints;
   no provider configuration is supplied. Native IAX calling is not implemented.
 
-These requirements do not close older-OS, clean-installation, native COM/PTY
-application, packet-loss, loaded-host or multiworker qualification. The release
+Separate command-path evidence now covers [Windows COM](WINDOWS_COM_QUALIFICATION.md)
+and [macOS PTY](MACOS_PTY_QUALIFICATION.md) with actual legacy applications on the
+stated profiles. It does not close older-OS, original installer, connected-call
+signals, packet-loss, loaded-host or multiworker qualification. The release
 remains experimental, with the existing provenance and commercial-review limits.
 
 ## Reproduce the static inspection

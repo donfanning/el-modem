@@ -1,0 +1,23 @@
+ATZ
+OK
+ATE0
+OK
+
+El-Modem Software Modem
+Build date: 10/14/26
+Revision: 0.1.0
+https://github.com/donfanning/el-modem
+
+OK
+
+OK
+
+9
+OK
+
+OK
+ATE0
+OK
+
+0
+OK
