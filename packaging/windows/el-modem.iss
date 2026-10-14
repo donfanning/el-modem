@@ -46,7 +46,7 @@ Source: "{#SourceDir}\qualification\*"; DestDir: "{app}\qualification"; Flags: i
 
 [Icons]
 ; El-Modem is a terminal application: the shortcut opens it in a console window.
-Name: "{group}\El-Modem"; Filename: "{app}\el-modem.exe"; WorkingDir: "{userdocs}"
+Name: "{group}\El-Modem"; Filename: "{app}\el-modem.exe"
 Name: "{group}\Uninstall El-Modem"; Filename: "{uninstallexe}"
 
 [Code]
@@ -69,15 +69,23 @@ end;
 function SignedByMicrosoft(const FileName: String): Boolean;
 var
   Code: Integer;
-  Script: String;
+  Script, Report, Outcome: String;
+  Raw: AnsiString;
 begin
   { The download URL is a moving target, so a pinned hash is impossible. Require a valid
-    Authenticode signature whose signer is Microsoft Corporation instead. }
+    Authenticode signature whose signer is Microsoft Corporation instead. The verdict and the
+    reason are logged so a refusal can be diagnosed. }
+  Report := ExpandConstant('{tmp}\signature-check.txt');
   Script := '$s = Get-AuthenticodeSignature -LiteralPath ''' + FileName + '''; ' +
-            'if ($s.Status -eq ''Valid'' -and $s.SignerCertificate.Subject -match ''O=Microsoft Corporation'') { exit 0 } else { exit 1 }';
+            '$subject = if ($s.SignerCertificate) { $s.SignerCertificate.Subject } else { ''(none)'' }; ' +
+            '"$($s.Status)|$subject" | Out-File -LiteralPath ''' + Report + ''' -Encoding ascii; ' +
+            'if ($s.Status -eq ''Valid'' -and $subject -match ''O=Microsoft Corporation'') { exit 0 } else { exit 1 }';
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
                  '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Script + '"',
                  '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+  Outcome := '(no report)';
+  if LoadStringFromFile(Report, Raw) then Outcome := Trim(String(Raw));
+  Log('Runtime installer signature check: exit ' + IntToStr(Code) + ', ' + Outcome);
 end;
 
 function InstallVCRuntime(var NeedsRestart: Boolean): String;

@@ -22,7 +22,7 @@ Remove-Item -Recurse -Force $target -ErrorAction SilentlyContinue
 $log = Join-Path $Out 'install.log'
 $p = Start-Process $setup -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$target`" /LOG=`"$log`" /ForceVCRedist=1" -Wait -PassThru
 Write-Host "installer exit code: $($p.ExitCode)"
-Get-Content $log | Select-String -Pattern 'redist|Download|signature|Exception|Failed' | ForEach-Object { Write-Host $_.Line }
+Get-Content $log | Select-String -Pattern "redist|Download|signature|Exception|Failed" | ForEach-Object { Write-Host $_.Line }
 if ($p.ExitCode -notin 0, 3010) { throw "installer failed: $($p.ExitCode)" }
 $exe = Join-Path $target 'el-modem.exe'
 if (-not (Test-Path $exe)) { throw 'installed program missing' }
