@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "5a407d5c23fbdb59b41a52dd371203541498ce1a",
+  "public_base_revision": "a40195300d5846b973b563598ed3c49ba8370368",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -9,7 +9,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "8cc6bb83a5b19e1df3474425d1fea4306b4a94aa7d204fdefc75afe68311442b",
+      "sha256": "2fc150882f7717376858c126da78d39e7872c972e3bf2d799c4c505a591c64cc",
       "mode": "100644"
     },
     ".gitignore": {
@@ -45,7 +45,7 @@
       "mode": "100644"
     },
     "docs/REDISTRIBUTION.md": {
-      "sha256": "406c2348c14a9ced50ecd3b991f2d9a5457875a088d35079702150b68c28e3f8",
+      "sha256": "9d79d8a1fffffa7997f6644f1b02a09c4a1ace96eafb47a9b786f663dadef5b3",
       "mode": "100644"
     },
     "docs/SERIAL.md": {
@@ -1205,7 +1205,7 @@
       "mode": "100644"
     },
     "packaging/inventory_portable.py": {
-      "sha256": "feab90b744e4b543f0f508e4cce314421e5e085b976e5dcb33d6af3cf5ef42af",
+      "sha256": "c1099a11dce68d21b397b5384ccd6a46060b64108382a419d9ed8b94605cf79a",
       "mode": "100644"
     },
     "packaging/native_runtime.py": {
@@ -1218,6 +1218,10 @@
     },
     "packaging/public_manifest.py": {
       "sha256": "2e1704fdeeefba1e4a923b4cb776df7c4ee4c55e690cc6f6b6976b13c074504d",
+      "mode": "100644"
+    },
+    "packaging/python_component_notices.py": {
+      "sha256": "f724245b2d1f3517d9ecba67ddb67c5b69ba3c812647fdd2a3ee2a6236c9a7b8",
       "mode": "100644"
     },
     "packaging/qualify_controls.py": {
@@ -1278,6 +1282,14 @@
     },
     "packaging/test_public_manifest.py": {
       "sha256": "1626ea8f41fb6342a9c06974ced89ab4153f0c9d062f0acb1cc88a261866a974",
+      "mode": "100644"
+    },
+    "packaging/test_python_component_notices.py": {
+      "sha256": "ae408e5b3160e3f5e6a57f4e08098c164dc436ac52ea0c204acff7ae09a77a2b",
+      "mode": "100644"
+    },
+    "packaging/third-party/CPython-SHA3.LICENSE": {
+      "sha256": "4633fc5859344c6f244939c27700fb941d12c4636215a8eccde17d9a6d1dcb0d",
       "mode": "100644"
     },
     "packaging/verify_binary_sources.py": {

@@ -16,6 +16,7 @@ import subprocess
 import sys
 import sysconfig
 from PyInstaller.archive.readers import CArchiveReader
+from python_component_notices import retain as retain_python_notice
 
 
 def sha(data):return hashlib.sha256(data).hexdigest()
@@ -127,6 +128,9 @@ def inventory(executable,output,lineage=None):
     if system_packages:
         for path in Path('/usr/share/common-licenses').glob('*'):
             notice(path,'system license texts',Path('system-common')/path.name)
+    # The interpreter's top-level PSF notice does not contain the separately
+    # licensed SHA3 implementation attribution. Source notice hash is pinned.
+    notices.append(retain_python_notice(output))
     gaps=['Original source-expression provenance and static/transitive native-code review remain open.']
     gaps+=['unattributed Python root: '+root for root in unattributed]
     gaps+=['native attribution unresolved: '+row['name'] for row in libraries if not row['exact_builder_matches'] and not any(item['providers'] for item in row['processing_lineage'])]

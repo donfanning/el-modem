@@ -37,6 +37,15 @@ qualification reports and member hashes. This collection identifies build
 providers; it does not by itself close static/transitive-code or corresponding
 source review. Each archive currently records `REVIEW_REQUIRED`.
 
+The release now also supplies a [notice supplement](https://github.com/donfanning/el-modem/releases/download/v0.1.0-rc1/el-modem-0.1.0-rc1-notice-supplement.zip)
+and [source supplement](https://github.com/donfanning/el-modem/releases/download/v0.1.0-rc1/el-modem-0.1.0-rc1-source-supplement.tar.gz).
+They correct the omitted CPython SHA3 and Numba vendored-code notices and provide
+61 upstream/application source archives plus build recipes. All 78 embedded
+application modules and the specification match the release source; Windows'
+exact CRLF builder form accompanies the normal Git/LF form. The supplement's
+README and source index state the GNU runtime mappings and review limits.
+Existing executables and their initial manifest statuses are unchanged.
+
 The current CI artifacts use CPython 3.11.17 on Linux and 3.11.9 on Windows/macOS.
 The older qualified Linux LTO executable and its Debian source bundle are
 different builds. Do not substitute their dependency versions or qualification
