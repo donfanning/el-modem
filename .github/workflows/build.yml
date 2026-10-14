@@ -91,6 +91,8 @@ jobs:
       - name: Windows installer (downloads the Microsoft runtime at install time)
         if: inputs.candidate_recipient != '' && runner.os == 'Windows'
         shell: pwsh
+        env:
+          CANDIDATE_RECIPIENT: ${{ inputs.candidate_recipient }}
         run: |
           ./packaging/windows/build_installer.ps1 -Archive build/el-modem-0.1.0-rc1-windows-x86_64.zip -Version 0.1.0-rc1 -Out build/installer
           $setup = (Get-ChildItem build/installer -Filter '*-setup.exe').FullName

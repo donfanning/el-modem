@@ -101,6 +101,7 @@ function InstallVCRuntime(var NeedsRestart: Boolean): String;
 var
   Target: String;
   Code: Integer;
+  Started: Boolean;
 begin
   Result := '';
   try
@@ -116,7 +117,9 @@ begin
     Result := 'The downloaded runtime installer does not carry a valid Microsoft signature, so it was not run.';
     Exit;
   end;
-  if not Exec(Target, '/install /quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+  Started := Exec(Target, '/install /quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Log('Microsoft Visual C++ Redistributable installer: started=' + IntToStr(Integer(Started)) + ', exit code ' + IntToStr(Code));
+  if not Started then
     Result := 'Could not start the Microsoft Visual C++ Redistributable installer.'
   else if (Code = 3010) or (Code = 1641) then
     NeedsRestart := True
