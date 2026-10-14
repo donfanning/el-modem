@@ -25,16 +25,22 @@ try {
     $installer = Join-Path $extract 'Setup_com0com_v3.0.0.0_W7_x64_signed.exe'
     Get-AuthenticodeSignature $installer | Select-Object Status,StatusMessage,@{n='Signer';e={$_.SignerCertificate.Subject}} | ConvertTo-Json | Set-Content "$report/installer-signature.json"
     $install = Join-Path $env:RUNNER_TEMP 'com0com-installed'
-    $p = Start-Process $installer -ArgumentList @('/S',"/D=$install") -PassThru
-    if (-not $p.WaitForExit(120000)) { $p.Kill(); throw 'Installer timeout' }
-    "Installer exit: $($p.ExitCode)" | Out-File "$report/install.txt"
+    # Extract the unchanged signed NSIS payload; avoid legacy GUI installer hangs.
+    & 7z x $installer "-o$install" -y | Out-File "$report/extract.txt"
+    if ($LASTEXITCODE -ne 0) { throw 'Installer payload extraction failed' }
+    $inf = Get-ChildItem $install -Recurse -Filter com0com.inf | Select-Object -First 1
+    if (-not $inf) { throw 'Signed payload has no com0com.inf' }
+    & pnputil /add-driver $inf.FullName /install 2>&1 | Out-File "$report/install.txt"
+    "pnputil exit: $LASTEXITCODE" | Add-Content "$report/install.txt"
     Get-ChildItem $install -Recurse | Select-Object FullName,Length | ConvertTo-Json | Set-Content "$report/files.json"
     Get-ChildItem $install -Recurse -Include *.cat,*.sys | ForEach-Object {
         $s = Get-AuthenticodeSignature $_.FullName
         [pscustomobject]@{File=$_.Name;SHA256=(Get-FileHash $_.FullName).Hash;Status=[string]$s.Status;Signer=$s.SignerCertificate.Subject}
     } | ConvertTo-Json | Set-Content "$report/driver-signatures.json"
-    $setup = Join-Path $install 'setupc.exe'
-    & $setup install PortName=COM41 PortName=COM42 2>&1 | Out-File "$report/create-pair.txt"
+    $setup = (Get-ChildItem $install -Recurse -Filter setupc.exe | Select-Object -First 1).FullName
+    $pair = Start-Process $setup -ArgumentList @('--silent', 'install', 'PortName=COM41', 'PortName=COM42') -WorkingDirectory $inf.DirectoryName -PassThru -RedirectStandardOutput "$report/create-pair.txt" -RedirectStandardError "$report/create-pair-error.txt"
+    if (-not $pair.WaitForExit(90000)) { $pair.Kill(); throw 'Pair setup timeout' }
+    "setupc exit: $($pair.ExitCode)" | Add-Content "$report/create-pair.txt"
     & $setup list 2>&1 | Out-File "$report/pairs.txt"
     Start-Sleep -Seconds 5
     Get-CimInstance Win32_PnPEntity | Where-Object {$_.Name -match 'com0com|COM41|COM42'} | Select-Object Name,PNPDeviceID,ConfigManagerErrorCode,Status | ConvertTo-Json | Set-Content "$report/devices.json"
