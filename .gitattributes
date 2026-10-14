@@ -1,2 +1,5 @@
 # Unified patches contain context prefixes before tabs and blank lines.
 packaging/serial/*.patch -whitespace
+
+# Preserve reviewed upstream notice bytes, including their trailing blank line.
+packaging/third-party/*.LICENSE -text whitespace=-blank-at-eof

@@ -1,11 +1,11 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "7635fe996b3ae92e2012223b9628b18362de08d8",
-  "public_base_revision": "a40195300d5846b973b563598ed3c49ba8370368",
+  "public_base_revision": "4437b88c12c37d30222e984d79b1d8ad82694549",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
-      "sha256": "b39d7782634d2a332265d55f12444cb42037cf88151abb95437e3a8005a45477",
+      "sha256": "c3e420feda67797af3291b1b65c22d905906b2efe63f88e403dc29aa75aaacb0",
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
