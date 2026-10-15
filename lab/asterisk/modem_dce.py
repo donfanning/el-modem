@@ -2717,16 +2717,21 @@ def run_pty(
             escape_detector.plus_char = dce.registers[2]                          # S2
             if data:
                 if dial_abort_applies(active_outbound, online_session, dce.online, connect_pending):
-                    # Break before connect: hang up the attempt and report NO
-                    # CARRIER, ready for the next command. Neuter an orphaned
-                    # SIP attempt's callbacks first, so a late answer or
-                    # failure cannot resurrect it after the result.
+                    # Break before connect: hang up everything in flight and
+                    # report NO CARRIER, ready for the next command. Both legs
+                    # are torn down unconditionally once committed: the SIP
+                    # attempt object lingers after answer (no clearing runs on
+                    # connect) while a session negotiates, so either/or would
+                    # leave half a call behind to swallow the next command.
+                    # Neuter an orphaned SIP attempt's callbacks first, so a
+                    # late answer or failure cannot resurrect it after the
+                    # result.
                     if active_outbound is not None:
                         call, active_outbound = active_outbound, None
                         call.on_connected = call.on_failed = call.on_hangup = lambda *a: None
                         call.hangup()
                         dce._call_progress_monitor = None
-                    else:
+                    if online_session is not None:
                         unified_hangup()
                         connect_pending = False
                     dce.outgoing_pending = False
