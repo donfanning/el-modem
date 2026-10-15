@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "a5b014cfb6dc2085673b85acfe21147319d06d14",
-  "public_base_revision": "5af21003343f4cbb5cdabd7444d6d51bee1b6c4b",
+  "public_base_revision": "32bd134fb80ba641ea7d4b0c5ff0eebbb63bfc5f",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -9,7 +9,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "051d0b7fb42fc653b2e228e73bf9e48531f7763f370fb50fe00212074b09a561",
+      "sha256": "927ae6cc628797197965bf6359466077354bd66b82a02df698a4ee7114ea2543",
       "mode": "100644"
     },
     ".github/workflows/macos-pty.yml": {
@@ -1169,7 +1169,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_dce.py": {
-      "sha256": "5b8808b835d3dfa1942d27244a8ba7fdcdafba70f3002d899f2ac543cd26d72a",
+      "sha256": "e6446103d14e920f902530791bb3fc0cde51aac7aab33ea1676358ee8b5aab58",
       "mode": "100644"
     },
     "lab/asterisk/modem_selftest.py": {
@@ -1278,6 +1278,10 @@
     },
     "lab/asterisk/test_modem_startup.py": {
       "sha256": "268171ffe89e49b5a408ec4f157ebaf01aab2ba1459f8a8e55825db8881c7985",
+      "mode": "100644"
+    },
+    "lab/asterisk/test_modem_symmetric_rtp.py": {
+      "sha256": "0b557bdcc40b5eba418117ed19891aa39554ccd698bde66be612791cd6204ee2",
       "mode": "100644"
     },
     "lab/asterisk/test_online_control.py": {
