@@ -24,6 +24,7 @@ def worker(path,fd=None):
     os.environ.update(experiment)
     os.environ['EL_MODEM_FACTORY_NATIVE']='1'
     boot={'instance.name':'name','serial.backend':'serial','serial.tcp_port':'serial_port',
+          'serial.device':'serial_device','serial.baud':'serial_baud',
           'sip.bind_host':'sip_host','sip.bind_port':'sip_port','sip.media_host':'media_host','sip.media_port':'media_port'}
     for name,key in boot.items(): os.environ[ENV[name][0]]=str(spec[key])
     profile=directory/'profiles.json'
@@ -33,7 +34,7 @@ def worker(path,fd=None):
             if name in ENV: os.environ[ENV[name][0]]=str(value)
     for name,key in boot.items():
         value=os.environ[ENV[name][0]]
-        spec[key]=int(value) if key.endswith('port') else value
+        spec[key]=int(value) if key.endswith(('port','baud')) else value
     from modem_supervisor import ModemSpec
     ModemSpec(**spec).validate()
     from modem_control import WorkerControl
@@ -52,8 +53,12 @@ def worker(path,fd=None):
     serial=None
     def create_serial():
         nonlocal serial
-        serial=(DriverSerial(link) if spec['serial']=='driver' else
-                LegacySerial(spec['serial'],link=link,address=f'127.0.0.1:{spec["serial_port"]}'))
+        if spec['serial']=='com':
+            from modem_serial_com import ComSerial
+            serial=ComSerial(device=spec['serial_device'],baud=spec['serial_baud'])
+        else:
+            serial=(DriverSerial(link) if spec['serial']=='driver' else
+                    LegacySerial(spec['serial'],link=link,address=f'127.0.0.1:{spec["serial_port"]}'))
         return serial
     try:
         prefix=str(directory/'captures'/f'run-{time.time_ns()}'/'call')
@@ -80,7 +85,7 @@ def main():
     if '--worker' in sys.argv:
         p=argparse.ArgumentParser();p.add_argument('--worker');p.add_argument('--control-fd',type=int)
         a=p.parse_args();worker(a.worker,a.control_fd);return
-    supervisor_flags={'--tui','--headless','--config','--modems','--serial-backend','--help','-h'}
+    supervisor_flags={'--tui','--headless','--config','--modems','--serial-backend','--serial-device','--serial-baud','--help','-h'}
     if len(sys.argv)>1 and not any(x.split('=')[0] in supervisor_flags for x in sys.argv[1:]):
         from modem_dce import main as legacy
         legacy();return
@@ -88,7 +93,9 @@ def main():
     ui=p.add_mutually_exclusive_group();ui.add_argument('--tui',action='store_true');ui.add_argument('--headless',action='store_true')
     p.add_argument('--config',default=str(Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'el-modem'/'config.json'))
     from modem_serial import default_backend
-    p.add_argument('--modems',type=int);p.add_argument('--serial-backend',choices=('driver','pty','tcp'),default=default_backend())
+    p.add_argument('--modems',type=int);p.add_argument('--serial-backend',choices=('driver','pty','tcp','com'),default=default_backend())
+    p.add_argument('--serial-device',default='',help='COM port for --serial-backend com (e.g. COM42)')
+    p.add_argument('--serial-baud',type=int,default=115200,help='baud rate for --serial-backend com')
     a=p.parse_args()
     if a.modems is not None and a.modems<1: p.error('--modems must be positive')
     if not a.headless and not sys.stdin.isatty(): p.error('interactive terminal required; use --headless')
@@ -97,7 +104,7 @@ def main():
     try:
         supervisor.acquire()
         count=a.modems if a.modems is not None else max(1,len(supervisor.specs))
-        while len(supervisor.specs)<count: supervisor.add(serial=a.serial_backend)
+        while len(supervisor.specs)<count: supervisor.add(serial=a.serial_backend,device=a.serial_device,baud=a.serial_baud)
         if a.modems is not None and len(supervisor.specs)>count: p.error('configuration contains more modems; remove them in the TUI')
         for spec in supervisor.specs:
             if not spec.enabled: continue

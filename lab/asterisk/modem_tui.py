@@ -38,17 +38,17 @@ class InstanceDialog(ModalScreen):
     def __init__(self,spec,callback):super().__init__();self.spec=spec;self.callback=callback
     def compose(self):
         yield Label('Instance / serial / listening addresses (modem must be stopped)')
-        for name in ('name','sip_host','sip_port','media_host','media_port','serial_port'):
+        for name in ('name','sip_host','sip_port','media_host','media_port','serial_port','serial_device','serial_baud'):
             yield Label(name);yield Input(str(getattr(self.spec,name,'')),id=name)
-        yield Select([(x,x) for x in ('driver','pty','tcp')],value=self.spec.serial,id='serial',allow_blank=False)
+        yield Select([(x,x) for x in ('driver','pty','tcp','com')],value=self.spec.serial,id='serial',allow_blank=False)
         yield Static('',id='error')
         with Horizontal():yield Button('Save',id='save');yield Button('Cancel',id='cancel')
     def on_button_pressed(self,event):
         event.stop()
         if event.button.id=='cancel':self.dismiss();return
         try:
-            changes={name:self.query_one('#'+name,Input).value for name in ('name','sip_host','sip_port','media_host','media_port','serial_port')}
-            for name in ('sip_port','media_port','serial_port'):changes[name]=int(changes[name])
+            changes={name:self.query_one('#'+name,Input).value for name in ('name','sip_host','sip_port','media_host','media_port','serial_port','serial_device','serial_baud')}
+            for name in ('sip_port','media_port','serial_port','serial_baud'):changes[name]=int(changes[name])
             changes['serial']=self.query_one('#serial',Select).value
             self.callback(changes);self.dismiss()
         except (ValueError,OSError) as exc:self.query_one('#error',Static).update(str(exc))
@@ -187,7 +187,9 @@ class ModemApp(App):
     def action_create(self):
         from modem_supervisor import ModemSpec
         def save(changes):
-            spec=self.supervisor.add(name=changes['name'],serial=changes['serial'])
+            spec=self.supervisor.add(name=changes['name'],serial=changes['serial'],
+                                     device=changes.get('serial_device',''),
+                                     baud=changes.get('serial_baud',115200))
             try:self.configure_spec(spec,changes)
             except BaseException:self.supervisor.specs.remove(spec);self.supervisor.save();raise
         number=1

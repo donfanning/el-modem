@@ -17,7 +17,40 @@ on the same PTY and clean teardown on both Intel and ARM macOS15.7.9. See
 hardware/software flow control for this PTY. This does not qualify physical
 modem-control signals or connected-call hangup behavior.
 
-## Every OS, and the only mode on Windows: TCP serial
+## Windows: native COM backend
+
+`--serial-backend com` owns one end of an already-installed virtual COM
+pair and drives real modem-control lines (CTS/RTS hardware flow
+control, DTR presence/drop, DCD carrier). It is the Windows counterpart
+to the Linux driver backend. The modem runs unprivileged and never
+installs or configures the driver; see the
+[com0com prerequisite](../packaging/com0com/README.md).
+
+The pair must be created once, as administrator, with the terminal side
+wired so DSR is independent of carrier:
+
+```powershell
+setupc.exe install PortName=COM41,dsr=on PortName=COM42
+```
+
+Then point the instance at the modem side and pick a baud:
+
+```text
+AT+CFG="serial.device","COM42"
+AT+CFG="serial.baud","115200"
+```
+
+or `el-modem --serial-backend com --serial-device COM42 --serial-baud 115200`.
+Each modem needs its own pair; the supervisor rejects duplicate devices.
+`&K1`/`&K3` enforce real RTS/CTS on this backend.
+
+RI has no pin action on com0com: two DCE outputs (DTR, RTS) cannot
+drive three independent peer inputs (DCD, CTS, RI) with static wiring.
+Incoming-ring detection still reaches terminals as the Hayes `RING`
+result code. The dashboard ASCII terminal cannot take over a COM port
+whose peer is unknown; attach a terminal program to the paired port.
+
+## Every OS: TCP serial
     el-modem --serial-tcp 127.0.0.1:9100 ...
 The modem listens on that port; one client at a time is the terminal. Disconnecting is a DTR drop. On Windows this is the
 legacy single-DCE default (127.0.0.1:9100). Use a raw TCP client (PuTTY "Raw", `ncat 127.0.0.1 9100`);
