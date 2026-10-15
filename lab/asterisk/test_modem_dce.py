@@ -22,6 +22,7 @@ from pathlib import Path
 from modem_dce import (
     AtDce,
     default_error_control_for,
+    EscapeHold,
     EscapeSequenceDetector,
     OnlineAudioSession,
     linear_to_ulaw,
@@ -790,6 +791,36 @@ class EscapeSequenceDetectorTests(unittest.TestCase):
     def test_ordinary_data_passes_through_untouched(self) -> None:
         detector = EscapeSequenceDetector(guard_time=1.0)
         self.assertEqual(detector.feed(b"ATDT5551234\r", 0.0), b"ATDT5551234\r")
+
+
+class EscapeHoldTests(unittest.TestCase):
+    def test_holds_in_order_and_flushes_once(self) -> None:
+        hold = EscapeHold()
+        self.assertEqual(len(hold), 0)
+        hold.hold(b"abc")
+        hold.hold(b"def")
+        self.assertEqual(len(hold), 6)
+        self.assertEqual(hold.flush(), b"abcdef")
+        self.assertEqual(len(hold), 0)
+        self.assertEqual(hold.flush(), b"")
+
+    def test_bounded_keeps_the_most_recent(self) -> None:
+        hold = EscapeHold()
+        hold.hold(b"x" * (EscapeHold.LIMIT + 100))
+        self.assertEqual(len(hold), EscapeHold.LIMIT)
+        hold.hold(b"tail")
+        self.assertTrue(bytes(hold.flush()).endswith(b"tail"))
+
+    def test_clear_drops_without_delivering(self) -> None:
+        hold = EscapeHold()
+        hold.hold(b"abc")
+        hold.clear()
+        self.assertEqual(hold.flush(), b"")
+
+    def test_empty_hold_is_free(self) -> None:
+        hold = EscapeHold()
+        hold.hold(b"")
+        self.assertEqual(len(hold), 0)
 
 
 class OnlineAudioSessionTests(unittest.TestCase):
