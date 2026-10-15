@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "a5b014cfb6dc2085673b85acfe21147319d06d14",
-  "public_base_revision": "2245b19b3269ce38dcafbd3f5fdc7796ef4bcfeb",
+  "public_base_revision": "b2b76fa2d69fbdd201180d394a47a0231c088de0",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -1169,7 +1169,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_dce.py": {
-      "sha256": "c99f208c174d6f18b0f118060e1df57db7f9071cde0a1e8447346fd9c8d596dd",
+      "sha256": "b0b6d44bb8617fd0ea1772e572cf86b1671c9351f278af3e4d77a2a069d47fed",
       "mode": "100644"
     },
     "lab/asterisk/modem_selftest.py": {
@@ -1249,7 +1249,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_dce.py": {
-      "sha256": "795b884de55af29247453d7aa91967292e703f464a750cf0ba487a951fa47d4b",
+      "sha256": "4b59455a01cc06725fc93df1908562e2a3b3c8a388f45e2c13cf11fdf199385d",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
