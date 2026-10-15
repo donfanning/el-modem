@@ -155,6 +155,19 @@ class EscapeSequenceDetector:
         return False
 
 
+def dial_abort_applies(active_outbound, online_session, online, connect_pending) -> bool:
+    """Whether DTE input before connect must break the chain like a Hayes
+    break: hang up and report NO CARRIER. Fires while an originate attempt is
+    in flight, or while a session is up but CONNECT is still held for
+    negotiation. Never once connected, and never for answer-pending states
+    (those never set active_outbound and have no session)."""
+    if online:
+        return False
+    if active_outbound is not None and online_session is None and not connect_pending:
+        return True
+    return online_session is not None and bool(connect_pending)
+
+
 class EscapeHold:
     """Holds received line bytes while the DCE sits in online command mode
     (after "+++" or &D1), instead of scrolling them over the OK prompt and
@@ -2577,6 +2590,11 @@ def run_pty(
         online_session = None
         arq_session = None
         data_mode = False
+        # Bound on every path: the main loop reads these unconditionally, and
+        # the SIP suite below only assigns them when SIP exists. Without this
+        # the standalone daemon dies on the first keystroke (UnboundLocalError).
+        active_outbound = None
+        connect_pending = False
         escape_detector = EscapeSequenceDetector()
     if control is not None:
         dce.control_settings = True
@@ -2698,7 +2716,22 @@ def run_pty(
             escape_detector.guard_time = max(0.02, dce.registers[12] / 50.0)      # S12 in 1/50 s
             escape_detector.plus_char = dce.registers[2]                          # S2
             if data:
-                if data_mode and online_session is not None:
+                if dial_abort_applies(active_outbound, online_session, dce.online, connect_pending):
+                    # Break before connect: hang up the attempt and report NO
+                    # CARRIER, ready for the next command. Neuter an orphaned
+                    # SIP attempt's callbacks first, so a late answer or
+                    # failure cannot resurrect it after the result.
+                    if active_outbound is not None:
+                        call, active_outbound = active_outbound, None
+                        call.on_connected = call.on_failed = call.on_hangup = lambda *a: None
+                        call.hangup()
+                        dce._call_progress_monitor = None
+                    else:
+                        unified_hangup()
+                        connect_pending = False
+                    dce.outgoing_pending = False
+                    dce.notify_call_progress("NO CARRIER")
+                elif data_mode and online_session is not None:
                     passthrough = escape_detector.feed(data, time.monotonic())
                     if passthrough:
                         if arq_session is not None:
