@@ -283,6 +283,13 @@ class OnlineAudioSession:
     ):
         self._sock = sock
         self._remote_addr = remote_addr
+        # Actual send destination. Starts at the SDP address, but inbound
+        # RTP is the truth about where the peer is reachable (symmetric
+        # RTP, RFC 4961 style, like Asterisk's own rtp_symmetric and its
+        # "Strict RTP learning"): note_rtp_source() moves it to the
+        # observed source. This is what makes remotes behind NAT/proxies
+        # work when SDP carries an unroutable address.
+        self._send_addr = remote_addr
         self._tx_role = tx_role
         self._rx_role = rx_role
         self._v22 = None
@@ -1117,6 +1124,23 @@ class OnlineAudioSession:
         self._rx_context['pcm_source'] = 'packet'
         return filled + self.handle_rtp_payload(packet[12:])
 
+    def note_rtp_source(self, addr) -> None:
+        """Latch the RTP send destination from an inbound packet's source.
+
+        Only called with packets that already passed the RTP version and
+        payload-type checks in the main loop. Replaces the tuple wholesale;
+        tuple replacement is atomic under the GIL for the send thread.
+        """
+        try:
+            host, port = addr[0], int(addr[1])
+        except (TypeError, ValueError, IndexError):
+            return
+        if not isinstance(host, str) or not host or host == "0.0.0.0":
+            return
+        if not 1 <= port <= 65535:
+            return
+        self._send_addr = (host, port)
+
     def _next_frame_samples(self) -> list[int]:
         if self._pending_tx_mode is not None and self.transmitter.pending() == 0:
             # The CONFIRM has been fully queued out of the transmitter; give
@@ -1167,7 +1191,7 @@ class OnlineAudioSession:
                 "!BBHII", 0x80, 0, self._sequence, self._timestamp, self._ssrc
             )
             try:
-                self._sock.sendto(header + payload, self._remote_addr)
+                self._sock.sendto(header + payload, self._send_addr)
             except OSError:
                 self._tx_active = None
                 return
@@ -2798,7 +2822,7 @@ def run_pty(
                     received_at=time.monotonic()
                     clock_context = None
                     if kernel_timestamps:
-                        packet,ancillary,_,_=media_socket.recvmsg(2048,socket.CMSG_SPACE(16))
+                        packet,ancillary,_,rtp_from=media_socket.recvmsg(2048,socket.CMSG_SPACE(16))
                         for level,kind,value in ancillary:
                             if level==socket.SOL_SOCKET and kind==35 and len(value)>=16:
                                 sec,nsec=struct.unpack('qq',value[:16])
@@ -2809,12 +2833,13 @@ def run_pty(
                                     clock_context = dict(kernel_seconds=sec, kernel_nanoseconds=nsec,
                                         clock_mono_before=clock_mono, clock_wall=clock_wall,
                                         clock_mono_after=time.monotonic())
-                    else:packet,_=media_socket.recvfrom(2048)
+                    else:packet,rtp_from=media_socket.recvfrom(2048)
                 except BlockingIOError:
                     continue
                 if len(packet) >= 12 and packet[0] >> 6 == 2 and packet[1] & 0x7F == 0:
                     payload = packet[12:]
                     if online_session is not None:
+                        online_session.note_rtp_source(rtp_from)
                         decoded = online_session.handle_rtp_packet(packet,received_at=received_at,
                                                                    clock_context=clock_context)
                         deliver_received(decoded)
