@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "a5b014cfb6dc2085673b85acfe21147319d06d14",
-  "public_base_revision": "df7bdb542d3a62aac3e38984a10533e8bd5e6ee5",
+  "public_base_revision": "2245b19b3269ce38dcafbd3f5fdc7796ef4bcfeb",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -265,7 +265,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/bell103.py": {
-      "sha256": "967fb99673a2a4c56fc3721adb61ebe94ee21067e9b0fd9a4200332230bd13b7",
+      "sha256": "6acbfb26c85dfc85552f7654dbc0a58802c439b8b2be9f85f07e1357a80ffe86",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/bell103_engine.py": {
@@ -381,7 +381,7 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_bell103.py": {
-      "sha256": "d06e1472ca6b667b41c1411bbff00118c5c399f88a26d1aa80defca558713403",
+      "sha256": "eb1e4f1eac7964b4dd64e998451513fa1c9135b142b8273c41af8ae91bc7208c",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_bell103_fallback.py": {
@@ -1169,7 +1169,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_dce.py": {
-      "sha256": "b4efcb56e7461f8ee0bf8df77014087e1663275002754d71cbe44d8f114b2277",
+      "sha256": "c99f208c174d6f18b0f118060e1df57db7f9071cde0a1e8447346fd9c8d596dd",
       "mode": "100644"
     },
     "lab/asterisk/modem_selftest.py": {
@@ -1249,7 +1249,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_dce.py": {
-      "sha256": "25942c582dc9c7bfa0803e273aa4bd5894ead2f06fc95b421769f443bcfbc31a",
+      "sha256": "795b884de55af29247453d7aa91967292e703f464a750cf0ba487a951fa47d4b",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
