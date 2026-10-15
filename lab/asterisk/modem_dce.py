@@ -155,6 +155,34 @@ class EscapeSequenceDetector:
         return False
 
 
+class EscapeHold:
+    """Holds received line bytes while the DCE sits in online command mode
+    (after "+++" or &D1), instead of scrolling them over the OK prompt and
+    any command being typed. Flushed in order on return-to-online (ATO),
+    dropped on hangup or a new call. Bounded: keeps the most recent bytes."""
+
+    LIMIT = 65536
+
+    def __init__(self) -> None:
+        self._buf = bytearray()
+
+    def hold(self, data: bytes) -> None:
+        if data:
+            self._buf += data
+            del self._buf[:-self.LIMIT]
+
+    def flush(self) -> bytes:
+        data = bytes(self._buf)
+        self._buf.clear()
+        return data
+
+    def clear(self) -> None:
+        self._buf.clear()
+
+    def __len__(self) -> int:
+        return len(self._buf)
+
+
 V22_CONNECT_TIMEOUT_SECONDS = 45.0
 # Lost-packet concealment for the V.22 modes: a gap of up to this many frames
 # (100 ms) is filled by repeating the last received frame; longer gaps are
@@ -2358,6 +2386,7 @@ def run_pty(
                 dce.notify_call_progress("NO CARRIER")
                 return
             online_session.start()
+            escaped.clear()
             # With negotiation on, CONNECT is announced from the main loop
             # once the modulation (and so the line speed) is settled.
             connect_pending = announce_later
@@ -2374,13 +2403,18 @@ def run_pty(
             arq_session = None
             data_mode = False
             connect_pending = False
+            escaped.clear()
             if session is not None:
                 session.stop()
 
         def resume_online() -> None:
             nonlocal data_mode
             if online_session is not None:
+                held = escaped.flush()
                 data_mode = True
+                if held:
+                    term_write(held)
+                    dce.count_chars(received=len(held))
 
         dce.attach_resume_online(resume_online)
         dce.attach_online_control(lambda parameter: online_session is not None
@@ -2525,21 +2559,27 @@ def run_pty(
     if control is not None:
         dce.control_settings = True
     print(slave_name, flush=True)
+    escaped = EscapeHold()
     def deliver_received(decoded):
         # Timer and packet drains use the same DTE/ARQ delivery and prompt ACK.
         if not decoded or connect_pending:
             return
         if arq_session is not None:
             delivered = arq_session.feed_received(decoded)
-            if delivered:
-                term_write(delivered)
-                dce.count_chars(received=len(delivered))
             framed = arq_session.pump_outgoing(time.monotonic())
             if framed:
                 online_session.feed_terminal_bytes(framed)
+            if not delivered:
+                return
         else:
-            term_write(decoded)
-            dce.count_chars(received=len(decoded))
+            delivered = decoded
+        if dce.online and not data_mode and online_session is not None:
+            # Online command mode (after "+++" or &D1): hold the bytes instead
+            # of scrolling them over the OK prompt. Counted on flush.
+            escaped.hold(delivered)
+            return
+        term_write(delivered)
+        dce.count_chars(received=len(delivered))
     try:
         while True:
             if control is not None:
