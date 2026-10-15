@@ -238,6 +238,7 @@ class OnlineAudioSession:
         carrier_loss_seconds: float = CARRIER_LOSS_SECONDS,
         v32_rates: tuple[int, ...] = (9600, 7200, 4800),
         chain: dict | None = None,
+        calling_tone: bool = False,
     ):
         self._sock = sock
         self._remote_addr = remote_addr
@@ -355,7 +356,16 @@ class OnlineAudioSession:
             negotiate = False
         else:
             std = "v21" if line_mode == "v21" else "bell103"
-            self.transmitter = Bell103StreamTransmitter(tx_role, standard=std)
+            # ITU-T V.21 answerers transmit a continuous 1800 Hz guard tone to
+            # disable echo suppressors (matters on international circuits, not
+            # domestic digital trunks). Bell 103 has no guard tone.
+            guard = (1800.0, 6000.0) if (std == "v21" and tx_role == "answer") else (0.0, 0.0)
+            self.transmitter = Bell103StreamTransmitter(tx_role, standard=std,
+                                                        guard_hz=guard[0], guard_amp=guard[1],
+                                                        v25_answer=(std == "v21" and tx_role == "answer"),
+                                                        calling_tone=(3 if (calling_tone and tx_role == "originate"
+                                                                            and std in ("v21", "bell103"))
+                                                                      else 0))
             self.receiver = Bell103Receiver(rx_role, standard=std)
         # Modulation negotiation (see negotiation.py). Without it the
         # session is plain Bell 103 from the first sample, as before.
@@ -1195,6 +1205,7 @@ class AtDce:
         self.on_network_change: Callable[[], None] | None = None
         self.stored_numbers: dict[int, str] = {}        # AT&Zn=<number>; dial with ATDSn
         self.last_dialed = ""                           # ATDL redials it
+        self.calling_tone_once = False                 # `^` dial modifier: V.25 calling tone, this attempt only
         self.caller_id: dict | None = None             # last incoming call's caller ID (ATI15)
         self._call: dict | None = None
         self._direction = ""
@@ -1220,6 +1231,7 @@ class AtDce:
         }
         self.online = False
         self.outgoing_pending = False
+        self.calling_tone_once = False
         self.online_return_pending = False
         self.incoming_ringing = False
         self.ring_count = 0
@@ -2028,7 +2040,13 @@ class AtDce:
                     dial_string = self.last_dialed
                     if not dial_string:
                         return self._result("ERROR")
-                self.last_dialed = dial_string
+                self.last_dialed = dial_string.replace("^", "")
+                # Commercial `^` dial modifier: V.25 calling tone for this dial
+                # attempt only. Assigned fresh every dial (never redialled,
+                # never sent to the trunk) and held until the session starts.
+                self.calling_tone_once = "^" in dial_string
+                if self.calling_tone_once:
+                    dial_string = dial_string.replace("^", "")
                 self._direction, self._number = "originate", normalize_dial_number(dial_string)
                 dial_string = dial_string[:-1] if dial_string.endswith(";") else dial_string
                 if not dial_string:
@@ -2169,7 +2187,7 @@ class AtDce:
         return bytes(output) + self._result(result)
 
 
-_DIAL_MODIFIERS = re.compile(r"[TPRWM@!,;()\-\s]")
+_DIAL_MODIFIERS = re.compile(r"[TPRWM@!,;()\-\s^]")
 
 
 def sip_failure_result(reason: str) -> str:
@@ -2346,6 +2364,9 @@ def run_pty(
                 session_args = dict(negotiate=negotiate, line_mode=line_mode, v22_rate=v22_rate)
                 if line_mode == "ms":                   # AT+MS= picks the modulation for this call
                     session_args.update(line_from_ms(dce.ms))
+                if dce.calling_tone_once:               # `^`: consumed here, this call only
+                    session_args["calling_tone"] = True
+                    dce.calling_tone_once = False
                 online_session = OnlineAudioSession(
                     media_socket, remote_rtp, tx_role, rx_role,
                     **session_args,
@@ -2374,6 +2395,7 @@ def run_pty(
             arq_session = None
             data_mode = False
             connect_pending = False
+            dce.calling_tone_once = False
             if session is not None:
                 session.stop()
 

@@ -103,6 +103,22 @@ class AtDceTests(unittest.TestCase):
         self.assertEqual(seen, ["T5551212"])
         self.assertTrue(dce.online)
 
+    def test_caret_modifier_requests_calling_tone_once_and_is_not_dialled(self) -> None:
+        # Commercial `^`: V.25 calling tone for this dial attempt only. The
+        # trunk must never see it, redial must not repeat it.
+        dce = AtDce()
+        dce.feed(b"ATE0\r")
+        seen = []
+        dce.attach_dial(lambda number: seen.append(number) or True)
+        self.assertEqual(dce.feed(b"ATDT555^1234\r"), b"\r\nCONNECT 300\r\n")
+        self.assertEqual(seen, ["T5551234"])
+        self.assertTrue(dce.calling_tone_once)
+        self.assertEqual(dce.last_dialed, "T5551234")
+        dce.feed(b"ATH\r")
+        dce.feed(b"ATDL\r")
+        self.assertEqual(seen, ["T5551234", "T5551234"])
+        self.assertFalse(dce.calling_tone_once)
+
     def test_pending_dial_result_resolves_asynchronously(self) -> None:
         dce = AtDce()
         dce.feed(b"ATE0\r")
