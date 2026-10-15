@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "a5b014cfb6dc2085673b85acfe21147319d06d14",
-  "public_base_revision": "32bd134fb80ba641ea7d4b0c5ff0eebbb63bfc5f",
+  "public_base_revision": "ec1aa65a11d7973236c298610d63e95fa1c1f426",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -42,6 +42,10 @@
     },
     "README.md": {
       "sha256": "ae7f0db3f477464caad1811ddfada22f570466e356b0a48c1e8b86b85d813e4d",
+      "mode": "100644"
+    },
+    "docs/ASTERISK_NAT.md": {
+      "sha256": "f17ecc8b830b73ccb1bb95de69c497794b98db4dd379607261f1366672f70f45",
       "mode": "100644"
     },
     "docs/AT_COMMANDS.md": {
