@@ -1,11 +1,11 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "a5b014cfb6dc2085673b85acfe21147319d06d14",
-  "public_base_revision": "c1d70004477a32e1b0b5ccb0d93160ca807e4667",
+  "public_base_revision": "df7bdb542d3a62aac3e38984a10533e8bd5e6ee5",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
-      "sha256": "1d32bf38f90de8b959961a00259e96ade7be7813af27f07b2231041a5e01eec2",
+      "sha256": "c3e420feda67797af3291b1b65c22d905906b2efe63f88e403dc29aa75aaacb0",
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
@@ -13,39 +13,39 @@
       "mode": "100644"
     },
     ".github/workflows/macos-pty.yml": {
-      "sha256": "374e2bedc73e2805cabf6cc64c2e6e744401ff3b6408cf225d12c9717e632a20",
+      "sha256": "e3e65a78fb11a817e9ef463a3937cbda4604f73c1a1797138c8419ec7655f674",
       "mode": "100644"
     },
     ".github/workflows/windows-com.yml": {
-      "sha256": "eaca32b28c8e6a561bda1f2e8f578cb62029dbed7716d0b6805f64b4e4837ef4",
+      "sha256": "d74362498790410c83333bc1b809759852fa03eb978a51944956ac97f7e5a62c",
       "mode": "100644"
     },
     ".gitignore": {
-      "sha256": "0960ad0b592b1244fcb09b80be073fa9e98f29905f204d0894e5169f0d77214d",
+      "sha256": "20915503efb0f631c1a75f048ed2e5493f02f76a610a9ddbb41260bba38e0940",
       "mode": "100644"
     },
     "CONTRIBUTING.md": {
-      "sha256": "8673342607305dd75c560d512b80f140faf8f7a3b6b34e7809cf99ae76c8627c",
+      "sha256": "720e8e0c92759bb6cf6bc14804a5fc4a511c0ca80e4e7449dc75d1994c2d1944",
       "mode": "100644"
     },
     "CREDITS.md": {
-      "sha256": "3721bf66eb96cf73669ac1cc9ac23f24a43a5f678927ffabb4a5fc9821161ac0",
+      "sha256": "053430a37aa021bcd6ea1b47b4bf3ada2a55b56d3eef8527c32409ade5a0a433",
       "mode": "100644"
     },
     "LICENSE": {
-      "sha256": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
       "mode": "100644"
     },
     "NOTICE": {
-      "sha256": "e9d16d4201216ad844c198272a24bc00e6131053205c6cbc5b3ccffc52fd3038",
+      "sha256": "6807223427e898a6efc42bcc4f9b34d0abacb61e4a359cadf1b6519dc967d4e2",
       "mode": "100644"
     },
     "README.md": {
-      "sha256": "a6d85570d3eec8e355ec94abb479efe5ead864d986acfd76a46e18c504be1314",
+      "sha256": "ae7f0db3f477464caad1811ddfada22f570466e356b0a48c1e8b86b85d813e4d",
       "mode": "100644"
     },
     "docs/AT_COMMANDS.md": {
-      "sha256": "44a30309bd2cc61c96481417e51f3a727dc0855ee7a9e62acf06f1151dc59175",
+      "sha256": "064c749596c4024e2d577873b3093aeebab274c702dbab7f7cb68688a2a5ca9f",
       "mode": "100644"
     },
     "docs/DESKTOP.md": {
@@ -53,31 +53,31 @@
       "mode": "100644"
     },
     "docs/LINUX_QUALIFICATION.json": {
-      "sha256": "efe7efded39274cc8276e1ca127e74d3ea02510de0024676aa251ee4027d7625",
+      "sha256": "69c6118024df0d1b3756cefb12312ef0d9c07bd6e297af2192e526f77816cb2d",
       "mode": "100644"
     },
     "docs/LINUX_QUALIFICATION.md": {
-      "sha256": "c847d1bd03c2df10da0ff8211ed6310b5b40fb00fdd83154cebd7cb3bb966056",
+      "sha256": "17756172a1fed3f164846168b312deed5845abb7d3b10108ecf5fcae3d5c80d7",
       "mode": "100644"
     },
     "docs/MACOS_PTY_QUALIFICATION.json": {
-      "sha256": "26fc7b66c7ae33d0f18ab9ee7abc5297c8ab04929d92e59ea1c05143f1cd566a",
+      "sha256": "3be588e8baa9c034788f68fd57dd00c52f34f8fbfb57499db341bdf83a57da07",
       "mode": "100644"
     },
     "docs/MACOS_PTY_QUALIFICATION.md": {
-      "sha256": "9f8613c37fad8f60312475ebe2725dc038f3d1f408b2189110df8090126a2807",
+      "sha256": "39e33f2eae60d9aba4b49dd13c0eaf6dc217b6769bc56d7d9a8e1679811e29a7",
       "mode": "100644"
     },
     "docs/REDISTRIBUTION.md": {
-      "sha256": "e0a4baf8389f3256908649b942b00c8f7b9805c0f2d1052124bdd29cb9bf54c9",
+      "sha256": "dd45611ddeb02224643ea15f65dd6f7c125cc5c4cdbec8a8211bcda80963e197",
       "mode": "100644"
     },
     "docs/RUNTIME_REQUIREMENTS.json": {
-      "sha256": "a14a1cb4991e7e11334f056f9e1645d371d840a2c810537928045ce952bdf038",
+      "sha256": "846d3e9e0fa7a224b5e3bd850d19c153e199c04972d342af0658a959571d4ecc",
       "mode": "100644"
     },
     "docs/RUNTIME_REQUIREMENTS.md": {
-      "sha256": "cf61a4e9032f1f910477b098fd4b90e4d11e926afa628650bda430a7fda88d42",
+      "sha256": "f4e1c99075d03e4d713dbac82a86ad6519ccabccda595ed95db223f90f7d91be",
       "mode": "100644"
     },
     "docs/SERIAL.md": {
@@ -85,27 +85,27 @@
       "mode": "100644"
     },
     "docs/SOURCE_PROVENANCE.md": {
-      "sha256": "81a519c374e2d66bdce37b29915c738db9ffdbe2ef6863a8a1c09923d2c236f2",
+      "sha256": "684e100b83b93c5d0897e520c55f03cbd21d6f2c231aa4285d417c4cf758ccd9",
       "mode": "100644"
     },
     "docs/WINDOWS_COM_QUALIFICATION.json": {
-      "sha256": "a00b36ee77237dee1368f9c30c7bac3a37561ead999ead9a37f58c724e67feb2",
+      "sha256": "94d7225cdd866df80524aa7cf167e1750a063dadde2a2f1833ce1574edad3641",
       "mode": "100644"
     },
     "docs/WINDOWS_COM_QUALIFICATION.md": {
-      "sha256": "7f25cd63440af2c516c641e5b3e65879513ec3d2cd167d564c80fb7668765348",
+      "sha256": "d4f3d2edccc4f7b423b3793b13a96170764a3c173a50076b2d6155a3efb9c350",
       "mode": "100644"
     },
     "docs/WINDOWS_INSTALLER_QUALIFICATION.json": {
-      "sha256": "1b5e527b7814cab3b315161f004c15bca048bfcf102fbf08e9906b1c8be2f984",
+      "sha256": "60ee68a818b7bed15387b5c8025e35e88cad540d078eb80e61f19ef216597a22",
       "mode": "100644"
     },
     "docs/WINDOWS_INSTALLER_QUALIFICATION.md": {
-      "sha256": "f91567d37bbb34d25246830d49a44ade6d8b8068693d39602e408727045b783e",
+      "sha256": "054e1af265a24ad5f7f5eb4fa3b5313d75573b3e73767f2e98a9ad431f6f1c21",
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-arm64/first-capture.txt": {
-      "sha256": "fedbae441e18de76657f49fca941240c184de1ca7403eec749aa930fb763d3ef",
+      "sha256": "a3dedb10ccb8dd0b0b9b6838534da09721a9c59a00f1d6e0981cf819b97bb0eb",
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-arm64/first-ui.txt": {
@@ -113,7 +113,7 @@
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-arm64/reopened-capture.txt": {
-      "sha256": "78250633ee5a5c7a8d4577b0b3e26fda7cf393616ce47efac169ea179057b7bb",
+      "sha256": "184604f1a3bbf99b4ebfa90a53f25b19a389de5db532339eea33e04e8aead7ea",
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-arm64/reopened-ui.txt": {
@@ -121,7 +121,7 @@
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-arm64/result.json": {
-      "sha256": "f1b6e1e4b2c44e6c4f4ff8c29501b3ecc12e0461c9efa4dace113fc807acd6d2",
+      "sha256": "f53dbedaf351ddb10311e01bd684b913ebc7ea517bb6084411cd68982c89e64f",
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-arm64/supervisor.log": {
@@ -129,11 +129,11 @@
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-arm64/worker.log": {
-      "sha256": "bc4e20b29e92837615dd4c63ef3c8cf2b479eb14581f79440bbabf0874fb024c",
+      "sha256": "01b565a60ed543ff376a51ee456d2ffe121cc42dcca3f35bda9957e452408f78",
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-x86_64/first-capture.txt": {
-      "sha256": "fedbae441e18de76657f49fca941240c184de1ca7403eec749aa930fb763d3ef",
+      "sha256": "a3dedb10ccb8dd0b0b9b6838534da09721a9c59a00f1d6e0981cf819b97bb0eb",
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-x86_64/first-ui.txt": {
@@ -141,7 +141,7 @@
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-x86_64/reopened-capture.txt": {
-      "sha256": "78250633ee5a5c7a8d4577b0b3e26fda7cf393616ce47efac169ea179057b7bb",
+      "sha256": "184604f1a3bbf99b4ebfa90a53f25b19a389de5db532339eea33e04e8aead7ea",
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-x86_64/reopened-ui.txt": {
@@ -149,7 +149,7 @@
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-x86_64/result.json": {
-      "sha256": "2f35488e46b2bc2f6cf6ac4901beb8919ad19bf6bae698354e8c28b6bc330cf6",
+      "sha256": "6a7ce5c6a2ccbb8f0fd85f9f75d91af83fc408bd60affa5f99b02021b2a46e66",
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-x86_64/supervisor.log": {
@@ -157,7 +157,7 @@
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-x86_64/worker.log": {
-      "sha256": "bc4e20b29e92837615dd4c63ef3c8cf2b479eb14581f79440bbabf0874fb024c",
+      "sha256": "01b565a60ed543ff376a51ee456d2ffe121cc42dcca3f35bda9957e452408f78",
       "mode": "100644"
     },
     "docs/windows-com-evidence/code-integrity.json": {
@@ -213,7 +213,7 @@
       "mode": "100644"
     },
     "docs/windows-installer-evidence/installer-summary.json": {
-      "sha256": "b9616c1679e68b35c739435a0cb7fe9fe9d77a4b73f59ce2670573315a2c143a",
+      "sha256": "7d05a7d42310c47e76d1ed6ee8ab74877d10fb5b7e466e043119ee5ab5b50054",
       "mode": "100644"
     },
     "docs/windows-installer-evidence/launch-closed.json": {
@@ -245,915 +245,915 @@
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/analyze_envelope.py": {
-      "sha256": "6db8949b24170bbf3b6c3c20c33dfe937dd0f348880cf7013b94d30d4a4704af",
+      "sha256": "496d126bc09170614ca7124c37bdf150c646e03656828a2f0c7eadbb514969a2",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/audiosocket_echo.py": {
-      "sha256": "5cd2f2a7fbac8d01c424de38931af22730b09953427ac1ad9e1c1ba2b1c3ca88",
+      "sha256": "4d2d849f6025c8e1c2667cb03d3a9be6c2771b2c92e58537a1a72ae757c258fa",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/auto_rate_pcm_probe.py": {
-      "sha256": "d94e4fbe1a35d9da9cd458fb55e1cd4460b590e3982bb7c6d0ad81c705874dd9",
+      "sha256": "c17b42547eee0a71668329a73d2eee31863353e82235d43617d844c769e792b6",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/autochain.py": {
-      "sha256": "0e395cdd57d7feadb8542f6dc74ddc9f5676d21270f8bc8095e39b9978e6852b",
+      "sha256": "ded510fd1676c34165a06b083b7356b8ef886f2ef3609130b7759b5060608674",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/autodetect.py": {
-      "sha256": "cd9dd05f0302bd30bd83d510a84dcbe2902178271f8c902cf3e171e84299c1e3",
+      "sha256": "58edf0278f3656617c4f5c0bb9bcd8b5d00035d280149d78cde229960a773112",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/bell103.py": {
-      "sha256": "a20bab490ffe302d576036378c5da551e7723b400b23907930342abff662baca",
+      "sha256": "967fb99673a2a4c56fc3721adb61ebe94ee21067e9b0fd9a4200332230bd13b7",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/bell103_engine.py": {
-      "sha256": "379dcbe854fc69d6742fa2c943991a2477697a42e6f293a22dcf5df701d6ffb9",
+      "sha256": "76149352b7ad521524464f6651cb1671191f2913db1680e23418e43a691a9369",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/bell212.py": {
-      "sha256": "7f75fbf3fcb9b2549369d4d7285b58ddcc1e239f0ba86b9e3ec95cbdcd01ba63",
+      "sha256": "e079a98b34fd3eca57f69a879db12d8a663591f5cba81df6f7fc7cbde8f24704",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/data_quality_probe.py": {
-      "sha256": "247b2572f55e11bcbfa6e00766c300cb4231a1648b6ab64057724bf9fd748a4f",
+      "sha256": "6089c8b2e52577ea4906aeaa5e066ab4e790f3bb3f9e4a9ab886465cbb88e19e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/decode_capture.py": {
-      "sha256": "a1d65d460aadef4441a48d08d59536330e063dde5556217d09dd62fc08fb6d22",
+      "sha256": "1276e616755f2f09b501d8ff90df72e9500f8a31bf0d7faa038f4be9d09778fa",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/dump_const.py": {
-      "sha256": "151ba52d500625762444ba857970d591e97885953fd8f98fe7f2d90597354c1f",
+      "sha256": "8a45c436c16432ecfb9b0f114f2ebff7e654af30543cfd076eb66743abc46134",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/jfit.py": {
-      "sha256": "f3a7329e3583a44199512157094e83df5b3796e008025b4f514b0d73c4d2c0f5",
+      "sha256": "39f75b5ad67e696044fa99f8320053f844fb476a46297e2b4f7c43bb113d5899",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/jsearch.py": {
-      "sha256": "e07b679c72c9fdff0870782d2f918f5e582c6882779b2eb2793a07e4282b77cc",
+      "sha256": "6ea3f699946261684a706861c1139686b5214ac6e4fffa5e20c5f40cfc7dfed5",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/lapm_lite.py": {
-      "sha256": "587d928cf8e815a0697a8bfd6f69a2a91f307af16964715c378cc25cc5b32761",
+      "sha256": "6dba997d8cad3f93e94f50f1e5907398902dc944ce056aab3c2477bc86413701",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/lossy_sim.py": {
-      "sha256": "8a64c26b36b60e0f793f0ce13ddd919934b638f16d1883de09e3d8d70fffc7dd",
+      "sha256": "c889c96e1ec68715beba18f7e8ea2fd8b7fac7a4248d7cc0203c3d4f6e867efa",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/make_stereo_fixtures.py": {
-      "sha256": "fcfd01bf88e7da03cad1b777ad74b067ac2b951acab9b42476f975de52d23ed5",
+      "sha256": "3eb5e4fdf92e1e1df99bc005ffd14fc1c0ae2b6635f15588b95def116a7fae04",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/mnp_link.py": {
-      "sha256": "d6d529e9435ed2a3f43857577c8be311ae103dba3e290cf5965dcb4676ad80ca",
+      "sha256": "e8547547e7cb3a4c414cf539fcd28fde517b3c60f596674343ee7bebe37e48e1",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/negotiation.py": {
-      "sha256": "fef5bad7caf3edd548d6e21375d43ddaccf63c1a5e9d55cd71ea7603a5b0bbe6",
+      "sha256": "9a75cda89bed7dfb04d316ede15cf049e16291b17c5173a97e491ce8e89f623e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/probe_p3.py": {
-      "sha256": "1ad921a4cf34ff261933b0f0ae869c2e6379bd1e784ca722fff6f046733fe4f6",
+      "sha256": "a919d582feec17c9d3021db40bac599705f3915b5cf67f1d2cd223e6cd2d0a96",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/prof_window.py": {
-      "sha256": "3bba5599629142aa3d96c303ff9ffb96b6d2b6d18a07ef241ba8e0d85a0e91c2",
+      "sha256": "0637fe02a99672d24cac40e1f07acd70676857bfd4dfc933415812a53c435848",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/pstn_probe.py": {
-      "sha256": "13d70bd15e99ebd979a5962966701c3688bd2fad3c03f118cb8e5ed49585cef9",
+      "sha256": "94ebdfba5993f11dd18e1fa6dfa3984682aefb33649dc4e51af79f8f138dfc5c",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/replay_ref.py": {
-      "sha256": "368a7f4c2604feb72cd445c55a4bb0dee68c21c3fc826d69ca4b14158858c23b",
+      "sha256": "fb2b42ba37226f409521a6f56984b14d5ef6bf2060e30f88a9874c39120414bb",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/replay_v32_capture.py": {
-      "sha256": "88ecc1a3f1b083997d3c035b535de55db6596c31fd73bd3d70082cf09f2b51ac",
+      "sha256": "fea77a18f4802f99c7c171061f2eb834049226b7fb63e5898d9c94a276b2ddbb",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/replay_v34_capture.py": {
-      "sha256": "321d19d98f8174a25e4ddfda1e30f36ef0fd35af3551323413798f7289a94e94",
+      "sha256": "fed5ca5dc3ce90ccf2b102ffe8fae9bcf2e776c19501b9d4375c88408f6b5f32",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/replay_v34_probe.py": {
-      "sha256": "95afd6212969e5bcc3b8801f4ff2d06fb05083127f81b9248817a89cc2699970",
+      "sha256": "c6a7d26c6cc4bea98792a8a8b8f1238a3c8abd6c45ad93e69b5fb52a3928101b",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/sip_incoming_smoke.py": {
-      "sha256": "d4a9b68d42ff2c6bda5184f7d59400edb6fa2769457ba2f5c7178917ef7d2379",
+      "sha256": "0fd78a6ae03e99df8022970d083c201cde5f7acafe0b3b3171cd8cde03618e1b",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/sip_outgoing_smoke.py": {
-      "sha256": "080d4ce078a71925461fa4f4e634afc2436d1d5cb75cd5bca357bad4fd4aeb33",
+      "sha256": "512e58ae3ee08ded2f24d8cad15b55f22f5b9a0020494982814a07c1b8f8e48e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/sip_smoke.py": {
-      "sha256": "27277b4796e8a0e88a114100693b93b0bc6b9b12e951ed946d83203658e9ef44",
+      "sha256": "3bd785e9ad3763c19fc7c86b91c228435d7a405e02460c4b59c0d60c45524225",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/spandsp_v22.py": {
-      "sha256": "4e5ef6169c6a53e3202674bdba116754139f101aabfda9d82284f7fb44ef1991",
+      "sha256": "c350c75b35aa14df18d3daf58ac9fc85acc7e5aeb582a78215614a49f13243cd",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/spandsp_v42.py": {
-      "sha256": "3ebf9967ad0d89ddddb88317a1e085c3e273cd450d36c19f177525163191a7b6",
+      "sha256": "434e6e35651263ea5883ac88bd622f63473d1ef6c09760f65e8d2c1d2be8b12e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/spandsp_v8.py": {
-      "sha256": "06196599e17e1948f01ccd93e9e9039788546c0cd9f7286a29ee6192dd7e0525",
+      "sha256": "ced3a53fb836a3dfbfcf9de47e8f3d082df63b4d14854617e83cd15b4231e018",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/terminal_program_check.py": {
-      "sha256": "eb6fc5d5489a7de27a86ed864a68c7974dffce9877e33483482ccaac0b1ab284",
+      "sha256": "ff1b61ec9a01de55aacea803829fbf4f33c7fc8561c1cd575310dd7e25241bcd",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_autochain.py": {
-      "sha256": "01907be0a2e2a51aefe4cf1492b054d8c8ea6b3bb1ed715773c32b544556f796",
+      "sha256": "21bc25f401ad0ae01fd6bc621ae8ce5a8600f411d9bd73151d086c1715f36538",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_autodetect.py": {
-      "sha256": "e2944c0d0dd7fbee88405ed16b22ee17f77886b89b22b61d8b6f2e4d96afe82e",
+      "sha256": "1cd5876252b5ec6adbb4b62769814ce1304e564830d059310e08429637693649",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_bell103.py": {
-      "sha256": "59fb6ba0433b412916e81e2352d498eac912eb887873397fb9788d52803bc08c",
+      "sha256": "d06e1472ca6b667b41c1411bbff00118c5c399f88a26d1aa80defca558713403",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_bell103_fallback.py": {
-      "sha256": "3da58f2bec58ac78540af58ec486edd848bbad4b4034063d061376972a5172b1",
+      "sha256": "7d2405e67b27726aed2e3dfc6297c4914eb22980cc0989bddeb66419fe58740e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_bell212.py": {
-      "sha256": "e069cc20c00931de0e571cacd1c6f5bae0f13a83b5239360800d036ff5f81ca2",
+      "sha256": "7560f7fba4f9f8a7f6f1e20ae3ba0085154951df607e3a12e52bd464bcd84021",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_full_dce_stalls.py": {
-      "sha256": "37a92424323642c57fbb40a3b2652758cc7fc8577e52c12459dd6cde3a9a753f",
+      "sha256": "8e82904ea51199b4fb8153dae682d9426499663b8788c697c80fccb240f8372b",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_lapm_lite.py": {
-      "sha256": "ad4b780dd32ccc819ed6ba48d64e2df1f4acac65b345b0b5e0690ddd9715c90f",
+      "sha256": "4b4c1f47b9f45c5aa8671ed0f970e49fc8702f9efa78b1b76a80dea57dc1ee3d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_mnp_link.py": {
-      "sha256": "e824102f0518be2e80a4a480674bc60ce5ba1d8378f3f9054789531a6f0b60fc",
+      "sha256": "2aa2523d904261cb48cb4df47fcd2718cebd1bff685933e3bdd0a2a5bac1ee62",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_negotiation.py": {
-      "sha256": "3e32f586e99e850e128aefb6e6377283a5bc698e8be4cab59fc21bcf762ee999",
+      "sha256": "8df42cd614e30325ea7995e698a18a069b988b2e684c4cd5dfad644103f75248",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_spandsp_v22.py": {
-      "sha256": "5c258f4d47449190976d59fda885fd08a96cbf139101895e3c7ccdf9aeb0cd5d",
+      "sha256": "d1d63495616dd7e5552e29f3704a15a2f251be474b8a2c3dccd88d2f9d352a59",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_spandsp_v42.py": {
-      "sha256": "aafd5fb66af7bd21697b3fa6004ba23d2f9ee5055896ce149bed5c20474417ab",
+      "sha256": "25a7fcf6615955943158bbd09a6ba52c3d6b4abcb18ea2e6ea673b207e319177",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_spandsp_v8.py": {
-      "sha256": "02a0d9ac13e311b77654fa8712ff5054228103d5768c7a4edba740fed68f5d2f",
+      "sha256": "9b88a760ee546db0d8527dd188891b9d44af4778287298eb6a6944b07fc49cbd",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v22.py": {
-      "sha256": "74099c3777674c9f2472837676a7ee3144f62c20021a9e69465e08194be3154f",
+      "sha256": "e3f7e543e11ed90751d0f0088871fadfb2c0d41397ec9e726262293060f77306",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v22_s1_fallback.py": {
-      "sha256": "fd243b5a8d8b5708fd3f923e46b0aa508051dc0c9dbef00127acf037971cf41d",
+      "sha256": "3d885128207cf3ccd24419dbc764bac3a2b19e5cad794919ec78b5894bd73e06",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_answer.py": {
-      "sha256": "6cf1737f57297cabb4d3c6df2fc436c6c401f4396146a3fff3c7684bb4299bc5",
+      "sha256": "984104a614f5679e8e7365b2905272a0f8abeb920397aae600d0b33c7d393fc8",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_caller.py": {
-      "sha256": "e0acc5cedab7cbdc0535431e2c744c656668d7a6a1473b1b22e2807af37dbdc5",
+      "sha256": "078eae40261875d924381249c62edf7ba2081385d740b7e565eef4acf9551a2c",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_capture.py": {
-      "sha256": "a3efc578b592329002ea58165fbc258d9a086e2ebfdb36c3bc7243953b884816",
+      "sha256": "ed5612de0c4b137c28d47f53f16c7dc0e0a448823c3d572feb13ccd636bc1532",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_echo_safe.py": {
-      "sha256": "33a64024d5b87863e75941a38c0c7e1217d0ea0b3e89102e4aa6be9cd943f1f7",
+      "sha256": "01bbbb68de1fec459d1ff331a3de12abb076f7d0a89130fe21bdade75c81a8df",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_no_echo.py": {
-      "sha256": "cd5bff46680802b85fb824498e495d562255d1274e8453c02ba0924c8944ccda",
+      "sha256": "a730a33ed9ef5f2b062c7fa428e2d99b90caf43cd8e55e14dd4b4a8bc8388160",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_numpy_metrics.py": {
-      "sha256": "874747ba634d41c561e54fd26480a64ac6cc3439ce8454ae5c36358916bc9a35",
+      "sha256": "0225375d1998b4a24e5967e6f399b06b63fc5e121453b94f47e508ad13a94f59",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_online_rate.py": {
-      "sha256": "f94016842deff66a6f50ae4eb808311a104c297bf6d135cbc50518bd96e27723",
+      "sha256": "ef6b2f3bcb36f7c068e903210ee05e6745ad72306921ece79619ae9957ff94b9",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_rate_change.py": {
-      "sha256": "e9858b46dea27327985f7f32eeea0f47db171c7ec288fb0de793f0cd2cb732db",
+      "sha256": "e3067e4b65bd05b137542db3ebc4601833103404f14d0e0dd8ac3d40be6bf8ba",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_rate_session.py": {
-      "sha256": "2aabacfbd2f460e9549f9f33b4a7bde198c353792a602a8640bc3336b3abfec4",
+      "sha256": "da94689175885c4f77afc859eb6be2b6d4a327cb3922f8d41c3bfdadbad41a5a",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_retrain.py": {
-      "sha256": "1516388f02f54ada56faafc979c733652d6f1724a9faef000d43173b7884bcd4",
+      "sha256": "ce542c0fd53dea6a70a414404dae91a99f58e27d3075d6ab1e910bfd5e94322e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_retrain_budget.py": {
-      "sha256": "d55f35a785d82d581ca14ea485391582f3918a8931fc716f280bb385190c0f9e",
+      "sha256": "5ad34cb127abfdab036f344cf124df2cf3b2240ccc2614c86be873b43493667e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_rewrite_equivalence.py": {
-      "sha256": "63ce4cc25f73f1180d311d2dc3c3ed50bd12780d08d9223892152d80e25ab144",
+      "sha256": "7e71fa82bd73b13b42692bdd2dd75bdd78904830f10352da7daace949c235d08",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_rx.py": {
-      "sha256": "ec99deeea084f9b5bdbac1b81b6a8fba5219f8f2ea13793bab00eade56910eb3",
+      "sha256": "6237073a48bcecf98d28335a5ce4ae69ebab61fa1ecd45d1accb4dcf9c8d30f5",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_stream.py": {
-      "sha256": "49f78b4bf762971033b0c04aa197b14a9d55bab98808f64b2834f01572927c4a",
+      "sha256": "ad55e5b45ab8632e25f7181bd8ca9e5ab05a62400d9c9b751a859c8bc8294599",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v32_trn_clock.py": {
-      "sha256": "3cd5c7728d2540ca78c4714a6455b79d26d71fd8fcae07cc9d1f13fcd34158ce",
+      "sha256": "2ec590edf4106aab19eac4f4584f6f8cbc8ff5bc1af4c1de1703f23fdaa17ec3",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_answer_retrain.py": {
-      "sha256": "39d9babe10d252a2745e43102403c2fbc4324cfde178d1e914ac969a3c0e34ff",
+      "sha256": "778867e72685eb039de1e84e6ccc3e8d5e0d3b1ed1900a2cb3fe8b419d0a5f65",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_auto_rate.py": {
-      "sha256": "6eac3dcd4fbde7b05cb85d3f5e3531f578b6047024a8a2752f5f3befd697220f",
+      "sha256": "5f1a62386a4ef74275dc07c78fc292de3232ca1306a81454e88df418eb8b4f09",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_b1_conventions.py": {
-      "sha256": "66c02d74ac3db1f041845b09976236f5a983c3c5e2d340bb362c53b74d3f1be9",
+      "sha256": "6ab3c8edca33ef12db9b228e05091118e2233faaf393c59fc7b103980f29dcac",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_b1_drift_probe.py": {
-      "sha256": "dcf180c0da383a67e2111b790fa623a3043f8c733884d807e8856040ad876191",
+      "sha256": "66a1c64a0037364861818135d8a5abebda3ae5989f364d875410816d5239baf8",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_b1_gain_probe.py": {
-      "sha256": "27d4ab26452944b58c1852677bd75c84aa7963dfe7c125ba71936d501660c935",
+      "sha256": "74e9fb679099928ad3b7f0a4718dcd1a1afe1951953818669554d08a2d0c571d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_b1_initial_rotation.py": {
-      "sha256": "470b07a49b1fc91745713fd5b8550a3169b56c1ccec86f62a7b7e3adef1f4dee",
+      "sha256": "150f36a25e54599043aa4c811f521c34f7a222cee784993e5f4adf3893c6ca53",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_b1_oracle.py": {
-      "sha256": "2dd03eb6b90b0773457009c8853de04fa11cf668512a3edb5e6d1334ec529eee",
+      "sha256": "b6edeb577cb811fc47c6b8821748520beea242c03e4a95f925ff674a1ad1a66c",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_b1_pcm.py": {
-      "sha256": "67afbbfeea168babd5bb0ca7b01b3dfdf36d69eaab0ed5a4d562af1894766eb9",
+      "sha256": "3893dae5c89ec45481a783c3cc576e35ee4a3de6d2315ba68e07756e1498fdeb",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_b1_phase_probe.py": {
-      "sha256": "afadcf0ad77d59da935a0852f9ea4dfb69de77f5f92342e8b0c8adb84ba0168d",
+      "sha256": "36f293393be2a7128269678caf579dc746c698b0002ab4ed90f7f992ada6b63a",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_b1_timing_components.py": {
-      "sha256": "2e9989d68ab58de7b671fce0d2526273006e1ed101d5595e7acac928eca989a8",
+      "sha256": "639e5e1d2410dffde692121e7fb271d4049859714b2c47202ea5b8d36fee59b6",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_b1_whitening_probe.py": {
-      "sha256": "8c347178f779bbe09097b4c9e2da93f9afc1503e9e162a5b3882b8d4465373e0",
+      "sha256": "0a636baeddce04a01f714868b732c5c40222db37db8b87077245441baba7b446",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_bootstrap.py": {
-      "sha256": "72863ee924170139ac9a9b6d13557516e5119b10feb919759c99c9b19f9c86d4",
+      "sha256": "1016bbe1889a7ef4acc26c1583cc624f10e4ed046a29cbd9cc54e31cfa43f80a",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_boundaries.py": {
-      "sha256": "c59114202991a3363218b03ee5978f0feb24a186b1df20df574c21bcdc13f57a",
+      "sha256": "ae1d309802991e24517e2466e6c43c548bf0b3a9f0be59733647cc8b7d9e590d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_codec_budget.py": {
-      "sha256": "034de317461971dc0397ccfe65f529bb7ea5c9b7599f86f60935fdbd8ae72011",
+      "sha256": "63ad0a999e5b068a99bfbece09a015bf10318bf5cf90798921f2e33bbd007055",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_conformance.py": {
-      "sha256": "5f8a9d4c6062bde3d854befe17b2d60a0b4481c9ce6d715d0273da010b97f0f2",
+      "sha256": "ac1682bf5ce72d8887de6fcea6f0823df93dffdf1ad56c13d0d0a7ebe70a59e4",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_connected_rate.py": {
-      "sha256": "59b96b710880b6323bda70e4a7a0621e9c41b0fd4f98b1d0344eeeeb46c20c43",
+      "sha256": "eae4047572df7d9746dca9a25cf44253a53ff1a6a853227f97d1aa34c7b05042",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_constellation_decision.py": {
-      "sha256": "a27e7ceebcf662a1f822825b8c7e1d7e612a73b463d5b1392ad48a00286162b3",
+      "sha256": "c070ce413cbde80ac3853f8697f287372f9704f48a163567082389ff680fbd01",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_data.py": {
-      "sha256": "47fa198bd34ec835cc3d8edf26791163c201eba9699f0f05b627f781a6ce885e",
+      "sha256": "dfd359df23e41799243d27ff44055361c4afc72df8f98e9238da2b1d7669c612",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_data_fade.py": {
-      "sha256": "7bc12b2e4a99428b6b0a389ecda356f625961dfa8f5129260217fa3796c6a693",
+      "sha256": "8dc339b2fc4b6c3ac1226cc26e2ea4dd4a2f1daa29f7ef54cc3fd693ae44974d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_data_trace.py": {
-      "sha256": "154223254dd4a32d836f360285ef655f2fa4df191cb426dbbae1f45facb846af",
+      "sha256": "ac2bbfb2c0c05f62d7b4efd18ddca26df94c690103b8a9b28a4041a399c7539e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_diagnostic.py": {
-      "sha256": "774508dea44e1ffa3005be63cf4196ffb913cd87391f9b4bbe500e753a95aaf8",
+      "sha256": "95d2d375a1b8e4ede31c0b80c19d85621c890a43c329a80d1d7c1daa5aba8ad9",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_duplex_live.py": {
-      "sha256": "1f2e6a9c41c33481a5f0f4b76ac03c1b3cb47d80154497abf5b26c1b9452032c",
+      "sha256": "15f02ef7679e4ea3b7428d8fe173cae557c2b50e678d2fb5e5c7e50071d62cb2",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_duplex_probe.py": {
-      "sha256": "f2d6da9722a686ed0a63678b3da420747f8eb3c47ad75be620b734e251a651e1",
+      "sha256": "618e5ad503980b15633ad71ff314ff8304dd047254d21584687fbaa4e0b4dcbf",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_equalizer_backend.py": {
-      "sha256": "daf9d8d5255abb8cfeb92eb5a5d79d9bd1318c928cc7b9870578d4f21ea3ed69",
+      "sha256": "886b744468895ac02e20126a4bd72589aafb6f6c6ba0d0e45f64c0f054cf2812",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_false_e.py": {
-      "sha256": "db818eb01150b51080e7659fef76dfa909800fb10516a5c1e98fe3c01fb69be2",
+      "sha256": "5adb55bfda93814b811588e7835209c20c9a7ba09da9ae82d0868040d6fa02f9",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_feedback_native.py": {
-      "sha256": "89af5a7af9a65fb2a8a39623c0e3259bfe10efbb3e0b9832daa3c06420e7f850",
+      "sha256": "7d3938e0da73ee76e73c0331ad578baa2f077d47808227a3684427754a1df1a6",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_forward_audit.py": {
-      "sha256": "bb037fc94e0c3b2f931b10548db2a51991b83b127288e41080cfd5182ae8cf21",
+      "sha256": "9ead4b06732f266d046155c7de3608eacbecacb434423588a9efcc646102df38",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_freeze_guard.py": {
-      "sha256": "808f1ebcd4603299745c90000c8fd8be915584acb6b17c170ff739317643ea47",
+      "sha256": "77394d964a385c3e1eac86a789dca1826502535c9d004a8b8be19ea770b7294e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_frontend_architecture_probe.py": {
-      "sha256": "57d0c3f67b13ad6de395f6b41982305709499e53d269319cd66a453453c599be",
+      "sha256": "d413700eb34af2570f6bb37ca854968f9bbf406e3c2b468401cd978214eeea56",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_frozen_b1_diagnostic.py": {
-      "sha256": "56b63ea66737428efbe1438c89f35c50b943d7dd972952d2017bd607f8bae8aa",
+      "sha256": "1dba5890f37a1246500248e7f3d19b5d1e135169b9f56e963b1d5c26b3acaa9d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_g711.py": {
-      "sha256": "1cf5787f474d811cf4d68cb8c954f8bdc235a8b8a6c4174dfd24f1a6aea62e6e",
+      "sha256": "478d0dc14fb881c5736d62294bffc39f47e0d41524669a063120bfd12e5e6161",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_idle_forward.py": {
-      "sha256": "e73f8f863b14207b5011ccb88d1ecabc57ab78e52165c908779cc717a90cb9e2",
+      "sha256": "68876bbdef1beb8ec32a7c1525c4d38d2ec25bdaa33789e472da8dc918b22a2f",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_info.py": {
-      "sha256": "baaa65c72810e0d90227a05ce2605a5c0ac2dacd95b39fe4bfd136749c2e9d07",
+      "sha256": "451b76931926c972d1454ceec069fce2aa44ffc630c0423676650c639b1725ec",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_info0_recovery.py": {
-      "sha256": "ce8a18454c6d96d52503349f711070812d89689dcda8bcfc7a76cdae90ce1018",
+      "sha256": "1d68655def0d5e39ba0a623f8dd67f0571a71cbcd546bce374811106de7ba387",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_info1_retry.py": {
-      "sha256": "02e4fa510811a31731e918ec8191454539f5deb49a12a457ebe1553f280b7b69",
+      "sha256": "451161d9efab002bb131a482b018fa8e5225b9034237ff6e2b2ef931c9bd6a89",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_info_hole.py": {
-      "sha256": "f735e7c4d167b5e2b5d5f9e15db519f550a2aef9778c30a3694dcdc1ea5f1971",
+      "sha256": "adf0ec305a925b4530a00bf7321d94d6042aa043a524b3acfa6031616535ab6f",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_input_power_guard.py": {
-      "sha256": "2fdbd30e99372fda8982068d94d253bdcb0b50c2578bcfde4445bdf17f79caa9",
+      "sha256": "cf2a41357c1f344158522e89140eb7353f80c8c0feba76cc911c21c741c82e13",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_interp_native.py": {
-      "sha256": "8e3a5f7e0a7c2ab9e83b98e6a1b817c9bd34f05b0ca93a9c251089ebd4eebd23",
+      "sha256": "911cd0829f1e06f07fbdcfb3883d56193d3d6a2b333b081734da74b8dc370877",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_l2_guard.py": {
-      "sha256": "e880b57f4bc81b4b171e7a4704668bf7238905d0016a11a5e3c3a42c6eb651a5",
+      "sha256": "f3aac09f3ea752787582b053a6529de9ea7ed2bfcc564f24190357bd6b1d83d0",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_loop.py": {
-      "sha256": "edf758a9d44a51468c39940b3b873523246b9a0f62c6b602f711318f96dcfa5d",
+      "sha256": "402af81a09da2934d93c4c6df6a52a1269f6ea7c29b85afb901cb7965d4cdef4",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_modem.py": {
-      "sha256": "d703abc990f886d8020b426ee3d7b799ad91d6d9b43b3cfddf636f62699bb0c6",
+      "sha256": "6701d6c72ebf8b49c22ea847f54ab5bd69085ad21895c718b11ffdca70c3e39d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_noise_channel.py": {
-      "sha256": "de1c85c059492d7d58c8d58b8532b0fd5e44e91b7ff18d1e66ada338b9d68601",
+      "sha256": "26e99544e020431cd4929114059a65c94e0f2a2a5c24ba81e7a3e70fe8c2b5aa",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_noise_live.py": {
-      "sha256": "49192b799852b8b1ccee838003b942841f568a5c4a4456a43ba2fdac3e0fae4b",
+      "sha256": "abadf2a6814b42efc8fd5385c2ac8ec0bd59bef1fcd0360a2c6ec03c57196f68",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_noise_predictive.py": {
-      "sha256": "aad0b56ee883a20f1dcf3133e2c2e491cd5bb0a7b0f539150d917b5538c4c775",
+      "sha256": "933dcf0e8d96559429f6d86a6c680a0b4e51283d281adcd518471f1d710eb159",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_online_control.py": {
-      "sha256": "9c9d885ed534b7d5088e8c2f83eb78d311fcca878552036534b86fe4916e9641",
+      "sha256": "9c5ef113e3b4c8b81eca72e91bc33a0eca4acf529cb7cf3f4cf16158b1dbe747",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_passive.py": {
-      "sha256": "9ce2822ca957292b5dda76838d7906a7009fbc96dfbf92559214975a448c5e73",
+      "sha256": "18231f718402d5ab2e6d31f2b83315916249e50d2dfd48d29c7ee23fe57728dc",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_pcm_impairments.py": {
-      "sha256": "5da25e5e121a6a1d6075b2a7a67e878c4376aa9d54b929b059bb1fe8b75c2fdd",
+      "sha256": "79ed999be91f5e8a36d69754ce7b42a8baf24adfd58d73e70e7db3e51071b654",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_penalty_protocol.py": {
-      "sha256": "8ace357abfc90edba6d388b9d14237bc0015a4eac23311064c3af13d8fa8f6f5",
+      "sha256": "6404a3985160ac262a248ca45cb37de5fecece92ca96802356c661c588b0f316",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_phase3.py": {
-      "sha256": "06cf1900dd4319155412b62e6576a1bdc7967c7e395c34c69d187dbd671bf562",
+      "sha256": "c4375d3b3001ae80a66d92d523ad286010856b7e77d0afb3e2f20764ab600de9",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_phase4_span.py": {
-      "sha256": "3679edd2e2819248127913f1d122ad95b25c4f9623ed2f4cdec140975102c954",
+      "sha256": "c2d2319091162c9aeac691c64221b3cb8916f693c2d16ac1d55bc0e3f4204339",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_phase_retrain.py": {
-      "sha256": "699d01af704b7126273a946868f620316ccbf1c17314d1b255d8d05a93ea1d60",
+      "sha256": "8fccfb8c09f1b4283a537ceb701ebf90f52d0689ab0c79282be3bbd8d25e0d67",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_postcal_tracking.py": {
-      "sha256": "ba1bde5b8511f33beabbd2a5dc362a14fa578c5f0eefbb9f629f2178143b1c9b",
+      "sha256": "b041bc0a5f0606c4cad28685e3913842112272022493b4406ec81b4b308e9d89",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_quality.py": {
-      "sha256": "80a639869b8e215ea4058c8638be8675c9d743c6fa8d633bff14e6f31392cb1b",
+      "sha256": "9153254cef165337e22e6b2d6d7492155e6d47b295c393223690157985c0b9c2",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_rate_change.py": {
-      "sha256": "b65fa630cde65690365bb8fb37bdef2107b0d867b0730d9cbbff94b35e367da6",
+      "sha256": "da2f67ecdf98d583d60190b672ce9e036d19d79af0dae5831f35c4414ce86fcf",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_receive.py": {
-      "sha256": "916acb333f654a0776fb15ad1035b10f6f02e20b66f01afce7693b79c90eb6f3",
+      "sha256": "49b98fcb7f52d3bf792736b7570c742d89e4fdc5fefb212910a2efdb8b0b9030",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_receive_dsp.py": {
-      "sha256": "57b77143b0338de06c8c99549a47a31d75af61d10daa95d9c0d96fe33a73e32d",
+      "sha256": "f6376a195b8ce140ce7c952011587d7dcaf2c162e201a9e1800f63867b9f1d96",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_reference.py": {
-      "sha256": "f5de2dae248f5003a822c283d8fe3a1488d6e9fd47f920e1a74a7978df1635f4",
+      "sha256": "23ca1fb1e0ab4bd0f03d1834e2d156e40f1326341422d73ab240af9562d094cc",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_retrain_budget.py": {
-      "sha256": "2a60a7acefd8bd61e2b210320375658badf2e9ee4ad42bffe78b58fb3b2e7e14",
+      "sha256": "26d1d35d16539270a0e086854e0d7f322653c215d83b98413b222084c342c3c8",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_rx_16pt.py": {
-      "sha256": "257df48fa42693fc4e97e3a5baadb5dfcf075ecdaded182d81a3ab1deb54c9de",
+      "sha256": "c0a6ed9ec920a2d635c5d422d989bd1ab3a4149a51f944db7f1fdd0f997fd877",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_rx_decode.py": {
-      "sha256": "a38b4a7859d8bfa7b4c58a233fb363bc26f17c69ceca3eb03cf537694de8391c",
+      "sha256": "0e8ad204ec4be7f5d5c531f71e4a2d4a1d381cf536a84ce69bfcc2031835908f",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_rx_decode_j.py": {
-      "sha256": "c13bcda59b7b2bdf851ffa75513e3f0545b6c3faa9badd19f596427fea07f02b",
+      "sha256": "f2e5fe9d749416a361abd58f704cfd0f1dd75bf5c158809f948fbc232120af33",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_rx_jprime.py": {
-      "sha256": "eb547365d25b9a46195a686817c9c6bcf80e1f8f69d58624f0723e8472653c10",
+      "sha256": "d5345bbec193413ec5c3cd0531360b33201ce0b08f594de0c0e298c7188d50db",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_s_detector.py": {
-      "sha256": "4615e50d59dd099ab091125c197cb73e50944cc3622da78660723c3cac3ac3fb",
+      "sha256": "717cdd8b4cbc1e69e44f23cacfc47e3179dc59c758503c19f4623de34170e02a",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_staging.py": {
-      "sha256": "74a12a180fed1304420526c32fecedca849931b8b31cf0a358f54c4bc5c683a7",
+      "sha256": "4f949ae6fb94c0c70bc2ee3aa6457227a986e7c09c9ff769e912abd83e780d24",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_startup.py": {
-      "sha256": "13219e1e099333a3afda01f187123894f559cdb8b4c7c7e0abf36613b73e4712",
+      "sha256": "5d5eab627eee371ecb1404459d4cc959b522e659d3dd1f78a65e16e4052fe1b2",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_streaming.py": {
-      "sha256": "030abc111f96f06bd0dacbf457b9dbe2076734c4372347a4d7ca257e6b65c27a",
+      "sha256": "10b8a897a4ba7b8adc72a0522b51bdd05e12cb010575d8c9316d027880dff14f",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_survivor_state_sync.py": {
-      "sha256": "6411d534cbd7e9dca304e0c500f5926c5db05ebc708506acae2818a98964950a",
+      "sha256": "c70aa382c5a374fa992c914e187bde127b9a2e1ab0ddc06728a7be5e31690945",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_sync.py": {
-      "sha256": "90acbb12a482b6bbfb792c67b90992e493ec977e0d33b982888bf882c98c85cd",
+      "sha256": "68ef8cad37f973c2e90dd35dc0784f27a689138d0abba31244b6301f09618f5c",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_trajectory_grid.py": {
-      "sha256": "d043bd7a737a44d1e3b3fe38ff9e948e63fce4d875d57d93bd0823611e8886d5",
+      "sha256": "1e517c3e348032342b2bf86e22ae013c37dfa6814a7b5cba08ccfab966d4fbee",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_transport_feedback.py": {
-      "sha256": "4cfceae814dd162f562363e8db5b83ce98557539ec59a8d4f1e2e838c493676a",
+      "sha256": "d872e9b7d06b23bf8a1d781ced22c668b8dcc14c634b7389559f052a9a58a13d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_trellis_native.py": {
-      "sha256": "ed61bee375acc914ba000d2fa591b596fa23b29a535d72672be30b159ef1053a",
+      "sha256": "27a34433203d1742908c0f393eac9fc3e51f6be880e267c6e51d3c5f43397c08",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_trn_clock.py": {
-      "sha256": "dddd75a98f725ae3856e29f835cf57bf8f4f9562f5c4916b760e3b24e719c124",
+      "sha256": "107c47cf59aef7994fd49a389978772644852f9fd1138c13bb7921477a0e0ae1",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_trn_clock_gate.py": {
-      "sha256": "6d906acf7d02749ace440adcb32a51113196984f8b64ced1e4c66267abe6d9ca",
+      "sha256": "b55fb241928ad0995656de45336e9337e17471061f908284fdaaef6b131980bb",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_trn_clock_log.py": {
-      "sha256": "9be009364d33e1bb66c64fae3f459889019936dd1f6f3cc9ab913353b2180556",
+      "sha256": "a9052ad31b54447610edafce59c9ef03c221c04c3d31de2c38c531b59771028a",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_trn_end_rearm.py": {
-      "sha256": "e68c2ff8183f6fd3b5bbf51600a99caddc497770325a110a445dd5f87fa3ef26",
+      "sha256": "3f840eeece76b6fe5f825c268b3fa248aab4ac5d72b0a5e6210592c900c98117",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_trn_gradient.py": {
-      "sha256": "9b66f1974dbe80848a7fd330e33485a58931ff2b84cccf707e815cf432ae3016",
+      "sha256": "57eafad2b236db8b98b03838a4a69cb4faadff984cb8f9b50d60cb8f3413946a",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_trn_jitter_probe.py": {
-      "sha256": "dc94b7811de4d80416da568cbce5cae52fbd08cae4410fdb4f79f4004f15f7ee",
+      "sha256": "a6b0d78b888a7b23d59e71ba03e406f720f389aa68719b3da72a830970929cfe",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_trn_length.py": {
-      "sha256": "8b96cfd3db4cc1ba089c36c8199bc29780515f1875eaa836d128854766dca263",
+      "sha256": "afb5e56144531490554761a61c9783b83b010ded9e1dec4929bdf9e495f59e95",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_trn_predictor.py": {
-      "sha256": "02f604aa7f03a675d0665a19b1f1df492225854e0b1f113c66b3d71faf05f875",
+      "sha256": "ce497319223cf15fee0353d11bddc089bbc41ab852dad19336cf96489de3fd72",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_tx_underrun.py": {
-      "sha256": "f4286e287023c53073b6c0d4fe97cde8f81b69bc0ca8974e4e5a98b61a7e5f18",
+      "sha256": "abbb0fb5c8a15b68755359a29a1d004ac5c7d782fcf8479f674013e6ecd6a819",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_tx_vs_reference.py": {
-      "sha256": "035b05f8aca91b3ef7f6bb63d239df280742935fe0d53d8be91f3a04836d14e4",
+      "sha256": "c2b1f03bb107315700708e0efc564d1bbde12888c6c4faf0eea5efb6e4ca5f19",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v34_viterbi.py": {
-      "sha256": "579cadcd235c1023fed11c04486194d76862563591a728b77f3a8e50049b2637",
+      "sha256": "013b39c8ecf5e0512c8bff4ae0da1bd23e50e1120ad9d31a6b417c1ab3c66349",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42_default_parameters.py": {
-      "sha256": "f7ce25f24b1ad77245cafbfe8fbef96a4b9becd570854cf76d1b9ac07e36dd2e",
+      "sha256": "53effe0dc6b65ceec26ca7a115c58a51a2db75fb063b0e59d6dab049cca34a37",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42_detect.py": {
-      "sha256": "e88591526418f1aa3e3167b5c7921920c83b8a9e2a5b49665bb88268c0787fc8",
+      "sha256": "13fdf6c5a00e6e0357feb7d1ab9d529e9dbeb7311f5d0fb6f9f990f055ee21b1",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42_lapm.py": {
-      "sha256": "784aa551021f80940fb7c95966083a374fc44ae836f3a62fee0d6bf03bf7252e",
+      "sha256": "f665c2098df6126157b0a4065b6538f074bfeb50f8c2f0bb481160385afc9863",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42_layer.py": {
-      "sha256": "2998ef9e8134f7ccb515cb3edee95f93feb0ed04d7d75b121354814ebba8b85a",
+      "sha256": "3de0e78c7190ba47a8778f7246d065ce3010758582b7a36b0e6bb747c5745bd4",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42_no_compression_interop.py": {
-      "sha256": "05b1c1c38f87952eb49286179900caf9fde06597a2f3c5ab85bd80e290c035fa",
+      "sha256": "5c2c60154fb670fd77661ebc6880eb0ad29e4d5a64c3291ae0c9b281b7a2e3de",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42_poll_progress.py": {
-      "sha256": "1ef956d432488df993ff55261d1d5b2b78b299797c8f49e0c6f593db583b71ea",
+      "sha256": "0ef4e3ef50fb5ea3dcd6dcca96d6fcd388d704efe943afd655d401705466ef13",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42_quality.py": {
-      "sha256": "2bd102bbe9e68999d4c2518db61d5b6cc4aafd9183e4de6f284359b02328cba0",
+      "sha256": "e1bc729405a211c8545c8aee0514ffcc2ce9cfabdc385e141379256f0d73a88b",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42_rate_change.py": {
-      "sha256": "a6b00cc862f8edd1b777b3e1c3f02c7035b2fe41ee56eb347e8de1464cfa6cc3",
+      "sha256": "1fd53a23cc6ebeaa4dd894904790d20a502a1997599425a24afe12e8d86cac7c",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42_rx_batch.py": {
-      "sha256": "05721bc08ad5713b6b4ea7bcdc1379f8d2ba6b00e3db9e86cd078663fc9db149",
+      "sha256": "669efd3ada5b3952c344db74d5b34c3587abf1263981293007270cf80b31d557",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42_tx_batch.py": {
-      "sha256": "03c5842187131ec5c4eb5f2ba770fb6247d5afff40d0807d4e21d02e02578667",
+      "sha256": "4e476ed389d67cc5b24fef2b7d5c224fc6472f13b5f2798fe462451d8ad06816",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v42bis.py": {
-      "sha256": "77d9d0ee261263b22f5ded09ba4898777f23f9c731f5ec39f86daeffbc3a090d",
+      "sha256": "179bf3864ebae99ffec582f84c3fbc11b6bd4b99d97039d55b7d2a2aa45b443d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/test_v8.py": {
-      "sha256": "c1d548c378fad33717a423cee7c4409ffbc6405fb5be8d307c1bb91b8e60e372",
+      "sha256": "0ae0de2a90111fba7620b67e2d202d88d36522e1db7a0dcd3d41799329ab0dbc",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/tone_track.py": {
-      "sha256": "9942fab34668c974c9aab0f941684f169452e4555bc1574c3a6ff6d37b520e83",
+      "sha256": "77667f5505b9304f1aa6872852384a1dbfd8684a5dfb030efb765904938cdb36",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/two_modem_duplex_throughput.py": {
-      "sha256": "5c503006315436dc4dcce69d657884c19fed843eec0f6dffebee30ae405e6f2a",
+      "sha256": "69502a4c1838e5c49369d084a2e120f387d978ac713e72ddfa9f8fe6b27cc7bb",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/two_modem_e2e_driver.py": {
-      "sha256": "2887463a662d52b226d88aad5dad4c6379373cb7e82c6d6c908436a6e1b5abb2",
+      "sha256": "0ea1bc7e88a72edf9f407054271cc67e5055fa9a672ec47b17d2c90d585f89e4",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/two_modem_throughput.py": {
-      "sha256": "3d016417d57be5d191233865e3438af8332a9f16c6355c99ed6f51798d5531ce",
+      "sha256": "41fb54e7aaaebdb418086964447b56496f69d85fb33c96f297fd876c012c8fd1",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v22.py": {
-      "sha256": "81854824edeacbfced1a7befa1703a42079b4c78b847864ddf7b957438d52658",
+      "sha256": "52348a00189b1073b4cf682db38b575e22c756dfcebafe8abc516565883e3bcb",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_answer.py": {
-      "sha256": "317faf0887baa05f18ac5c02af4b2507cdb3919ab8bcd68e6f017378e25c1534",
+      "sha256": "94cbe8697e15a6f0dbaa0c90d04152a8c4389e3a23155e64cd9a87763114b782",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_caller.py": {
-      "sha256": "ae905ce512358b39e8589dc1092d69748dfd021fb01cb267ed178369dad0bcdb",
+      "sha256": "c18e54e79ab4493c5ddf371c8104e6b608a40a28b7526c7d659db0a3821f61df",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_loop.py": {
-      "sha256": "5813e652bad11785b93ad56327a47c34761d85a48238fdcff601754c7e6c4f06",
+      "sha256": "e6a612b53422bf9cedfd7685fa2f251ec1174feec06c7ad7d97198fbd0303b04",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_rate_change.py": {
-      "sha256": "513909b8bc63951c820e7b276cd747af25aa19920e1cef27aa0d1d2bbe49916a",
+      "sha256": "e89a51ad7d153c5b8427c8722e5b47bbb6c6f2efbc2ecf04138990b47a7b1a85",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_rate_session.py": {
-      "sha256": "71ae745969be8b3e73786c8581991d5c824548b0f1bb051caaa1da16275fe1cb",
+      "sha256": "67c10720d3ed7ddc71beecca3b84bac2d5e61881b3783d3b55aeb070b13546da",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_retrain.py": {
-      "sha256": "392db65cde57e9436359564730a45c9cdbfb9e42aea381f6b420be8ceea8755c",
+      "sha256": "9527730373ffac23162c79c280984719e756234e627595780da7896dd14e9623",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_rx.py": {
-      "sha256": "bb74dc26ad9213587a83381365befe96636bf6a28925e0cf73de4eb5a49c16e3",
+      "sha256": "1c3f9f2f14cbb7d11d5ad442bdb73756543775e7ba46893c7547b360faa3eee0",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_sim_rx.py": {
-      "sha256": "4265d68600128fa593aac66270b26feb31d09ebbbed3c8df56a1137dcd862fb3",
+      "sha256": "5fc57563a43d1e006dff5a6d85e208039342e255cb23768936202bea689ddd98",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_stream.py": {
-      "sha256": "42a87cab8ff9b21e8508218af05413bc1c4f36fabce6db86efbd7b5f60af9780",
+      "sha256": "96aa34fa0abf639f221cd2e4b9005257e492ac458773f79c2945f67fb9674ce3",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32_trn_clock.py": {
-      "sha256": "c5b199336a6e4355c100bdbd01b283ddaad0feb19705dcd8dc801320b83e6989",
+      "sha256": "e4cefea19cc14d92ddb7b79d8aeb625350a2d014e920b271ae417b94cdd13a6b",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v32bis_tables.py": {
-      "sha256": "47ba5b1348ef7da893b1d5ed62ded7ea429b401dcf0e2c0f632b80f7b2a5187a",
+      "sha256": "ff497d31105c56d447e4eaefd9064010e17a67a1318cc236624d3975b506b6e4",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_ans.py": {
-      "sha256": "d28051e9c716f0b4591ef795e2647af01dde8b0fe85f870699b2fb0c0e6d3921",
+      "sha256": "3be92f06463fd23ccd1c85a1ae42dd9f980953d5cc3c078ad260c1db42503119",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_answer_modem.py": {
-      "sha256": "d8bac38ed3865a5bbb3c2f50b03ede6e3a7517324c4c373008550008244921ca",
+      "sha256": "02d73017d46980563d66ba9d69cd8d1fc5809dc548e3188ec944731b58270563",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_audio_loss_probe.py": {
-      "sha256": "2127fdb575eb9c4308c385103ff3ac2435ed28eb5e4fbe877aceab769cb5d845",
+      "sha256": "db912d71717535d64104eba107b2c286e2dce45f143183289ace22e7798e0b22",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_auto_rate.py": {
-      "sha256": "bad0911c8872537f8743242c71f021396be133dc4fe20428a9473c833c89ba3a",
+      "sha256": "0ac190aa463fdff6346e1b5c1595b0429ead0761bc30ea0d599a9918fc2b80b7",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_b1_reference.py": {
-      "sha256": "4ca334f60e6f383d766bee2eabbe2d7a11b2d71ecb8db89f2dbe484ab7c20f52",
+      "sha256": "29b56a61cef0b4cf668f67ba505bc7ea693b3fb4aaf9b8a03f2d548f62ac3c36",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_call.py": {
-      "sha256": "557e902234c4aa42ff97bd35a075ee99378699d7c6a304d9fb020cb26cb406be",
+      "sha256": "6deb65343a2117569517a314cf7ebc9ce637ed425a3b28429fb9d97d0658ca9e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_channel_controls.py": {
-      "sha256": "413e75cdfe7f9a420a3e95a88890b1929e9ad40571f3d0eabf867a1de859b21d",
+      "sha256": "4d38d2acfd687c50428ad6f78eed3729fe31a789f221fe2a3f211b61970b4f40",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_data.py": {
-      "sha256": "5bf38bb57cf5a4544fd2bea2a818d3dd6922470a79b147efbaa83d328aac9708",
+      "sha256": "031d505eaff8a7804b8021372778512d25872541465972b222d581e1fd548d82",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_data_fade.py": {
-      "sha256": "c7a7c14a15dd7fa7069ee5cd4e0224db1bb66121d619e46e1d88aa9ccfca13b6",
+      "sha256": "69b5a5a185084c5266030f6fc641521563f73e38733dc4d6203be9df96cc80e9",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_data_trace.py": {
-      "sha256": "26a8138cd63f09c44137667e6bd8dbe05654b302e174571b3a43c37c2e26f657",
+      "sha256": "b3454e3b2c847c387d064ce2f2131542ba93539fbb81dcf558730bf47b717ac6",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_datarx.py": {
-      "sha256": "bb6e6ce8f1e57a61e82c5d635291895e1c3e8bd46b834667ce1ac0b61d1d5392",
+      "sha256": "8ec0cd5f27fb1fb55f58505af466f16c41ba2a19cba523b3f04ee50577c553b9",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_diagnostic.py": {
-      "sha256": "b4b8e3dc9009559139669bed42a2c845dc8ff82c2b515f4188cae43947174926",
+      "sha256": "a1d906eb3343de9cd31f6bbc96e1e609ad172165d99bdda8a882476f2c5db64b",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_duplex_model.py": {
-      "sha256": "7d689d7774be48e2faeaf5614a13255eafb806208e6085b1270068756ef3abae",
+      "sha256": "97e9037a05925a32aef332132914b7db56f18b3ddee6a87022708968ece941be",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_equalizer_backend.py": {
-      "sha256": "a21a163a21dd13421cffdc2efc64d2b05a90cb62ef18966919327d0dded0a95a",
+      "sha256": "45c1d63c51dcb765906d721d5c3bd08019d6763c0286894ad8be8320dd7458d1",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_feedback_native.py": {
-      "sha256": "31f14062bc0f7a2bfcf344ad7d0606b5e484741ec58ddbfeab409795da2532a2",
+      "sha256": "b1267a07bf1f4c7aaa357aba2bf71e49bf0769dd7d88315338ddfa14efe5a624",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_forward_audit.py": {
-      "sha256": "4e647a98ae2ba0d97185c57e1b5b1c88d40d8aa44c89b071222cf187cf3d6641",
+      "sha256": "4ef66bdd13c9ff4a3ccbf86be6b94a46d1d6bf3acb1500d3f7fdd3bb446484c1",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_freeze_guard.py": {
-      "sha256": "e843087ab6a473074f11c33a531ec4d44a3ddd02e395ec562fea0eedc6e42ca7",
+      "sha256": "7ef32949b8b85f042d7afae229fe1fd71afc5c4f431829299d98b70bb05204ed",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_g711.py": {
-      "sha256": "661d9e9724d587170a36c4a7cd39e213cdf3f9a81c63433268d04ce2f261c4a2",
+      "sha256": "984506a5450fbdced7b1b3b96a0dbeee4bb1d98cc391260baab84da64727165d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_idle_forward.py": {
-      "sha256": "4635b4a566d2a0e29f1528db4110d427c0767afff566ad8b6fd9e95678e7b2a1",
+      "sha256": "45bc7c7af305e2bde9d0f12f1b1329d3ff42e9e94e4c2e56d3211560ee1db5f4",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_info.py": {
-      "sha256": "d8bbedba4c31db8457421468aab3e3507d2471ff9a97b03de0a9fd21bca56059",
+      "sha256": "3cf8388e9d190dad5b7855c466cfc505203eac98887cc6b83cafba914054a7c1",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_interp_native.py": {
-      "sha256": "fdbc43597f3113aad63ed22fac20f34e62f7ff52e9356d2b90b5c6d1ef189ab0",
+      "sha256": "c50403e070b40f4abf9b16819d6fa056ae672612198086db431b59b9cbc6b49c",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_loop.py": {
-      "sha256": "44646a2bd4e97ccf04447539dd2270c2aaf679f2cca793339abc0e76c6b31c11",
+      "sha256": "8cf9e9dda866ddaf921b594482e70b013f66988226fbd6608663af69154bacd2",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_modem.py": {
-      "sha256": "5f830c5229ccb7caf491d5dec95ca52e58d1eca6199080e0b6b6321b455b914f",
+      "sha256": "92a01ec3ce1062ae7d683f03cb21f029056a8ead279637b1f2c4e4411074b717",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_mp.py": {
-      "sha256": "6e6a053ac7d3e087d26fc52b25d34448feeea7201c4d30be5cd308a7b0264c0e",
+      "sha256": "a4ba6560ce46203d78da78470cf306c161b6916c8bbe670a47b7c41028fb8257",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_negotiation.py": {
-      "sha256": "530b96861f00afe8c865c11a3808c51ad5ff24ee645b7921259fbb91d2d6be40",
+      "sha256": "95d3ffbb6ba32500aa560a39f2f998411fd513e36b7b3c6adca5c82ae55e0551",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_noise_kernel.py": {
-      "sha256": "e7d7d33f9a760e591216f40cb5786c9449dfdb5d21ece3e153aeb9fd3c035ee1",
+      "sha256": "e49dbcba923f44a9de2251af72a90f192b51b5a022c288d733c9bd0db5598246",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_noise_predictive.py": {
-      "sha256": "ee35b0eb2e762f64c0a6a6de5a35a62a38be325a94e4a29ccf64669307703ac6",
+      "sha256": "0f65729f1d641d87388e69d76f1b432f54d9decfb1d5d195cab19753f49ce367",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_online_control.py": {
-      "sha256": "5e06498b32e5d7e5f589566396af93989fbb99f69e8ff1264bd381a044ca520a",
+      "sha256": "ad8a19f3325e13ad74b3d327fcb957e823a63bf1705ff1a038c527c8c55a42c2",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_passive.py": {
-      "sha256": "0dfb803e372c2cb65d7dd40eb8376fae8d3070bf4e96ae6b59c45329fc9f9c4d",
+      "sha256": "2740d315d7cf38913162eb04f7a33e72ec56130c53011336e6f682c17cc9bb5a",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_preemphasis.py": {
-      "sha256": "015c2730a34d1384dd73c108d559b7e16d20cb71da01260e850290018219b344",
+      "sha256": "e00d56178bfbc9e59a9b9029ec210068a2b86aaac6e780f0c54abfef13bdccbe",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_preemphasis_coefficients.py": {
-      "sha256": "d6d9987eb1ff82b33f4c8d1c815f1388458cf10c33b2f81264f26883dead3225",
+      "sha256": "3bfc7f85ce26b13eb1725b81e24416b4dcffea964e8483a61e2cdace2324de36",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_quality.py": {
-      "sha256": "1ff4f1df8a40b804a6827ffff22030986a7915546f02e277b54a6b058db68eb7",
+      "sha256": "75dbc97cdc3c3d45b2ef0173b06f03bc1a08ab55d5851718bae4e2611239a512",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_rate_change.py": {
-      "sha256": "9eaad3b21b05c47c6af75d896e55607ac91739de0f1a3ecaabf01ac56811840e",
+      "sha256": "525a79e16203e20fad88202b94c2ca6691d63e1e7a7bce095ce12ccdb678ab67",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_rate_live.py": {
-      "sha256": "4c29f468a8f23cf4727cb85298d8aa2df3cf0ff324f925ccd3bffeba5afa3aee",
+      "sha256": "617ba40fceaf298f740b7233a4fd4ac8c175325ce4c2de6a3638d56626d20d5c",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_realtime.py": {
-      "sha256": "6c6b15e24e94825f255eeb2ac252e72a3b33f9696bd0a22027aa142c7f4de3d8",
+      "sha256": "696cbc1827adbc438d7d5d3caf4b8036b5fb31ff9c2cf41dbc8d2136f3bb6a05",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_receive.py": {
-      "sha256": "47d9556a0444449c3643bd97553c00807014ab78260a17740b23cbf66bb03374",
+      "sha256": "2ea82bbe658cd824f9c8828a34864aad9694e9d1779c053a6526571bc96a6a59",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_receive_dsp.py": {
-      "sha256": "838113aeaddb59ee5750aa4ef72fad974f4beeba9bdd8c030997693fad6d8630",
+      "sha256": "09ac4ea375f60b1b8ac7063936604f1c479e52e95497f4ad8769b8b740d3302b",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_retrain_budget.py": {
-      "sha256": "f33450f1ad4a053677b4280ec306aadc18d9577c3f135743f59b6d0b311d4149",
+      "sha256": "190804d0ee45df2de867277db04d76f32dcc6e01ea70617a7528e061d5531cb1",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_rx.py": {
-      "sha256": "f5dd855d9e366fcfce75521eaad5475f790804cdc29842429fc3431dfdff7378",
+      "sha256": "96974c15575153d2aa96682991a72e475fa9c264cec905a3a9b63ef78c1d9e4e",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_stream_impair.py": {
-      "sha256": "4c3657159e447ee712db8378cf97911d7cd3425561f745aa2b4ec0e4cbddc1bf",
+      "sha256": "e28d58cde7d03910b6a6071e6141ca0a2287be27371c6779fe595fee6a88f3a5",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_streaming.py": {
-      "sha256": "50624b57c3710a30534c97619a1020939ecd9c04e47927550684b300a178eb7b",
+      "sha256": "f6b449fd3b0f37138d0117eb17ab46c9478f2fc41f484ba18932f3598d96c35d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_sync_audit.py": {
-      "sha256": "48f0dedb29a5c8b36a80e76b87c58d329e8f8ede3882a07af01e60eef453e620",
+      "sha256": "bc29afd83e30265c2d6a5beadbd9de735d41580b48622a4340e52ee7829179c8",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_transport.py": {
-      "sha256": "a11286d96ff3d38068ed18b0814b2ab4ea0ce861f54c47ba91a289f410a24225",
+      "sha256": "385783e7eb2689320faea2e109bc763fe982fdeaa52fe7279d8264f07a6815ae",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_trellis_native.py": {
-      "sha256": "bf8a0fe35b986ffb0177de9aad9acd9bef253a6af974186e5437f2cf565b2ead",
+      "sha256": "3b6ba0dabc156a7964486b266720c584d325db1e4a77718f8424a3eff135570b",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_trn_clock.py": {
-      "sha256": "2758b0a2649b11bbe98fe080076dd56caf022cf70bd037571276c2757aa14fec",
+      "sha256": "f7e78a5789038488273ef3b7caf4d839e6a7710cfaa340b4a55619336f7fb3ce",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_tx.py": {
-      "sha256": "5df53e21c05a805866b99d2a344efc41fa8067142477a84ce2544504e6c1bfd1",
+      "sha256": "ce1e48744c02c753fc297583eed6357eebf1479849aa7103db1fa783d918699c",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v34_viterbi.py": {
-      "sha256": "e4ee6834d75d540767603b7f2450334f45226a21b2238cc9b1e76f96e1db03b6",
+      "sha256": "1540ca709ffef5911635b9bf22792a4726ed9b31d0901d835d4acc19e95a02ff",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v42_detect.py": {
-      "sha256": "63b7db96c0d988b5453a666d903c512526d2d2c2e1cc2effc0e432c3e89e048b",
+      "sha256": "0a0e4eda2b6715ed8816c275d942f2ea8e8d7c11606de2e08d3388206efcf568",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v42_lapm.py": {
-      "sha256": "a0814e8c0d41ea9e37857b1176ebe4f25b64dd58863e11590349690847d6d910",
+      "sha256": "3787c45ccd1b51e0e8b2933b0c121aec8d6339baec5af36d4ae647729abcdeb2",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v42_layer.py": {
-      "sha256": "48aa943ffa3d474e08f5718b8ae0b01b015e4cf088973e39e189a73be0da628b",
+      "sha256": "788cfd3d8a9f89a6dc1523849000dd742f26a5629071bbf658279ed23adaa472",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v42_loss_test.py": {
-      "sha256": "de31be5f29bc9c85977dc7a78b462ab139f3099a9331afb531a3cd2bab39f7b6",
+      "sha256": "ea5eee87b8793b6e3c772768f95ff67f14b1c230f0d48765cd2560cd99ae5270",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v42bis.py": {
-      "sha256": "52fd81b83eee379447345b395f1ae1c6d491cf6556a0fc76e108ab91dca7b643",
+      "sha256": "abe289a86b8d2c3e91bd44a5d844959e488b964bc7bc1a7751da2a7d46b86d0d",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/v8.py": {
-      "sha256": "7efc49164563ac87ecdfd30a9b0a0d9052b4dcaf4f99896b942935244e47a680",
+      "sha256": "a0521ac1b5fafed01e44442db22c0c9018b100bbb1b9f049743b455f89fecc90",
       "mode": "100644"
     },
     "lab/asterisk/audio-peer/verify_v34_dsp_capture.py": {
-      "sha256": "72a52d2cfdefc1c3275d0f0b60d54336242f5dbf641b82f9d43bb5e05b9e7784",
+      "sha256": "4e0cb23cf43256cd0120037f8f8185f62f98ded18c4cee8f05aa868c7747bc7b",
       "mode": "100644"
     },
     "lab/asterisk/call_progress.py": {
-      "sha256": "332c8c10c3887e15c0780eaadd3912768baa7ae3324d6acaa36a490fb8b96ea1",
+      "sha256": "22ab7fe5d00227f78b66acdcc60e4733c62a71cbc4f6da463664112ab1394d52",
       "mode": "100644"
     },
     "lab/asterisk/capture_io.py": {
-      "sha256": "1623492a4d891907ae7ea8a1e4fa7dd566b73f13c1ce9ced9a460e858584d990",
+      "sha256": "840b19dda15e15d085d64f4bdbc622b22123064b34019ff5410272630b21fdaf",
       "mode": "100644"
     },
     "lab/asterisk/capture_tools.py": {
-      "sha256": "dd2f14c770959a381e769da50b862afff5f269bba7f02491cf6f11e407878d37",
+      "sha256": "d7c1d28bb5e06abdffbc92ede1d6be35e40c98b362771f5d42dd7f9f52905c0d",
       "mode": "100644"
     },
     "lab/asterisk/el_modem.py": {
@@ -1161,11 +1161,11 @@
       "mode": "100644"
     },
     "lab/asterisk/host_bridge_e2e.py": {
-      "sha256": "abdbbfa755fe5a4e8e79fbb9d6955a4e35571d86e064aa1777364cd204a2030d",
+      "sha256": "53fba58ba859b15c2edcf617a82abaf127b7c2da8614fe413f67c0abc5871c07",
       "mode": "100755"
     },
     "lab/asterisk/modem_control.py": {
-      "sha256": "bacd5af2e8605e7d7d9bfa641f14550da4e827b7e1508b38dcfa6c31db8a67ed",
+      "sha256": "e13dd22beba3e73b7721067ed46eb5619ad3e4f4518ca3bf60c30baa1cf57b25",
       "mode": "100644"
     },
     "lab/asterisk/modem_dce.py": {
@@ -1173,7 +1173,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_selftest.py": {
-      "sha256": "79c759ca86b485d47ba78f758ed9c998a55bf6169d6a0b4562337429cfbefd69",
+      "sha256": "f659a7569d249fb9201e837756401b1d9eb94ae2930fd2f663a4d931a1dfc25a",
       "mode": "100644"
     },
     "lab/asterisk/modem_serial.py": {
@@ -1189,7 +1189,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_storage.py": {
-      "sha256": "f8fe00fbefdeb600002d5b7e003ecab185270ce2a40e701fd390d4dd237de303",
+      "sha256": "3d912e30eef6828fe11d41946332c4f52c60d52b3a5e0ae6a0ff306761d996ff",
       "mode": "100644"
     },
     "lab/asterisk/modem_supervisor.py": {
@@ -1201,47 +1201,47 @@
       "mode": "100644"
     },
     "lab/asterisk/pcm_capture.py": {
-      "sha256": "4fffbb5e612593328b4b6aa2c0b5b92629eb144d70b9aa703a5466a903b14b32",
+      "sha256": "a0ac97eb79390fe8fac18867d51e9a479905537ade96bc83a4067d1c2d2b945c",
       "mode": "100644"
     },
     "lab/asterisk/real_call_ladder.py": {
-      "sha256": "1e3cb5f29705710c42dc5a8b56d8dfc5c0c5bb898b8ddb0bd78fd7daac4236f1",
+      "sha256": "3b203559adec8d8f74f7d94e13f380a45464c31ccd300c19670af6fed1736c4e",
       "mode": "100644"
     },
     "lab/asterisk/run_pstn_capture.py": {
-      "sha256": "23fdc0b36e66615ad95377e80525c0adcd34baa8f4ba470e9a5c6d40a92e24a5",
+      "sha256": "d9e224b2ecac75210546fad1eb5ef90a9b54e8666132ebb96ef6d8e37d3413c8",
       "mode": "100644"
     },
     "lab/asterisk/run_v34_asterisk_gates.py": {
-      "sha256": "f42c619356d00e0a9bc26d97c59e7a880227586160ba641a0fbe506f991f8e91",
+      "sha256": "a2fb16086ee16bc4b94c6b40f75baf2155e7bc66e7aee04716b17920ac2e9d36",
       "mode": "100644"
     },
     "lab/asterisk/runtime_timing.py": {
-      "sha256": "771a7a435294509fc0ebf6084f45d1e4d4446cb529d543f5b40efbc9ceb4f565",
+      "sha256": "77909f7141125c4ad7e306ffa2f55dac77ebb4ce19c3d4f2f9f96e9ac65254ed",
       "mode": "100644"
     },
     "lab/asterisk/serial_bridge.py": {
-      "sha256": "8ead38cd952679c3aee42b0b38e513a91e0562306162f8191c30dbae025d074d",
+      "sha256": "aaae1ab54a7bf72bd51213ab2166ec060db3a607860ed71ba2dca591e9f117bf",
       "mode": "100644"
     },
     "lab/asterisk/serial_port.py": {
-      "sha256": "4eee3d1aa2a887f7ebf8c6872bf0092d9f0ac712f3ab4d11a67e7fcbbcfb8586",
+      "sha256": "1f1d57beb633ab9306ccad562ebacb931576a453746888a15e6d671f46dc2518",
       "mode": "100644"
     },
     "lab/asterisk/sip_auth.py": {
-      "sha256": "a2a8fe9525f1bce60d280230f1e728daba1d949641813e70762549358cfd9fba",
+      "sha256": "ece736eae8cc530f31487302893a07af37c9f3d5845117535dbdd799efa0264a",
       "mode": "100644"
     },
     "lab/asterisk/sip_uac.py": {
-      "sha256": "634b5c23f4113e8d21b8b794f20a659489a2e079ba49dd67fcb0ae0c54300a8d",
+      "sha256": "5ae9678c13b81a9cd38707651d76ebf68b0bde591f78cea70c641f3e596a87b9",
       "mode": "100644"
     },
     "lab/asterisk/sip_uas.py": {
-      "sha256": "31795d8a2db798088556d3f3e8db67672cedbfa6d9a86890aedec425f7bf4726",
+      "sha256": "4f12373148100b8495a4d5c6de0a4517acbb6db6bcc9453bf7b923646ffb078a",
       "mode": "100644"
     },
     "lab/asterisk/test-audiosocket.py": {
-      "sha256": "5225e47034113a56430e398e03af24aae927b6325dd67687001926425406a6cb",
+      "sha256": "694354f9cfc5d6e99bcf4d910d6eb2f318681538d1f1f9ad725652b48e34eec3",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_com.py": {
@@ -1249,143 +1249,143 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_dce.py": {
-      "sha256": "344051a3ec82c43edb88e8ae11598e88b4111afadb106f048418b26d212f5c9c",
+      "sha256": "25942c582dc9c7bfa0803e273aa4bd5894ead2f06fc95b421769f443bcfbc31a",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
-      "sha256": "900ac12a5ff60e64320051432dd6112d49c2808b207ccd07ae8b086b76d07188",
+      "sha256": "c8268b59830b128069faaaae6978ca43c3186d75f53749da9ef98c95b3c06f6d",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_instances.py": {
-      "sha256": "84cecefd5539b50d88d67cb9ad6e1729ceb964c695516bb032ee36cb2eb2e7ae",
+      "sha256": "3bbb323dec01b37584f95a8caefe29b87aa51bc3d43a4d2f5c69e723c75f6510",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_no_echo.py": {
-      "sha256": "7b816d975aab8b553616c8bb65e7debfd4ec4366ff7ca487468a5212f1a27de7",
+      "sha256": "05527445913b19b9b91d8daab45c283380dd3d53d370e230c94674590bda559a",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_portability.py": {
-      "sha256": "72a6d53bce4ec30b11e70f1594d19edf0367143bcd1c85af9eb24c7d7e292d16",
+      "sha256": "cab76281366d92d91259ca307ccc52c8a7802f33eae7eba1bfe5ebd13b025f35",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_selftest.py": {
-      "sha256": "2583414a79991edd24e0c6420fbfe7df1bad40fc26a5ad2131b70758bb8c4c37",
+      "sha256": "d45d703019facb1144ea7eadcd13b5a47532d7c351b3f8020a1c2eb131b13912",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_serial_driver.py": {
-      "sha256": "f450c162cd002037b31d28fbcc52dd49118f78e53736c45f28b19964fb614596",
+      "sha256": "ed96b32971cd844f28b599e16043ac736a91674fc0a7c6f159d441e4c1914a0c",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_startup.py": {
-      "sha256": "4d76720fba034a7aec46f8ae172de9ef4eb0c013ca546a6f186adaf495bb204c",
+      "sha256": "268171ffe89e49b5a408ec4f157ebaf01aab2ba1459f8a8e55825db8881c7985",
       "mode": "100644"
     },
     "lab/asterisk/test_online_control.py": {
-      "sha256": "dadc0605f453411458ad7c7e8dc8d686098baea7cf9928d06ff8d7040467a0db",
+      "sha256": "dda42990145445aa8c3dc774169133971aa85547d3bbb04d127f853367431b78",
       "mode": "100644"
     },
     "lab/asterisk/test_pcm_capture.py": {
-      "sha256": "4fafd82b2dd99ae2de1beda4602cde905f57459942580ca821f94c5f8243d130",
+      "sha256": "667b08a124c47a75e58c452f61dbd88884341e7e6ffb271c399dec86e1ea02af",
       "mode": "100644"
     },
     "lab/asterisk/test_pstn_capture.py": {
-      "sha256": "8384835f5e2de0753a3fb52f4ac34ff9fb1c96b321a5e5c31a9e51f34268a63c",
+      "sha256": "2fb11c781b11c9afd96c655025539c6957e291bac75d18e477a8fdbcf91f3762",
       "mode": "100644"
     },
     "lab/asterisk/test_real_call_ladder.py": {
-      "sha256": "0508554f89c44d9ab952ecccb806766c992682fb8affde0eeeee76420cad77c7",
+      "sha256": "43952a87d8d5704bcef8b258113578cf38d812297e0e683ec4be49658b9a0f63",
       "mode": "100644"
     },
     "lab/asterisk/test_runtime_timing.py": {
-      "sha256": "ee6aba3f34acc9e5e7cc18bd70d9bace906682ccacebe0224ee596cbd5c6a10e",
+      "sha256": "9c8191e72b5a937a08ed321124932e92e9c18577a0405c798a46ddb74bab9632",
       "mode": "100644"
     },
     "lab/asterisk/test_rx_transport_notifications.py": {
-      "sha256": "23eedd160a261f52c71ee9700687242794cb3bb710b2994df7e5c922430fe261",
+      "sha256": "dc716c3e86c5b2a10427abb74caa702158152229cd7f98384a1a31c9ed59640e",
       "mode": "100644"
     },
     "lab/asterisk/test_serial_bridge.py": {
-      "sha256": "03e03922dc43d8ee30f99137a115133c35a0753cd63ffd9f42519b968e4314f6",
+      "sha256": "a7ba3ea74d18febbe37fbf661153a887e3c369df75e75318ebd1f6100e5bada4",
       "mode": "100644"
     },
     "lab/asterisk/test_serial_port.py": {
-      "sha256": "dc74fc2d79a5fd658ff0eb8881bb216c6a6973211786d68ff04677d56359a972",
+      "sha256": "457b515922c63cb96a580904ac56ffb9bbe70562d0ebcfddc2e8f0f17e90eea5",
       "mode": "100644"
     },
     "lab/asterisk/test_sip_auth.py": {
-      "sha256": "df8f94834cc9247a9020efec3cdb11a9bf06a2df77f947ded6c1975ad06a20c0",
+      "sha256": "3915934ad8d626d5ae29fd0ae1177df17e5acfdad8383649cb251b61ba812db9",
       "mode": "100644"
     },
     "lab/asterisk/test_sip_uac.py": {
-      "sha256": "be8f5e650ed86bc3ab7b15633024aad5617603e10ebb848fe0855c8b38164a73",
+      "sha256": "e2335f9e0e0242198d4659da3c486d78e2c28fc62a8c304572f5c6519f8359ef",
       "mode": "100644"
     },
     "lab/asterisk/test_sip_uas.py": {
-      "sha256": "d6ad8d581ea2f0fc2352c821cb3d9f48772ac755a0f78535a15226b39916f018",
+      "sha256": "2c67f08997a93b62a3da817e81cdbe552852d7f59726bd657bd0132cca02f797",
       "mode": "100644"
     },
     "packaging/Dockerfile.artifact": {
-      "sha256": "a08aab2204ff139dbd09456e4fb4c6c09d1ebbe5b0a323108218efb57f8a5e37",
+      "sha256": "260f76e50a4bc5a6b9efa09e848972dc58b7041059c147aaaf8f98f2ae2b334a",
       "mode": "100644"
     },
     "packaging/Dockerfile.artifact.bookworm": {
-      "sha256": "d82ee8d1e583c22badc36c773294e79fcabe2fe1150ee536b6fdbf77d505219c",
+      "sha256": "d653845e5a19af3ade1c531d3d11bacb64dca808b69adec8626b327bbc01209b",
       "mode": "100644"
     },
     "packaging/Dockerfile.artifact.test": {
-      "sha256": "14befc29a50896b90309ea354daa2b6a41c21ae596e4fe4abba9684229869a28",
+      "sha256": "1abed3c4133f045251c58d2400dc391d4263879a5e93b155e4930ea6343beecf",
       "mode": "100644"
     },
     "packaging/Dockerfile.build": {
-      "sha256": "4161363a9fe8a0fd0f741b133e3bad7c6465e7a131884180105bea7313c8208f",
+      "sha256": "750c030c739113818adf0b3c5ea1ead3a7707221abaeb46f974f50e706010929",
       "mode": "100644"
     },
     "packaging/Dockerfile.lto-libpython": {
-      "sha256": "fbc1eca1905e00fd04881fa8896adb1864435ff858192e9b1fd6a94c15b605f5",
+      "sha256": "1d809bbf6eadec0be1b8b075302a7e374e8d4ea673d699203bf7a9627845c945",
       "mode": "100644"
     },
     "packaging/Dockerfile.native": {
-      "sha256": "e6077e2a97eb61eee291677a9e149fc067fc129f5f0bae836f515aba1d20661d",
+      "sha256": "fa49f564e43742d77219c3a2888a8eb14a8481d716bcbc6e22732a4c3a10efdc",
       "mode": "100644"
     },
     "packaging/Dockerfile.optimized-libpython": {
-      "sha256": "dcc424270afd7158f56547cd4d315d5bebd76055b9e13c3ff4ab3f29596f016b",
+      "sha256": "1c50735c0a13b7973dbd30593fb6d89557b8f2c4c79c78f7f9e00af09c3a6e0f",
       "mode": "100644"
     },
     "packaging/assemble_candidate.py": {
-      "sha256": "a5fafa6e85f11944a973d161b8d7f6c5555313ca88a84b9f82ee4da0bf9e0479",
+      "sha256": "57c4de527594b822f0650415bd80d24e597d59d6630eab49a9208f3f3709c7e8",
       "mode": "100644"
     },
     "packaging/audit_native_links.py": {
-      "sha256": "7170fb9a0b6b8d54d7db69cdfb6130d9b9115cc8e9c0f5f5734b60fbe927d535",
+      "sha256": "df085dfa642013bf44c834b5efc04614c6b8378b1bcdf0fd666096f692ca25c1",
       "mode": "100644"
     },
     "packaging/audit_python_static.py": {
-      "sha256": "bdd1df43d71d6e706d96727552d2aac85af8433ffad99d4691cd2ab181f27ace",
+      "sha256": "ac7fc28f70a3393c59e8d0226bca5ec4ec06fc1016505dd69f64fe0dc1b97ac0",
       "mode": "100644"
     },
     "packaging/audit_v32_tables.py": {
-      "sha256": "48c1edd396ff935e46142b4a78a61ab40bb67d707de542deb42e839ee613e516",
+      "sha256": "90f6f9cecac6c07322d6c63d0003aa93a36c0da11811acf154268f87fb57f4c6",
       "mode": "100644"
     },
     "packaging/build.sh": {
-      "sha256": "3368dfcc202298619d40ebe1ce2394b5c0d54792247ea02d984c239cbb7a0ab4",
+      "sha256": "2bdc00d7a1d45082d379935d0f0143c2f0e45068fc2631fc1bef6572e2284aa8",
       "mode": "100755"
     },
     "packaging/build_with_lineage.py": {
-      "sha256": "4ac9a2f1894af26741bde0c53b658d65cd3b1cc27b673b6b1e8f86c31ceff247",
+      "sha256": "78bdbac9f89dd3d8dde3cf1b3aab1a1054235a8563bcceefdf91b568ee38079f",
       "mode": "100644"
     },
     "packaging/candidate_transport.py": {
-      "sha256": "3f75448b4e5c57b13e22516e77978f098d02c2581be2ff66024e742435640211",
+      "sha256": "796b882d5886b951f8df60245dcdd98287cb7ed4ea6285a499933e00b42a4e20",
       "mode": "100644"
     },
     "packaging/collect_binary_sources.py": {
-      "sha256": "458b778b054a30156b05b7aab6181e13d5504fe71672af0d9d25dba60d02af97",
+      "sha256": "760349b68e209ed5655a0b1224dc2a83c22b1295fbcba5b70bd8b79df44faea4",
       "mode": "100644"
     },
     "packaging/collect_source_notices.py": {
-      "sha256": "0080ad437feed5d300d76463141c07cdddcd8813bbe3a8f4220667d0e01fcdb7",
+      "sha256": "25ef8da776657643fde67bb5e996ae754576e94278eb9f01c6de70b880785ae1",
       "mode": "100644"
     },
     "packaging/com0com/README.md": {
@@ -1393,23 +1393,23 @@
       "mode": "100644"
     },
     "packaging/diagnose_python_runtime.py": {
-      "sha256": "7406d9c43d71808e63c590a53a8a0ec7da56f038cdd3af4611079a782671a004",
+      "sha256": "22faab04f362482f86fc36ea55f1765fc2493647b9b3c669fe970d266a25d54c",
       "mode": "100644"
     },
     "packaging/el_modem.spec": {
-      "sha256": "7e14b76e38411a42506197e11d16884834ef92a343487573863ca59b7424cf23",
+      "sha256": "ada0ed57e5550ece23ba703635726884db0f829f4f03f99b56eb693fec1829e6",
       "mode": "100644"
     },
     "packaging/inventory_binary.py": {
-      "sha256": "360e081d762004c1c0b1506ce25afea18ad45361a47dfc47da8c858a21f9c1fa",
+      "sha256": "d09b563aee488c49e5b28e5afaabc93ecc4c14c9d37522192fd167a19bd1de8e",
       "mode": "100644"
     },
     "packaging/inventory_portable.py": {
-      "sha256": "a527385951ff2f6ab9da7b36a1dd1fc2e5c1d7942e8a4612c601a3b53faa22ee",
+      "sha256": "c1099a11dce68d21b397b5384ccd6a46060b64108382a419d9ed8b94605cf79a",
       "mode": "100644"
     },
     "packaging/native_runtime.py": {
-      "sha256": "1ed3f640439f9a2f80b98785f078d75500d862ff62675fea9ef333ca89d4c982",
+      "sha256": "04429b6187261ecf1fc52db77a8483ead4ab66d6eda7b9d14609fadff4ab4bf8",
       "mode": "100644"
     },
     "packaging/package_native_candidate.py": {
@@ -1417,71 +1417,71 @@
       "mode": "100644"
     },
     "packaging/public_manifest.py": {
-      "sha256": "aa958c01ca7d8d85f309d80ba051eda38a2f1105200fabfd8c403859caca365d",
+      "sha256": "2e1704fdeeefba1e4a923b4cb776df7c4ee4c55e690cc6f6b6976b13c074504d",
       "mode": "100644"
     },
     "packaging/python_component_notices.py": {
-      "sha256": "b5c284a5b18f35a6df3604a706871aebcf6a5ddade75ddeeeef44857899a6b07",
+      "sha256": "f724245b2d1f3517d9ecba67ddb67c5b69ba3c812647fdd2a3ee2a6236c9a7b8",
       "mode": "100644"
     },
     "packaging/qualify_controls.py": {
-      "sha256": "66656fee6e5b3c7d8fa91d1ed0c1a7ef8c795ba47e7ebb95d93921caec2c39f6",
+      "sha256": "7461864d3863fd0d5af5f1e73bb4f31a3131d63817a2efe684ccf52e661fd6af",
       "mode": "100644"
     },
     "packaging/qualify_instances.py": {
-      "sha256": "1eddf10219de70f01333c90db58b70bbe2d82b1d11f5eef6d5a076324d3eace7",
+      "sha256": "866e6c7ef1fade6debf56701cea69c084afe474edaf978e97b04ad46c3935b8c",
       "mode": "100644"
     },
     "packaging/qualify_pty_terminal.py": {
-      "sha256": "8066e91dde82800a8dfc91773c5587badec6c697c761ed77c97a8338ab617cf3",
+      "sha256": "fc815d73060be48bf14a509f8fc0cfdc77eb7e6381947c5a9319f69e8d023d93",
       "mode": "100644"
     },
     "packaging/qualify_tui.py": {
-      "sha256": "c992a847fbea94ea6bdccde77def14d777799d7415b89ff0f2cfa943532bc085",
+      "sha256": "65b68b501af3c4a33d275294584e34de5f30968ce3aa0bfd2bad20636f24efb9",
       "mode": "100644"
     },
     "packaging/runtime_requirements.py": {
-      "sha256": "9291398760d84411e6795088932f4415bfdcaf521ba8bcee2113b749da004c46",
+      "sha256": "624476d8a165b4024ede5639d482b608bdb2119a21da9fee7043e051b3055020",
       "mode": "100644"
     },
     "packaging/serial/COPYING": {
-      "sha256": "189b1af95d661151e054cea10c91b3d754e4de4d3fecfb074c1fb29476f7167b",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
       "mode": "100644"
     },
     "packaging/serial/README.md": {
-      "sha256": "9200ea1cd8b38a3f89a30b527e92a5b95ad1ecb593e2a5888d06da58ea005cf2",
+      "sha256": "13bc9d7a07b0cd9739425cbfcb3c1411d5b1a300db6c530f5eb006bb56514644",
       "mode": "100644"
     },
     "packaging/serial/build-driver.sh": {
-      "sha256": "4b4f04c459f405868eff81f2527756dee843ba5c5dee3d6e193efd2bf3c21b6f",
+      "sha256": "6ca23afca9a1009c75685a3c8deda6ed037b36c7a6d9b1aa6d32978868ab7a9e",
       "mode": "100755"
     },
     "packaging/serial/serialsim-flow.patch": {
-      "sha256": "100cd1982fd826c5d271c0026831fae1e62a62c1f6849d46c888bbafaf0b8e0a",
+      "sha256": "4c86654236f75cd82179b219226774fd1051b9e3e87a11b6dace99e19f22f114",
       "mode": "100644"
     },
     "packaging/smoke.py": {
-      "sha256": "da05bcc6e9af5417ab53d470283957bc564202aee7e583bf19bd05e3166bc7f0",
+      "sha256": "469fa4a239ae4f0523a45ced08ab5c0e4848c6173b068907fcd74f975bf7df5c",
       "mode": "100644"
     },
     "packaging/smoke_desktop.py": {
-      "sha256": "e5c256cba7a2327570ee8da96daef53dd6075ec1efab1c0e3313d8880e59e28e",
+      "sha256": "28796a24e3be8036e67d262b55be4d2988f2c97bade660f14f2012cc8036fc26",
       "mode": "100644"
     },
     "packaging/test_build_with_lineage.py": {
-      "sha256": "52a96c659b4b2538d367f7b32938378b8749a51bf4d3eb8391224735d33bf1af",
+      "sha256": "5e8b54b83eb78fca848f220a140dfa95fb4083ff9c8773ea5499bc53119cae2b",
       "mode": "100644"
     },
     "packaging/test_candidate_transport.py": {
-      "sha256": "69b04146db604dffdcfb2db9ebd851137db8f07893c9f72429dbe958a430ce67",
+      "sha256": "cbf855cd5aff2414d4a325b26ad05067d6db31a72f228e90037a37f968fd4b96",
       "mode": "100644"
     },
     "packaging/test_inventory_portable_classify.py": {
-      "sha256": "42f1d516f57f025aa8c410114ed883b08381949eee3f44cfc4dbe1f97d047b7d",
+      "sha256": "f465b69d368a3f603a087a7f058640b6832603d52be3c735953345b6696d0ec2",
       "mode": "100644"
     },
     "packaging/test_native_runtime.py": {
-      "sha256": "6f3da0d940ae0997e58e86e67496a018a9346244d52f29b4ff17baab84d43112",
+      "sha256": "b092445d54693a9d35c481cc835f0564b9e1704abdafd445c037100df64de907",
       "mode": "100644"
     },
     "packaging/test_package_native_candidate.py": {
@@ -1489,15 +1489,15 @@
       "mode": "100644"
     },
     "packaging/test_public_manifest.py": {
-      "sha256": "f153d95b7d990c5d32380275a028714d3171877e323ccbcc68b614e295a6aad6",
+      "sha256": "1626ea8f41fb6342a9c06974ced89ab4153f0c9d062f0acb1cc88a261866a974",
       "mode": "100644"
     },
     "packaging/test_python_component_notices.py": {
-      "sha256": "ea74ffd3f486a2b26f54487727f8b1f5af83fc9fde27d1aedd7cd61d4bec92e6",
+      "sha256": "ae408e5b3160e3f5e6a57f4e08098c164dc436ac52ea0c204acff7ae09a77a2b",
       "mode": "100644"
     },
     "packaging/test_runtime_requirements.py": {
-      "sha256": "5256ea388b86b1dfad4cf28a3261e9e77a096b3dd9fd9a5e0a2c3370ff701911",
+      "sha256": "ea00d2fc53e094867da37ce8dfcf1d4271b8b1530310ac1b703788be56a266e2",
       "mode": "100644"
     },
     "packaging/third-party/CPython-SHA3.LICENSE": {
@@ -1505,27 +1505,27 @@
       "mode": "100644"
     },
     "packaging/verify_binary_sources.py": {
-      "sha256": "f7b7554ca66abaa01c0640a761e799d23802b20087b4df2a0d164d0ea893de39",
+      "sha256": "0452a909a2d5ed3c6bdb25e0926de56bc9bf9f8a800790dc858526366e47f33c",
       "mode": "100644"
     },
     "packaging/windows/build_installer.ps1": {
-      "sha256": "75ffb5799b897c3fa691ed624768187883d52fd1d58dc70d02eb67d4398bb4f5",
+      "sha256": "88e809fd885393034da9cba62f7eb7dc2a10d6a5b0204da6030214a1cbfc2b5c",
       "mode": "100644"
     },
     "packaging/windows/cleanup_com_driver.ps1": {
-      "sha256": "8d07ef578cfbea2050ad315c05f1f4a77412e004d953f9586c9bd75b9588ba26",
+      "sha256": "79f84f554bf382c32138499168317aff5964ae6c5efeee5466855b2f19956a0d",
       "mode": "100644"
     },
     "packaging/windows/el-modem.iss": {
-      "sha256": "77d62acaaa0280e6b287ee36c0be471c623e55791671a677d6f98ba720b4b9a9",
+      "sha256": "7da8964e5e3f9e6fbad5451c85fc7db3d98e68b8de25473499223c02acb97814",
       "mode": "100644"
     },
     "packaging/windows/probe_com_driver.ps1": {
-      "sha256": "8da5767d71fb8360fde05cbcd4ccf55ea38bf2aa5a2edd6faa690d064c17ea4c",
+      "sha256": "2b54f838d27313e2d8f3f0341909f83539d21d0aa28c87c1a693a5b256d0cac3",
       "mode": "100644"
     },
     "packaging/windows/qualify_com_terminal.py": {
-      "sha256": "11c06e1907a84fec5dd429647eae031a2bf9b9899f57f3d933b4a87216f820a4",
+      "sha256": "3e7e6ba7f05337b051f0eade80b2caafd72020c35ee4ca3d1556bc1301cf66aa",
       "mode": "100644"
     }
   },
