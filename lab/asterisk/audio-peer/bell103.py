@@ -82,15 +82,57 @@ class Bell103StreamTransmitter:
     fixed payload chosen up front. Used for live online-data-mode calls
     where terminal bytes arrive asynchronously."""
 
-    def __init__(self, role: str, baud: float = BAUD, standard: str = "bell103"):
+    def __init__(self, role: str, baud: float = BAUD, standard: str = "bell103",
+                 guard_hz: float = 0.0, guard_amp: float = 0.0,
+                 v25_answer: bool = False, calling_tone: int = 0):
+        """`guard_hz`/`guard_amp` add a continuous guard tone (ITU-T V.21
+        1800 Hz answer-station tone, which disables echo suppressors on
+        international circuits). Bell 103 has no guard tone; pass none.
+        `v25_answer` prefixes the V.25 answer prologue (answer role only):
+        2.0 s billing silence, 3.3 s of 2100 Hz with 180-degree reversals
+        every 450 ms (echo-canceller disabling), 75 ms silence, then the
+        normal modulated carrier.
+        `calling_tone` (originate role only, opt-in like the commercial `^`
+        dial modifier) prefixes that many V.25 calling-tone bursts — 1300 Hz
+        for 0.6 s, silence for 1.75 s — then the normal mark idle. Like the
+        commercial toggle it is off unless asked."""
         FREQUENCIES = STANDARDS[standard]
         if role not in FREQUENCIES:
             raise ValueError(f"unknown Bell 103 role: {role}")
         if baud <= 0:
             raise ValueError("baud rate must be positive")
+        if v25_answer and role != "answer":
+            raise ValueError("the V.25 answer prologue is answer-role only")
+        if calling_tone and role != "originate":
+            raise ValueError("the V.25 calling tone is originate-role only")
+        if v25_answer and calling_tone:
+            raise ValueError("answer prologue and calling tone are exclusive")
         self.baud = baud
         self.mark_hz, self.space_hz = FREQUENCIES[role]
         self.phase = 0.0
+        self.guard_hz, self.guard_amp = guard_hz, guard_amp
+        self._guard_phase = 0.0
+        self._prologue: list[int] = []
+        if v25_answer:
+            self._prologue.extend([0] * int(2.0 * SAMPLE_RATE))
+            phase = 0.0
+            tone_len = int(3.3 * SAMPLE_RATE)
+            flip_every = int(0.45 * SAMPLE_RATE)
+            for i in range(tone_len):
+                if i and i % flip_every == 0:
+                    phase += math.pi
+                self._prologue.append(round(12000 * math.sin(phase)))
+                phase = (phase + 2.0 * math.pi * 2100.0 / SAMPLE_RATE) % (2.0 * math.pi)
+            self._prologue.extend([0] * int(0.075 * SAMPLE_RATE))
+            self._prologue_index = 0
+        if calling_tone:
+            phase = 0.0
+            for _ in range(calling_tone):
+                for _ in range(int(0.6 * SAMPLE_RATE)):
+                    self._prologue.append(round(12000 * math.sin(phase)))
+                    phase = (phase + 2.0 * math.pi * 1300.0 / SAMPLE_RATE) % (2.0 * math.pi)
+                self._prologue.extend([0] * int(1.75 * SAMPLE_RATE))
+            self._prologue_index = 0
         self._bit_queue: deque[bool] = deque()
         self._current_bit = True  # idle = continuous mark
         self._samples_per_bit = SAMPLE_RATE / baud
@@ -107,9 +149,20 @@ class Bell103StreamTransmitter:
 
     def samples(self, count: int) -> list[int]:
         output: list[int] = []
-        for _ in range(count):
+        prologue = getattr(self, "_prologue", None)
+        if prologue:
+            take = min(count, len(prologue) - self._prologue_index)
+            output.extend(prologue[self._prologue_index:self._prologue_index + take])
+            self._prologue_index += take
+        for _ in range(count - len(output)):
             frequency = self.mark_hz if self._current_bit else self.space_hz
-            output.append(round(12000 * math.sin(self.phase)))
+            value = 12000 * math.sin(self.phase)
+            if self.guard_amp:
+                value += self.guard_amp * math.sin(self._guard_phase)
+                self._guard_phase = (self._guard_phase + 2.0 * math.pi * self.guard_hz / SAMPLE_RATE) % (
+                    2.0 * math.pi
+                )
+            output.append(round(value))
             self.phase = (self.phase + 2.0 * math.pi * frequency / SAMPLE_RATE) % (
                 2.0 * math.pi
             )
@@ -190,6 +243,15 @@ class Bell103Receiver:
                 self._targets = []
             tone = self._classify()
             if tone is None:
+                # Silence breaks tone continuity: retime from here so a later
+                # mark→space edge is measured from the true mark onset, not
+                # from a stale pre-silence timestamp. Without this, classifier
+                # chatter on a silence→mark edge false-triggers a frame on a
+                # huge stale hold, wedging the framer through the first real
+                # character (seen after the V.25 post-tone silence).
+                if tone != self._last_tone:
+                    self._last_tone = tone
+                    self._tone_start_index = center
                 continue
             if self._frame_start is not None:
                 for bit_index, target in enumerate(self._targets):
