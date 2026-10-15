@@ -1249,12 +1249,12 @@ class AtDce:
 
     def software_flow_control_enabled(self) -> bool:
         """&K2/4/5/6 select (some variant of) XON/XOFF software flow
-        control, which is the only flow-control mechanism this project can
-        actually enforce: a bare Linux PTY has no hardware modem-control
+        control. On a bare Linux PTY there are no hardware modem-control
         lines (TIOCMGET/TIOCMSET both fail with ENOTTY on master and slave
         alike -- confirmed experimentally), so &K1/3 (RTS/CTS) are accepted
         without error for terminal-program compatibility but have no
-        enforceable effect here."""
+        enforceable effect there. The driver and COM backends drive real
+        CTS/RTS lines, so &K1/3 are enforceable on those backends."""
         return self.flow_control in (2, 4, 5, 6)
 
     def connect_result_text(self) -> str:
@@ -2308,7 +2308,7 @@ def run_pty(
             104: sip_register or "", 105: caller_number or "", 106: sip_contact_host or "",
         }
         dce.load_profiles(profile_file)
-        dce.terminal_kind = "TCP" if serial_tcp else "PTY"
+        dce.terminal_kind = "TCP" if serial_tcp else ("COM" if getattr(ser, "is_com", False) else "PTY")
         dce.config_lines = [
             f"SERIAL: {ser.name}",
             f"LINE MODE: {line_mode.upper()}" + (f" V.22 {v22_rate}" if line_mode == "v22bis" else ""),

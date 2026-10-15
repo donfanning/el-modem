@@ -33,7 +33,7 @@ def assemble(executable,root,reports,notices,output,target,version,revision):
         if path.is_symlink() or not path.is_file():raise ValueError('regular explicit package file required: '+str(path))
         files[name]=path.read_bytes()
     add('el-modem.exe' if actual.startswith('windows') else 'el-modem',executable)
-    for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','docs/REDISTRIBUTION.md','packaging/serial/README.md','packaging/serial/build-driver.sh','packaging/serial/serialsim-flow.patch','packaging/serial/COPYING'):add(name,root/name)
+    for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','docs/REDISTRIBUTION.md','packaging/serial/README.md','packaging/serial/build-driver.sh','packaging/serial/serialsim-flow.patch','packaging/serial/COPYING','packaging/com0com/README.md'):add(name,root/name)
     for path in sorted(reports.glob('*')):
         if path.is_file():add('qualification/'+path.name,path)
     for path in sorted(notices.rglob('*')):
@@ -45,8 +45,10 @@ def assemble(executable,root,reports,notices,output,target,version,revision):
         'Run el-modem (el-modem.exe on Windows) in a terminal for the dashboard.\n'
         'Linux defaults to the separately installed serialsim driver; use\n'
         '--serial-backend pty or tcp if that driver is unavailable. macOS\n'
-        'defaults to PTY; Windows defaults to TCP and needs a separate virtual\n'
-        'COM/TCP bridge for COM applications. No virtual COM driver is bundled.\n'
+        'defaults to PTY; Windows defaults to TCP, with an optional native\n'
+        'COM backend (--serial-backend com) against a separately installed\n'
+        'com0com pair, or a virtual COM/TCP bridge for COM applications.\n'
+        'No virtual COM driver is bundled.\n'
         'Configure SIP in the dashboard/Hayes settings; no accounts supplied.\n'
         'LAPM is enabled, compression/echo cancellation disabled. IAX calling\n'
         'is not implemented. Windows/macOS binaries are not developer-signed\n'

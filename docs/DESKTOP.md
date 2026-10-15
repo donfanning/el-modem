@@ -9,6 +9,8 @@ el-modem --headless --modems 4
 ```
 
 Linux full serial support needs the [serial driver prerequisite](../packaging/serial/README.md).
+Windows full serial support needs the [com0com prerequisite](../packaging/com0com/README.md)
+with `--serial-backend com` and an explicit `--serial-device`.
 For explicit alternatives, use `--serial-backend pty` or `--serial-backend tcp`
 when creating instances. These do not provide full hardware modem signals.
 Driver failure is reported rather than silently changing the serial interface.

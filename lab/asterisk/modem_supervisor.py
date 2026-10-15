@@ -22,13 +22,21 @@ class ModemSpec:
     media_port: int = 16000
     serial: str = field(default_factory=default_backend)
     serial_port: int = 9100
+    serial_device: str = ''
+    serial_baud: int = 115200
     enabled: bool = True
 
     def validate(self):
         import re
         if not re.fullmatch(r'modem-[1-9][0-9]*',self.id): raise ValueError('invalid modem ID')
         if not self.name or len(self.name)>80 or any(ord(c)<32 for c in self.name): raise ValueError('invalid modem name')
-        if self.serial not in ('driver','pty','tcp'): raise ValueError('unknown serial backend')
+        if self.serial not in ('driver','pty','tcp','com'): raise ValueError('unknown serial backend')
+        if self.serial=='com':
+            from modem_serial_com import normalize_com_device, BAUD_MINIMUM, BAUD_MAXIMUM
+            try: normalize_com_device(self.serial_device)
+            except ValueError: raise ValueError('invalid COM device (expected COMn, e.g. COM42)')
+            if isinstance(self.serial_baud,bool) or not isinstance(self.serial_baud,int) or not BAUD_MINIMUM<=self.serial_baud<=BAUD_MAXIMUM:
+                raise ValueError('invalid serial baud (expected %d..%d)' % (BAUD_MINIMUM, BAUD_MAXIMUM))
         for value in (self.sip_port,self.media_port,self.serial_port):
             if isinstance(value,bool) or not isinstance(value,int) or not 1<=value<=65535: raise ValueError('invalid port')
         for host in (self.sip_host,self.media_host): socket.inet_aton(host)
@@ -46,6 +54,7 @@ class Supervisor:
             self.specs=[ModemSpec(**s).validate() for s in data['modems']]
         self.validate()
     BOOT = {'instance.name':'name','serial.backend':'serial','serial.tcp_port':'serial_port',
+            'serial.device':'serial_device','serial.baud':'serial_baud',
             'sip.bind_host':'sip_host','sip.bind_port':'sip_port','sip.media_host':'media_host','sip.media_port':'media_port'}
     def effective(self, spec):
         from dataclasses import replace
@@ -54,7 +63,7 @@ class Supervisor:
         if profile.exists():
             saved=json.loads(profile.read_text()).get('profiles',{}).get('0',{}).get('extended_settings',{})
             for name,key in self.BOOT.items():
-                if name in saved: changes[key]=int(saved[name]) if key.endswith('port') else saved[name]
+                if name in saved: changes[key]=int(saved[name]) if key.endswith(('port','baud')) else saved[name]
         return replace(spec,**changes).validate()
     def configure(self, spec, changes):
         from dataclasses import replace
@@ -90,6 +99,10 @@ class Supervisor:
                 key=('tcp',spec.serial_port)
                 if key in ports: raise ValueError('colliding serial ports')
                 ports.add(key)
+            if spec.serial=='com':
+                key=('com',spec.serial_device.strip().upper())
+                if key in ports: raise ValueError('colliding serial devices')
+                ports.add(key)
     def acquire(self):
         self.path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
         self.lock=open(str(self.path)+'.lock','a+b')
@@ -104,12 +117,15 @@ class Supervisor:
         except OSError:
             self.lock.close();self.lock=None; raise ValueError('configuration is already owned by another supervisor')
     def save(self): self.validate(); atomic_json(self.path,dict(schema=1,modems=[asdict(s) for s in self.specs]))
-    def add(self, name=None, serial=None):
+    def add(self, name=None, serial=None, device='', baud=115200):
         serial=serial or default_backend()
+        if serial=='com' and not str(device or '').strip():
+            raise ValueError('com backend needs an explicit serial device (e.g. COM42); create the instance in the TUI or pass --serial-device')
         taken={s.id for s in self.specs}; number=1
         while f'modem-{number}' in taken or (self.root/f'modem-{number}').exists(): number+=1
         spec=ModemSpec(f'modem-{number}',name or f'Modem {number}',sip_port=5060+number*2,
-                       media_port=15996+number*4,serial_port=9099+number,serial=serial).validate()
+                       media_port=15996+number*4,serial_port=9099+number,serial=serial,
+                       serial_device=str(device or '').strip(),serial_baud=baud).validate()
         self.specs.append(spec)
         try: self.save()
         except BaseException: self.specs.remove(spec); raise
@@ -128,6 +144,13 @@ class Supervisor:
             with socket.socket(socket.AF_INET,kind) as probe: probe.bind((host,port))
         if spec.serial=='driver' and not os.access('/dev/ttyPipe',os.R_OK|os.W_OK):
             raise ValueError('serial driver unavailable: install the documented serialsim prerequisite and device permissions, or explicitly choose PTY/TCP')
+        if spec.serial=='com':
+            if sys.platform!='win32':
+                raise ValueError('COM serial backend requires Windows; choose PTY/TCP')
+            from modem_serial_com import probe_device
+            try: probe_device(spec.serial_device)
+            except (OSError, ValueError) as exc:
+                raise ValueError('COM port unavailable: %s' % exc)
         document=dict(spec=asdict(spec),directory=str(directory.resolve()))
         argv=([sys.executable] if getattr(sys,'frozen',False) else
               [sys.executable,str(Path(__file__).with_name('el_modem.py'))])
