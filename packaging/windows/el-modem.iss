@@ -77,7 +77,7 @@ var
   { Set to '1' when the user declines the test-signed driver. A variable, not a
     constant: Pascal Script cannot assign to a const, and ISCC reports that as an
     opaque 'Internal error (20)'. }
-  WizardNoDriver: String = '0';
+  WizardNoDriver: String;
 
 function VCRuntimeCurrent: Boolean;
 var
@@ -234,7 +234,7 @@ end;
 
 { Removing the test certificate is the point of uninstalling: while it is
   trusted, this machine accepts anything signed with it. Runs before Inno
-  deletes {app}, because the script lives there. }
+  deletes the install directory, because the script lives there. }
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ResultCode: Integer;
