@@ -102,6 +102,18 @@ def factories(session_type, dispatch, dce_type):
     return rows
 
 
+def transmitter_idle(transmitter) -> bool:
+    """True once the transmitter has nothing queued, prologue included.
+
+    pending() reports queued bits only, so it cannot see an undrained
+    Bell 103 prologue on its own.
+    """
+    prologue = getattr(transmitter, '_prologue', None)
+    if prologue and transmitter._prologue_index < len(prologue):
+        return False
+    return not transmitter.pending()
+
+
 def payload_exchange(session_type, options_a, options_b, expected, limit_seconds=60):
     """Exact byte gate on the production session's PCM adapters, no UDP."""
     sessions = []
@@ -123,8 +135,14 @@ def payload_exchange(session_type, options_a, options_b, expected, limit_seconds
             ga.extend(a._receive_pcm(pcm_a)); gb.extend(b._receive_pcm(pcm_b))
             a.poll(a._created + tick / 50); b.poll(b._created + tick / 50)
             if not sent and tick >= 50 and a.negotiation_complete and b.negotiation_complete:
-                a.transmitter.feed_bytes(da); b.transmitter.feed_bytes(db)
-                sent = True
+                # Only feed once the handshake has finished going out. The
+                # answerer's Bell 103 prologue is still being transmitted for a
+                # while after negotiation completes, and those bytes would
+                # otherwise be decoded ahead of the payload and fail this gate.
+                if transmitter_idle(a.transmitter) and transmitter_idle(b.transmitter):
+                    del ga[:]; del gb[:]
+                    a.transmitter.feed_bytes(da); b.transmitter.feed_bytes(db)
+                    sent = True
             if sent and len(ga) >= len(db) and len(gb) >= len(da):
                 break
         if bytes(ga) != db or bytes(gb) != da:

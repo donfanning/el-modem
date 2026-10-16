@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "e59d8a8eddde5bb77c450b4d2b8e33eb692a9a8d",
+  "public_base_revision": "d5b548514fba0332888ebab331684228b55dbb33",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -1185,7 +1185,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_selftest.py": {
-      "sha256": "f659a7569d249fb9201e837756401b1d9eb94ae2930fd2f663a4d931a1dfc25a",
+      "sha256": "09a4186169026cf7b487f2ced338f1ce2bfb54eb267af52cd9b5f17337e5d9c0",
       "mode": "100644"
     },
     "lab/asterisk/modem_serial.py": {
