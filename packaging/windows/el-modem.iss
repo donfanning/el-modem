@@ -49,6 +49,11 @@ Source: "{#SourceDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\MANIFEST.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\third-party\*"; DestDir: "{app}\third-party"; Flags: ignoreversion recursesubdirs createallsubdirs
+; The signed driver payload and the scripts that install and remove it.
+; The signing key is NOT here: only the public .cer ever ships.
+Source: "{#DriverDir}\*"; DestDir: "{app}\driver"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "install_driver.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "uninstall_driver.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#SourceDir}\qualification\*"; DestDir: "{app}\qualification"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Dirs]
@@ -56,9 +61,6 @@ Source: "{#SourceDir}\qualification\*"; DestDir: "{app}\qualification"; Flags: i
 ; signing key is NOT here: only the public .cer ever ships. The directory is
 ; always created; install_driver.ps1 reports clearly when there is no payload.
 Name: "{app}\driver"
-Source: "{#DriverDir}\*"; DestDir: "{app}\driver"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "install_driver.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "uninstall_driver.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 ; El-Modem is a terminal application: the shortcut opens it in a console window.
