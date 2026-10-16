@@ -1,8 +1,4 @@
-"""Driver-backed modem serial endpoint and explicit legacy adapters.
-
-Windows native COM lives in modem_serial_com.py (same interface plus real
-modem-control lines); this module keeps the Linux driver and the
-PTY/TCP legacy adapters."""
+"""Driver-backed modem serial endpoint and explicit legacy adapters."""
 import array
 import os
 import select

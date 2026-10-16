@@ -2,6 +2,10 @@
 
 Run after probe_com_driver.ps1 on a disposable runner. Downloads third-party
 programs to temporary storage; publishes only transcripts and identity reports.
+
+com0com-specific: this exercises the third-party virtual COM pair from the
+historical qualification run, not the bundled El-Modem virtual-COM driver (see
+docs/WINDOWS_DRIVER.md). The COM41/COM42 pair comes from probe_com_driver.ps1.
 """
 import hashlib
 import json

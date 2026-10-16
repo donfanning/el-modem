@@ -30,11 +30,17 @@ class ModemSpec:
         import re
         if not re.fullmatch(r'modem-[1-9][0-9]*',self.id): raise ValueError('invalid modem ID')
         if not self.name or len(self.name)>80 or any(ord(c)<32 for c in self.name): raise ValueError('invalid modem name')
-        if self.serial not in ('driver','pty','tcp','com'): raise ValueError('unknown serial backend')
+        if self.serial not in ('driver','pty','tcp','com','pipe'): raise ValueError('unknown serial backend')
         if self.serial=='com':
             from modem_serial_com import normalize_com_device, BAUD_MINIMUM, BAUD_MAXIMUM
             try: normalize_com_device(self.serial_device)
-            except ValueError: raise ValueError('invalid COM device (expected COMn, e.g. COM42)')
+            except ValueError: raise ValueError('invalid COM device (expected COMn, e.g. COM3)')
+            if isinstance(self.serial_baud,bool) or not isinstance(self.serial_baud,int) or not BAUD_MINIMUM<=self.serial_baud<=BAUD_MAXIMUM:
+                raise ValueError('invalid serial baud (expected %d..%d)' % (BAUD_MINIMUM, BAUD_MAXIMUM))
+        if self.serial=='pipe':
+            from modem_serial_pipe import normalize_pipe_name, BAUD_MINIMUM, BAUD_MAXIMUM
+            try: normalize_pipe_name(self.serial_device)
+            except ValueError: raise ValueError('invalid pipe name (expected \\\\.\\pipe\\ElModemSerial)')
             if isinstance(self.serial_baud,bool) or not isinstance(self.serial_baud,int) or not BAUD_MINIMUM<=self.serial_baud<=BAUD_MAXIMUM:
                 raise ValueError('invalid serial baud (expected %d..%d)' % (BAUD_MINIMUM, BAUD_MAXIMUM))
         for value in (self.sip_port,self.media_port,self.serial_port):
@@ -120,7 +126,11 @@ class Supervisor:
     def add(self, name=None, serial=None, device='', baud=115200):
         serial=serial or default_backend()
         if serial=='com' and not str(device or '').strip():
-            raise ValueError('com backend needs an explicit serial device (e.g. COM42); create the instance in the TUI or pass --serial-device')
+            raise ValueError('com backend needs an explicit serial device (e.g. COM3); create the instance in the TUI or pass --serial-device')
+        if serial=='pipe':
+            # Validate early so a typo surfaces here rather than in the worker.
+            from modem_serial_pipe import normalize_pipe_name
+            normalize_pipe_name(device)
         taken={s.id for s in self.specs}; number=1
         while f'modem-{number}' in taken or (self.root/f'modem-{number}').exists(): number+=1
         spec=ModemSpec(f'modem-{number}',name or f'Modem {number}',sip_port=5060+number*2,
@@ -151,6 +161,16 @@ class Supervisor:
             try: probe_device(spec.serial_device)
             except (OSError, ValueError) as exc:
                 raise ValueError('COM port unavailable: %s' % exc)
+        if spec.serial=='pipe':
+            if sys.platform!='win32':
+                raise ValueError('pipe serial backend requires Windows; choose PTY/TCP')
+            from modem_serial_pipe import probe_device as probe_pipe
+            try:
+                # Name validation only: the driver attaches asynchronously and
+                # may not be running yet, which is not a start-up failure.
+                probe_pipe(spec.serial_device)
+            except (OSError, ValueError) as exc:
+                raise ValueError('pipe unavailable: %s' % exc)
         document=dict(spec=asdict(spec),directory=str(directory.resolve()))
         argv=([sys.executable] if getattr(sys,'frozen',False) else
               [sys.executable,str(Path(__file__).with_name('el_modem.py'))])

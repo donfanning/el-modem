@@ -1,4 +1,10 @@
 # Disposable runner probe only: never enable TESTSIGNING or change code integrity.
+#
+# com0com-specific: this probes the third-party virtual COM pair used by the
+# historical qualification run, not the bundled El-Modem virtual-COM driver
+# (see docs/WINDOWS_DRIVER.md). It deliberately creates its pair on COM41/COM42
+# so it cannot collide with the bundled driver's COM3, and
+# cleanup_com_driver.ps1 keys on those same numbers.
 $ErrorActionPreference = 'Stop'
 $report = Join-Path $PWD 'com-reports'
 New-Item -ItemType Directory -Force $report | Out-Null

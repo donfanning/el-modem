@@ -1,15 +1,9 @@
 {
-  "schema": 2,
-  "baseline_private_source_commit": "a5b014cfb6dc2085673b85acfe21147319d06d14",
-  "public_base_revision": "ec1aa65a11d7973236c298610d63e95fa1c1f426",
-  "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
+  "schema": 1,
+  "source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
   "files": {
     ".gitattributes": {
       "sha256": "c3e420feda67797af3291b1b65c22d905906b2efe63f88e403dc29aa75aaacb0",
-      "mode": "100644"
-    },
-    ".github/workflows/build.yml": {
-      "sha256": "927ae6cc628797197965bf6359466077354bd66b82a02df698a4ee7114ea2543",
       "mode": "100644"
     },
     ".github/workflows/macos-pty.yml": {
@@ -18,10 +12,6 @@
     },
     ".github/workflows/windows-com.yml": {
       "sha256": "d74362498790410c83333bc1b809759852fa03eb978a51944956ac97f7e5a62c",
-      "mode": "100644"
-    },
-    ".gitignore": {
-      "sha256": "20915503efb0f631c1a75f048ed2e5493f02f76a610a9ddbb41260bba38e0940",
       "mode": "100644"
     },
     "CONTRIBUTING.md": {
@@ -40,10 +30,6 @@
       "sha256": "6807223427e898a6efc42bcc4f9b34d0abacb61e4a359cadf1b6519dc967d4e2",
       "mode": "100644"
     },
-    "README.md": {
-      "sha256": "ae7f0db3f477464caad1811ddfada22f570466e356b0a48c1e8b86b85d813e4d",
-      "mode": "100644"
-    },
     "docs/ASTERISK_NAT.md": {
       "sha256": "f17ecc8b830b73ccb1bb95de69c497794b98db4dd379607261f1366672f70f45",
       "mode": "100644"
@@ -53,15 +39,7 @@
       "mode": "100644"
     },
     "docs/DESKTOP.md": {
-      "sha256": "ddc9f48245ff40eedecd14ef6667f67139e5cc4e7da0a434baf4885ba53bb955",
-      "mode": "100644"
-    },
-    "docs/LINUX_QUALIFICATION.json": {
-      "sha256": "69c6118024df0d1b3756cefb12312ef0d9c07bd6e297af2192e526f77816cb2d",
-      "mode": "100644"
-    },
-    "docs/LINUX_QUALIFICATION.md": {
-      "sha256": "17756172a1fed3f164846168b312deed5845abb7d3b10108ecf5fcae3d5c80d7",
+      "sha256": "f07530d833773c527a75f105385cb2750f8fea927b62566c4e68b0ced84f75da",
       "mode": "100644"
     },
     "docs/MACOS_PTY_QUALIFICATION.json": {
@@ -72,24 +50,8 @@
       "sha256": "39e33f2eae60d9aba4b49dd13c0eaf6dc217b6769bc56d7d9a8e1679811e29a7",
       "mode": "100644"
     },
-    "docs/REDISTRIBUTION.md": {
-      "sha256": "dd45611ddeb02224643ea15f65dd6f7c125cc5c4cdbec8a8211bcda80963e197",
-      "mode": "100644"
-    },
-    "docs/RUNTIME_REQUIREMENTS.json": {
-      "sha256": "846d3e9e0fa7a224b5e3bd850d19c153e199c04972d342af0658a959571d4ecc",
-      "mode": "100644"
-    },
-    "docs/RUNTIME_REQUIREMENTS.md": {
-      "sha256": "f4e1c99075d03e4d713dbac82a86ad6519ccabccda595ed95db223f90f7d91be",
-      "mode": "100644"
-    },
     "docs/SERIAL.md": {
-      "sha256": "5ddfa2b90e26ee5a950d941d179d65bd7ccdba2df91b367d4f53f535e3a1f158",
-      "mode": "100644"
-    },
-    "docs/SOURCE_PROVENANCE.md": {
-      "sha256": "684e100b83b93c5d0897e520c55f03cbd21d6f2c231aa4285d417c4cf758ccd9",
+      "sha256": "8ed158435e6e664762651c53a4a38f4489399bd6fcc589c139f7d691db71d93a",
       "mode": "100644"
     },
     "docs/WINDOWS_COM_QUALIFICATION.json": {
@@ -97,7 +59,11 @@
       "mode": "100644"
     },
     "docs/WINDOWS_COM_QUALIFICATION.md": {
-      "sha256": "d4f3d2edccc4f7b423b3793b13a96170764a3c173a50076b2d6155a3efb9c350",
+      "sha256": "ae64d1b8d4e36fad7cf66af8e900057eadef83918fb402e7e898ffc41b1864e8",
+      "mode": "100644"
+    },
+    "docs/WINDOWS_DRIVER.md": {
+      "sha256": "eb197301f3f543c9f412bdc5f72a10e2313d5540985375a3dce309893c5ecf66",
       "mode": "100644"
     },
     "docs/WINDOWS_INSTALLER_QUALIFICATION.json": {
@@ -162,6 +128,10 @@
     },
     "docs/macos-pty-evidence/macos-x86_64/worker.log": {
       "sha256": "01b565a60ed543ff376a51ee456d2ffe121cc42dcca3f35bda9957e452408f78",
+      "mode": "100644"
+    },
+    "docs/windows-com-evidence/README.md": {
+      "sha256": "88757c6b512ed4f92d88a90dda0b42f467bb77693ca66f4bbcee12007e8a0670",
       "mode": "100644"
     },
     "docs/windows-com-evidence/code-integrity.json": {
@@ -1161,7 +1131,7 @@
       "mode": "100644"
     },
     "lab/asterisk/el_modem.py": {
-      "sha256": "23345e904674904c5b69ea8701fb6aef38058af0be47a4590dcffe8e49977cdd",
+      "sha256": "0041d134084b3e690428f3b70bd5015253de5e3af27a318c7a0387aaf0fd1245",
       "mode": "100644"
     },
     "lab/asterisk/host_bridge_e2e.py": {
@@ -1173,7 +1143,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_dce.py": {
-      "sha256": "e6446103d14e920f902530791bb3fc0cde51aac7aab33ea1676358ee8b5aab58",
+      "sha256": "b0b6d44bb8617fd0ea1772e572cf86b1671c9351f278af3e4d77a2a069d47fed",
       "mode": "100644"
     },
     "lab/asterisk/modem_selftest.py": {
@@ -1181,15 +1151,19 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_serial.py": {
-      "sha256": "fbad61aab9bca91abe25e77b619adc66cff5044fe595364cdda4be2d260f073b",
+      "sha256": "5cc1bfa9b83af3d75fe71a4c2dcbd0315b91c04d26d922c536283afe7f5eea77",
       "mode": "100644"
     },
     "lab/asterisk/modem_serial_com.py": {
       "sha256": "a897cb30981bf784f16632c3c48f9ebccf55884f247af476836747ce00ab962d",
       "mode": "100644"
     },
+    "lab/asterisk/modem_serial_pipe.py": {
+      "sha256": "64adbce7f89430f6bfe15d88685e2a35198392b89d3d47d9c6256e1ea8c9de37",
+      "mode": "100644"
+    },
     "lab/asterisk/modem_settings.py": {
-      "sha256": "caa6834e819acc62b95ac3bb2a638630b7e424cf4cc59896c2dacf06d8321650",
+      "sha256": "b7a36e53459c59999883c548c6a5651a78219e31ab35db86698296b893764d8f",
       "mode": "100644"
     },
     "lab/asterisk/modem_storage.py": {
@@ -1197,11 +1171,11 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_supervisor.py": {
-      "sha256": "9968b0fd7ad116f516c731eec02d160dbe0b8037b01574690390585d4a2f0731",
+      "sha256": "984fe4baa3df6f0860c880fd2a2503965989c28e43d0c5b5787a35b7fb2a4472",
       "mode": "100644"
     },
     "lab/asterisk/modem_tui.py": {
-      "sha256": "a33459894d3f5a20f45c4bad10c5634b888bef4edfc4e4ee96d54db382c86b69",
+      "sha256": "8cdb0097b941633e3970a24348aa6514affa2f26cc6625f81cd4a82e3c3c7dd4",
       "mode": "100644"
     },
     "lab/asterisk/pcm_capture.py": {
@@ -1253,7 +1227,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_dce.py": {
-      "sha256": "7f27dd770d4ebb40f370fec3ec2cd8d4fc61c22bf4331ca30c42549b9d78adb5",
+      "sha256": "4b59455a01cc06725fc93df1908562e2a3b3c8a388f45e2c13cf11fdf199385d",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
@@ -1266,6 +1240,10 @@
     },
     "lab/asterisk/test_modem_no_echo.py": {
       "sha256": "05527445913b19b9b91d8daab45c283380dd3d53d370e230c94674590bda559a",
+      "mode": "100644"
+    },
+    "lab/asterisk/test_modem_pipe.py": {
+      "sha256": "784e52d4ecfd82f5120b8653072022e3e9551ea85799f148a6a76e4ef34c2798",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_portability.py": {
@@ -1421,7 +1399,7 @@
       "mode": "100644"
     },
     "packaging/package_native_candidate.py": {
-      "sha256": "291b5d71580db55fe881cb17d60b468fc81360949cd0a60d48641ca4b18c11d0",
+      "sha256": "e5a82e7ff837ebc8c14ad03fb8d4ef0fd773944d3ec4855e9b0d71fcc873af0f",
       "mode": "100644"
     },
     "packaging/public_manifest.py": {
@@ -1493,7 +1471,7 @@
       "mode": "100644"
     },
     "packaging/test_package_native_candidate.py": {
-      "sha256": "a4bb72e0937826aef141056316bab8181531a0a19178f3deb007050aa3de4c90",
+      "sha256": "452975b61f6d9a38e2a4eaa99230b237b6094c211b21b1f9df8a48076c0b5d24",
       "mode": "100644"
     },
     "packaging/test_public_manifest.py": {
@@ -1516,85 +1494,88 @@
       "sha256": "0452a909a2d5ed3c6bdb25e0926de56bc9bf9f8a800790dc858526366e47f33c",
       "mode": "100644"
     },
+    "packaging/windows/build_driver_cert.ps1": {
+      "sha256": "925276e3660329fabde9bd993dcda8f138865918390ea9fe4e423c7c23332e33",
+      "mode": "100644"
+    },
     "packaging/windows/build_installer.ps1": {
-      "sha256": "88e809fd885393034da9cba62f7eb7dc2a10d6a5b0204da6030214a1cbfc2b5c",
+      "sha256": "42ccb7318daa5b8e10dc3bff9489e5006db0abe4eff4375b83aa0c1c63309b72",
       "mode": "100644"
     },
     "packaging/windows/cleanup_com_driver.ps1": {
-      "sha256": "79f84f554bf382c32138499168317aff5964ae6c5efeee5466855b2f19956a0d",
+      "sha256": "02a215a0ae78a3e5f102eef0ed132113d0d3e55e9c34d8231c78f97e1c99ee4f",
       "mode": "100644"
     },
     "packaging/windows/el-modem.iss": {
-      "sha256": "7da8964e5e3f9e6fbad5451c85fc7db3d98e68b8de25473499223c02acb97814",
+      "sha256": "97a10f41a0f1470058f66bd19d6d0c719ffe9d0b51d32cc41aad14d864e8756a",
+      "mode": "100644"
+    },
+    "packaging/windows/install_driver.ps1": {
+      "sha256": "bc988ebe0bdcd3d45715f0ce26d5a81372e03bd575e68e5208f50c5f7b92822e",
       "mode": "100644"
     },
     "packaging/windows/probe_com_driver.ps1": {
-      "sha256": "2b54f838d27313e2d8f3f0341909f83539d21d0aa28c87c1a693a5b256d0cac3",
+      "sha256": "a87ba5b67892240431ddf3cbce570a44bff123732cedbb2012cb03b67f6034f5",
       "mode": "100644"
     },
     "packaging/windows/qualify_com_terminal.py": {
-      "sha256": "3e7e6ba7f05337b051f0eade80b2caafd72020c35ee4ca3d1556bc1301cf66aa",
+      "sha256": "19da1fcd077d58b8a53d11271d1f06fc41a0a051869f04662d2f10917d400344",
+      "mode": "100644"
+    },
+    "packaging/windows/sign_driver.ps1": {
+      "sha256": "0bb2fab939d9986eed06422f125f3f786802f6d04d673287b412055355810038",
+      "mode": "100644"
+    },
+    "packaging/windows/uninstall_driver.ps1": {
+      "sha256": "734f0079f1e58f57f5bc45055c1a05ca74345b604fd6f652f273f3e7231c5a47",
+      "mode": "100644"
+    },
+    "README.md": {
+      "sha256": "ae7f0db3f477464caad1811ddfada22f570466e356b0a48c1e8b86b85d813e4d",
+      "mode": "100644"
+    },
+    "docs/REDISTRIBUTION.md": {
+      "sha256": "dd45611ddeb02224643ea15f65dd6f7c125cc5c4cdbec8a8211bcda80963e197",
+      "mode": "100644"
+    },
+    "docs/SOURCE_PROVENANCE.md": {
+      "sha256": "684e100b83b93c5d0897e520c55f03cbd21d6f2c231aa4285d417c4cf758ccd9",
+      "mode": "100644"
+    },
+    "docs/LINUX_QUALIFICATION.md": {
+      "sha256": "17756172a1fed3f164846168b312deed5845abb7d3b10108ecf5fcae3d5c80d7",
+      "mode": "100644"
+    },
+    "docs/LINUX_QUALIFICATION.json": {
+      "sha256": "69c6118024df0d1b3756cefb12312ef0d9c07bd6e297af2192e526f77816cb2d",
+      "mode": "100644"
+    },
+    "docs/RUNTIME_REQUIREMENTS.md": {
+      "sha256": "f4e1c99075d03e4d713dbac82a86ad6519ccabccda595ed95db223f90f7d91be",
+      "mode": "100644"
+    },
+    "docs/RUNTIME_REQUIREMENTS.json": {
+      "sha256": "846d3e9e0fa7a224b5e3bd850d19c153e199c04972d342af0658a959571d4ecc",
+      "mode": "100644"
+    },
+    ".github/workflows/build.yml": {
+      "sha256": "b252df41c385a969223a748f06b8a08e0dd2881e7d50cf734ad9ffeb4dab4868",
+      "mode": "100644"
+    },
+    ".gitignore": {
+      "sha256": "20915503efb0f631c1a75f048ed2e5493f02f76a610a9ddbb41260bba38e0940",
       "mode": "100644"
     }
   },
-  "historical_public_overlays": [
-    {
-      "path": "CREDITS.md",
-      "public_commit": "822c0997f081c051d062539a0535253b6a4439eb",
-      "reason": "retain owner-edited public credits"
-    },
-    {
-      "paths": [
-        "lab/asterisk/sip_uac.py",
-        "lab/asterisk/sip_uas.py",
-        "lab/asterisk/test_sip_uac.py",
-        "lab/asterisk/test_sip_uas.py",
-        "lab/asterisk/test_modem_desktop.py",
-        ".github/workflows/build.yml"
-      ],
-      "reason": "native CI observed Windows UDP and Linux builder fixes",
-      "private_commits": [
-        "9ff2329"
-      ]
-    },
-    {
-      "paths": [
-        "packaging/candidate_transport.py",
-        "packaging/inventory_portable.py",
-        "packaging/package_native_candidate.py",
-        "packaging/test_candidate_transport.py",
-        "packaging/test_package_native_candidate.py",
-        ".github/workflows/build.yml"
-      ],
-      "reason": "encrypted candidate retention and native package/notice tooling"
-    },
-    {
-      "paths": [
-        "packaging/build_with_lineage.py",
-        "packaging/test_build_with_lineage.py",
-        "packaging/inventory_portable.py",
-        "packaging/package_native_candidate.py",
-        "packaging/test_package_native_candidate.py",
-        "packaging/prepare_public.py",
-        "packaging/serial/COPYING",
-        "docs/DESKTOP.md",
-        ".github/workflows/build.yml"
-      ],
-      "reason": "native byte processing trace and complete driver/docs archive",
-      "private_commit": "e3a1d4c"
-    },
-    {
-      "paths": [
-        "packaging/prepare_public.py"
-      ],
-      "reason": "remove private-only exporter; native build tooling does not need it"
-    },
-    {
-      "paths": [
-        "lab/asterisk/sip_uac.py",
-        "lab/asterisk/test_sip_uac.py"
-      ],
-      "reason": "observed native CI ACK/answer-state race; deterministic regression"
-    }
-  ]
+  "excluded_count": 1158,
+  "findings": [],
+  "allowlisted_evidence_absent": [],
+  "status": "REVIEW_REQUIRED",
+  "blockers": [
+    "Original-code provenance review and commercial/contributor agreements pending",
+    "Targeted scan requires human review and independent secret scanning",
+    "Binary dependency notice inventory and sustained timing qualification pending"
+  ],
+  "history_included": false,
+  "external_calls_placed": false
 }

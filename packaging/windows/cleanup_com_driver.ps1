@@ -1,4 +1,9 @@
 # Remove only the pair and publisher consent owned by this disposable test.
+#
+# com0com-specific: this cleans up the pair created by probe_com_driver.ps1, not
+# the bundled El-Modem virtual-COM driver (see docs/WINDOWS_DRIVER.md). The
+# COM41/COM42 identity check below is deliberate, so it removes only the pair it
+# created and cannot touch an unrelated port.
 $ErrorActionPreference = 'Stop'
 $report = Join-Path $PWD 'com-reports'
 New-Item -ItemType Directory -Force $report | Out-Null

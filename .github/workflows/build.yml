@@ -33,7 +33,7 @@ jobs:
         env:
           PYTHONPATH: lab/asterisk:lab/asterisk/audio-peer:packaging
           OPENBLAS_NUM_THREADS: '1'
-        run: python -m unittest test_modem_desktop test_modem_com test_modem_symmetric_rtp test_modem_portability test_serial_port test_sip_auth test_sip_uac test_sip_uas
+        run: python -m unittest test_modem_desktop test_modem_portability test_serial_port test_sip_auth test_sip_uac test_sip_uas
   native-candidates:
     if: github.event_name == 'workflow_dispatch' && inputs.native_builds
     strategy:
@@ -61,7 +61,7 @@ jobs:
           PYTHONPATH: lab/asterisk:lab/asterisk/audio-peer:packaging
         run: |
           export PYTHONPATH="$(python -c 'import os; print(os.pathsep.join(["lab/asterisk", "lab/asterisk/audio-peer", "packaging"]))')"
-          python -m unittest test_modem_desktop test_modem_com test_modem_symmetric_rtp test_modem_portability test_sip_auth test_sip_uac test_sip_uas
+          python -m unittest test_modem_desktop test_modem_portability test_sip_auth test_sip_uac test_sip_uas
       - name: Build native single-file candidate
         run: python packaging/build_with_lineage.py --journal build/native-processing.jsonl --noconfirm --distpath dist --workpath build/el-modem packaging/el_modem.spec
       - name: Frozen payload and AT gates

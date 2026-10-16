@@ -13,6 +13,13 @@
 #ifndef OutputDir
   #define OutputDir "."
 #endif
+; DriverDir is the staged, signed virtual-COM driver payload
+; (build_driver_cert.ps1 + sign_driver.ps1 + the WDK build output). Absent for
+; builds produced without a signed driver, in which case nothing driver-related
+; is installed and no certificate is touched.
+#ifndef DriverDir
+  #define DriverDir ""
+#endif
 
 [Setup]
 AppId={{6C1D55D0-6B0C-4E4F-9A55-4C0A1E5B7A21}
@@ -44,6 +51,15 @@ Source: "{#SourceDir}\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recur
 Source: "{#SourceDir}\third-party\*"; DestDir: "{app}\third-party"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\qualification\*"; DestDir: "{app}\qualification"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
+[Dirs]
+; The signed driver payload and the scripts that install and remove it. The
+; signing key is NOT here: only the public .cer ever ships. The directory is
+; always created; install_driver.ps1 reports clearly when there is no payload.
+Name: "{app}\driver"
+Source: "{#DriverDir}\*"; DestDir: "{app}\driver"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "install_driver.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "uninstall_driver.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion skipifsourcedoesntexist
+
 [Icons]
 ; El-Modem is a terminal application: the shortcut opens it in a console window.
 Name: "{group}\El-Modem"; Filename: "{app}\el-modem.exe"
@@ -54,6 +70,7 @@ const
   VCRedistUrl = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
   VCRegistryKey = 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
   MinimumMinor = 40;   { 14.40 = Visual Studio 2022 17.10; the runtime the frozen build was checked with }
+  WizardNoDriver = '0'; { set to '1' when the user declines the test-signed driver }
 
 function VCRuntimeCurrent: Boolean;
 var
@@ -129,7 +146,7 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  Problem: String;
+  Problem, Answer: String;
 begin
   Result := '';
   { /ForceVCRedist=1 exercises the download path even when a current runtime is present (used by CI). }
@@ -145,4 +162,88 @@ begin
         Result := Problem;
     end;
   end;
+end;
+
+function DriverPayloadExists: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{app}\driver\wudf.cat'));
+end;
+
+{ The driver is test-signed, so installing it means trusting a certificate on
+  this machine. Say exactly what that does before doing it, and let a silent
+  install be told not to. }
+procedure InitializeWizard();
+var
+  Response: Integer;
+begin
+  if (not DriverPayloadExists) or WizardSilent then
+  begin
+    if (not DriverPayloadExists) and WizardSilent then
+      Log('No signed driver payload present; skipping driver installation.');
+    Exit;
+  end;
+  Response := MsgBox(
+    'The El-Modem virtual COM driver is included with this installer.' + #13#10#13#10 +
+    'It is currently TEST-SIGNED, so installing it adds a certificate to this ' +
+    'computer''s Trusted Root and Trusted Publishers stores. Anything signed with ' +
+    'that certificate would then be trusted here without kernel code integrity review.' + #13#10#13#10 +
+    'The certificate is removed again when El-Modem is uninstalled.' + #13#10#13#10 +
+    'Install the driver now?', mbConfirmation, MB_YESNO);
+  if Response = IDNO then
+  begin
+    WizardNoDriver := '1';
+    Log('User declined driver installation; the driver and its certificate will be skipped.');
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  CommandLine, Output: String;
+  Installed: Boolean;
+begin
+  if CurStep <> ssPostInstall then Exit;
+  if not DriverPayloadExists then Exit;
+  if WizardNoDriver = '1' then Exit;
+
+  { Run after installation so the rest of El-Modem is already in place if this
+    fails: a missing COM port does not make the program unusable. }
+  CommandLine :=
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+    ExpandConstant('{app}\driver\install_driver.ps1') +
+    '" -DriverPackage "' + ExpandConstant('{app}\driver') + '"';
+  Installed := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+                    CommandLine, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  { Exit 0 = installed, 2 = staged but no COM port (usually no WDK present). }
+  if (not Installed) or (ResultCode = 1) then
+    Log('Driver installation failed (exit ' + IntToStr(ResultCode) + '); El-Modem installed without it.')
+  else if ResultCode = 2 then
+    Log('Driver package staged but no COM port was created (exit 2). ' +
+        'Install the Windows Driver Kit and run: devcon.exe install virtualserial2um.inf UMDF\VirtualSerial2um')
+  else
+    Log('El-Modem virtual COM driver installed.');
+end;
+
+{ Removing the test certificate is the point of uninstalling: while it is
+  trusted, this machine accepts anything signed with it. Runs before Inno
+  deletes {app}, because the script lives there. }
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+  Installed: Boolean;
+begin
+  if CurUninstallStep <> usUninstall then Exit;
+  if not FileExists(ExpandConstant('{app}\driver\uninstall_driver.ps1')) then Exit;
+  if WizardNoDriver = '1' then Exit;
+  Installed := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+                    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+                    ExpandConstant('{app}\driver\uninstall_driver.ps1') +
+                    '" -DriverPackage "' + ExpandConstant('{app}\driver') + '"',
+                    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if Installed then
+    Log('Driver and test certificate removal finished (exit ' + IntToStr(ResultCode) + ').')
+  else
+    Log('Driver removal did not complete (exit ' + IntToStr(ResultCode) +
+        '). Run: powershell -File "' + ExpandConstant('{app}\driver\uninstall_driver.ps1') + '"');
 end;

@@ -69,10 +69,8 @@ ENV = {
  'recording.enabled':('EL_MODEM_RECORDING','1',('0','1')),
  'recording.seconds':('EL_MODEM_RECORDING_SECONDS','600',()),
  'instance.name':('EL_MODEM_NAME','Modem',()),
- 'serial.backend':('EL_MODEM_SERIAL_BACKEND','driver',('driver','pty','tcp','com')),
+ 'serial.backend':('EL_MODEM_SERIAL_BACKEND','driver',('driver','pty','tcp')),
  'serial.tcp_port':('EL_MODEM_SERIAL_PORT','9100',()),
- 'serial.device':('EL_MODEM_SERIAL_DEVICE','',()),
- 'serial.baud':('EL_MODEM_SERIAL_BAUD','115200',()),
  'sip.bind_host':('EL_MODEM_SIP_BIND_HOST','127.0.0.1',()),
  'sip.bind_port':('EL_MODEM_SIP_BIND_PORT','5062',()),
  'sip.media_host':('EL_MODEM_MEDIA_HOST','127.0.0.1',()),
@@ -95,7 +93,6 @@ def registry(dce):
         result[name] = Setting(name,'int','restart',minimum=1,maximum=128)
     for name in ('serial.tcp_port','sip.bind_port','sip.media_port'):
         result[name]=Setting(name,'int','restart',minimum=1,maximum=65535)
-    result['serial.baud']=Setting('serial.baud','int','restart',minimum=300,maximum=921600)
     result['recording.seconds'] = Setting('recording.seconds','int','restart',minimum=1,maximum=86400)
     return result
 
