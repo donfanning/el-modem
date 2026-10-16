@@ -72,7 +72,12 @@ const
   VCRedistUrl = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
   VCRegistryKey = 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
   MinimumMinor = 40;   { 14.40 = Visual Studio 2022 17.10; the runtime the frozen build was checked with }
-  WizardNoDriver = '0'; { set to '1' when the user declines the test-signed driver }
+
+var
+  { Set to '1' when the user declines the test-signed driver. A variable, not a
+    constant: Pascal Script cannot assign to a const, and ISCC reports that as an
+    opaque 'Internal error (20)'. }
+  WizardNoDriver: String = '0';
 
 function VCRuntimeCurrent: Boolean;
 var
