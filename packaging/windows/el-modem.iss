@@ -19,6 +19,9 @@
 ; is installed and no certificate is touched.
 #ifndef DriverDir
   #define DriverDir ""
+  #define DriverIncluded 0
+#else
+  #define DriverIncluded 1
 #endif
 
 [Setup]
@@ -72,6 +75,10 @@ const
   VCRedistUrl = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
   VCRegistryKey = 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
   MinimumMinor = 40;   { 14.40 = Visual Studio 2022 17.10; the runtime the frozen build was checked with }
+  { Whether this build carries the signed driver payload. Decided at compile
+    time: InitializeWizard runs before files are extracted, so probing the
+    install directory there always reports false. }
+  DriverIncluded = {#DriverIncluded};
 
 var
   { Set to '1' when the user declines the test-signed driver. A variable, not a
@@ -173,7 +180,7 @@ end;
 
 function DriverPayloadExists: Boolean;
 begin
-  Result := FileExists(ExpandConstant('{app}\driver\wudf.cat'));
+  Result := DriverIncluded = 1;
 end;
 
 { The driver is test-signed, so installing it means trusting a certificate on
@@ -183,10 +190,14 @@ procedure InitializeWizard();
 var
   Response: Integer;
 begin
-  if (not DriverPayloadExists) or WizardSilent then
+  if not DriverPayloadExists then
   begin
-    if (not DriverPayloadExists) and WizardSilent then
-      Log('No signed driver payload present; skipping driver installation.');
+    Log('This build carries no signed driver payload; the driver and its certificate will be skipped.');
+    Exit;
+  end;
+  if WizardSilent then
+  begin
+    Log('Silent install; installing the driver without prompting.');
     Exit;
   end;
   Response := MsgBox(

@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "b6ecb4798184193eceb144fe87f054590686c772",
+  "public_base_revision": "2984d16a761fd037304f22a95ca9ceb227f36c87",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -1545,7 +1545,7 @@
       "mode": "100644"
     },
     "packaging/windows/el-modem.iss": {
-      "sha256": "58eaa2ac75dc1a56fa35d66b1a256cecd57487c571ad053c911583d2b881f0dd",
+      "sha256": "ff0619489135ab91f2804a7ba746b61c8c0b5b36dd5d3c6193fef08ad1cba27c",
       "mode": "100644"
     },
     "packaging/windows/install_driver.ps1": {
