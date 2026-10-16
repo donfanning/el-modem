@@ -22,6 +22,7 @@ from pathlib import Path
 from modem_dce import (
     AtDce,
     default_error_control_for,
+    dial_abort_applies,
     EscapeHold,
     EscapeSequenceDetector,
     OnlineAudioSession,
@@ -837,6 +838,24 @@ class EscapeHoldTests(unittest.TestCase):
         hold = EscapeHold()
         hold.hold(b"")
         self.assertEqual(len(hold), 0)
+
+
+class DialAbortTests(unittest.TestCase):
+    def test_fires_only_before_connect(self) -> None:
+        call = object()
+        session = object()
+        self.assertTrue(dial_abort_applies(call, None, False, False),
+                        "originate attempt in flight")
+        self.assertTrue(dial_abort_applies(None, session, False, True),
+                        "session up but CONNECT held for negotiation")
+        self.assertFalse(dial_abort_applies(None, None, False, False),
+                         "idle line: keys are commands, not aborts")
+        self.assertFalse(dial_abort_applies(None, session, False, False),
+                         "negotiation done: keys are payload, not aborts")
+        self.assertFalse(dial_abort_applies(call, session, True, False),
+                         "online: keys are payload, not aborts")
+        self.assertFalse(dial_abort_applies(call, None, True, True),
+                         "online wins over everything")
 
 
 class OnlineAudioSessionTests(unittest.TestCase):
