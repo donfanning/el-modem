@@ -33,12 +33,16 @@ Directory holding the signed package: the .inf, the .dll, wudf.cat and the .cer.
 .PARAMETER Certificate
 The public .cer to trust. Defaults to ElModemTestSigning.cer inside -DriverPackage.
 
-.PARAMETER PortName
-Pin the port to this COM name, e.g. COM3. Leave empty to accept whatever COM
-number Windows assigns.
-
 .PARAMETER SkipCertificate
 Do not touch the certificate stores.
+
+.NOTES
+The port number is chosen by Windows. There is deliberately no way to pin it
+here: writing PortName into HKLM\...\Enum\ROOT\PORTS\<id>\Device Parameters
+after the device has started, and then restarting it, makes the next add fail
+with CM_PROB_FAILED_ADD and Problem Status 0xC0000017 (STATUS_NO_SUCH_DEVICE),
+and the port never appears at all. A specific port number is set through Device
+Manager, which goes through the Ports class installer instead.
 
 .NOTES
 Exit codes: 0 success, 1 failed, 2 staged but the device node was not created.
@@ -47,7 +51,6 @@ Exit codes: 0 success, 1 failed, 2 staged but the device node was not created.
 param(
   [string]$DriverPackage = (Join-Path $PSScriptRoot 'driver'),
   [string]$Certificate,
-  [string]$PortName = '',
   [switch]$SkipCertificate
 )
 
@@ -202,25 +205,11 @@ if ($nodes.Count -gt 1) {
   Start-Sleep -Seconds 3
 }
 
-# 4. Optionally pin the port number.
-if ($PortName) {
-  $node = @(Get-ModemNodes | Select-Object -First 1)
-  if ($node) {
-    $key = "HKLM:\SYSTEM\CurrentControlSet\Enum\$($node.PNPDeviceID)\Device Parameters"
-    New-Item -Path $key -Force | Out-Null
-    # PortName must be the full string COMn, not the bare number.
-    Set-ItemProperty -Path $key -Name PortName -Value $PortName -Type String
-    $ErrorActionPreference = 'Continue'
-    pnputil /restart-device "$($node.PNPDeviceID)" 2>&1 | Out-Null
-    $ErrorActionPreference = $previous
-    Write-Step "pinned to $PortName"
-    Start-Sleep -Seconds 3
-  }
-}
+# 4. Report the port Windows assigned. It is deliberately not pinned: see .NOTES.
 
 $ports = @()
-# The port takes a moment to appear after the device restarts, and the friendly
-# name can lag the registry change by longer than that.
+# The port takes a moment to appear after the device node is created, and the
+# friendly name can lag the registry change by longer than that.
 foreach ($attempt in 1..10) {
   $ports = [System.IO.Ports.SerialPort]::GetPortNames()
   if ($ports) { break }
@@ -228,6 +217,6 @@ foreach ($attempt in 1..10) {
 }
 Write-Step ("COM ports now: " + $(if ($ports) { $ports -join ', ' } else { '(none)' }))
 if (-not $ports) {
-  Write-Warn 'no COM port appeared; a reboot is usually needed after the port name is pinned'
+  Write-Warn 'no COM port appeared; a reboot is usually needed after a fresh driver install'
 }
 exit 0

@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "2984d16a761fd037304f22a95ca9ceb227f36c87",
+  "public_base_revision": "6b34f76f78ec9c7ce9f3d593e7bf17c9bfc3d78e",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -101,7 +101,7 @@
       "mode": "100644"
     },
     "docs/WINDOWS_DRIVER.md": {
-      "sha256": "eb197301f3f543c9f412bdc5f72a10e2313d5540985375a3dce309893c5ecf66",
+      "sha256": "0be3d4c27e466cb54c7e67b600bbb6308991fde9d00a2ce85192176b252647f7",
       "mode": "100644"
     },
     "docs/WINDOWS_INSTALLER_QUALIFICATION.json": {
@@ -1549,7 +1549,7 @@
       "mode": "100644"
     },
     "packaging/windows/install_driver.ps1": {
-      "sha256": "bc988ebe0bdcd3d45715f0ce26d5a81372e03bd575e68e5208f50c5f7b92822e",
+      "sha256": "413d3d07db5a09f92e703633d0b913e3b8c1cc5c16226defb753582c5df3d6e8",
       "mode": "100644"
     },
     "packaging/windows/probe_com_driver.ps1": {
@@ -1561,7 +1561,7 @@
       "mode": "100644"
     },
     "packaging/windows/sign_driver.ps1": {
-      "sha256": "0bb2fab939d9986eed06422f125f3f786802f6d04d673287b412055355810038",
+      "sha256": "c75b9c091dfb35e25793280125cbc89f6d2324f14ee0594336b8cb83eeba7902",
       "mode": "100644"
     },
     "packaging/windows/uninstall_driver.ps1": {

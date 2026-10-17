@@ -104,21 +104,25 @@ $devcon = 'C:\Program Files (x86)\Windows Kits\10\Tools\10.0.26100.0\x64\devcon.
 & $devcon install "$inf" 'UMDF\VirtualSerial2um'
 ```
 
-The port gets the next free COM number. To pin it to a known port such as
-COM3, find the instance ID and set `PortName` directly:
+The port gets the next free COM number. Do not pin it by writing `PortName`
+into the registry: doing that after the device has started, followed by
+`pnputil /restart-device`, makes the next add fail with `CM_PROB_FAILED_ADD`
+and `Problem Status 0xC0000017` (`STATUS_NO_SUCH_DEVICE`), and no COM port
+appears at all. Set a specific port number through **Device Manager** instead,
+which goes through the Ports class installer rather than editing the hardware
+key directly.
+
+The manual procedure is therefore:
 
 ```powershell
 $id = (Get-CimInstance Win32_PnPEntity |
        Where-Object { $_.Name -like '*El-Modem*' }).PNPDeviceID
-
-$key = "HKLM:\SYSTEM\CurrentControlSet\Enum\$id\Device Parameters"
-New-Item -Path $key -Force | Out-Null
-Set-ItemProperty -Path $key -Name PortName -Value 'COM3' -Type String
 pnputil /restart-device "$id"
+[System.IO.Ports.SerialPort]::GetPortNames()
 ```
 
-`PortName` must be the **full string** `COM3`, not the bare number `3`. Writing
-the number instead leaves the port unassigned.
+`install_driver.ps1` does exactly this: create the node, then report whichever
+port appeared. It deliberately exposes no way to choose the number.
 
 Installing the INF creates two device nodes; remove the extra one so exactly one
 COM port is presented:

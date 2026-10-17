@@ -231,12 +231,21 @@ try {
     }
     Write-Host "  catalog covers the package files"
   } finally {
+    # Cleanup must never abort publishing: this block used to run before the
+    # signed package was copied out, so a certificate that could not be removed
+    # silently left the caller with no output at all.
     if ($trusted) {
-      $trustStore.Open('ReadWrite')
-      foreach ($c in @($trustStore.Certificates)) {
-        if ($c.Thumbprint -eq $thumbprint) { $trustStore.Remove($c) }
+      try {
+        $trustStore.Open('ReadWrite')
+        foreach ($c in @($trustStore.Certificates)) {
+          if ($c.Thumbprint -eq $thumbprint) { $trustStore.Remove($c) }
+        }
+        $trustStore.Close()
+      } catch {
+        Write-Warning ("could not withdraw the verification trust from " +
+                       "CurrentUser\Root: $($_.Exception.Message)")
+        Write-Warning "remove it manually: certutil -deluserstore Root $thumbprint"
       }
-      $trustStore.Close()
     }
   }
 
