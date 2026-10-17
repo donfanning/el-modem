@@ -52,33 +52,41 @@ error MSB8020: The build tools for WindowsUserModeDriver10.0
 
 This is the common failure, and it is **not** a problem with the project. The
 driver targets the `WindowsUserModeDriver10.0` platform toolset, which Visual
-Studio does not ship; it comes from the Windows Driver Kit's Visual Studio
-integration. Having both VS2022 Build Tools and the WDK installed is not by
-itself enough — the WDK has to be integrated into that specific VS instance.
+Studio does not ship. It arrives as the **Windows Driver Kit VS extension** — a
+VSIX installed into the Visual Studio instance — so having VS2022 Build Tools
+and the WDK both installed is not by itself enough.
 
-To check what is actually registered:
+The staged extension is normally at:
+
+```
+C:\Program Files (x86)\Windows Kits\10\Vsix\VS2022\<kit version>\WDK.vsix
+```
+
+Check its manifest before trying to install it, because the folder name is not
+the authority. A VS2019-era extension declares:
+
+```xml
+<InstallationTarget Version="[16.0,17.0)" Id="Microsoft.VisualStudio.Community" />
+```
+
+`[16.0,17.0)` excludes Visual Studio 2022 (v17) outright, and such a VSIX cannot
+be installed into VS2022 at all. A VS2022-compatible one declares `[17.0,18.0)`.
+
+To check what is registered:
 
 ```powershell
 Get-ChildItem "$env:ProgramFiles(x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\Platforms\x64\PlatformToolsets"
 ```
 
-`WindowsUserModeDriver10.0` must appear in that list alongside `v143`. If it is
-missing, re-run the WDK installer so it integrates with the VS2022 instance, and
-confirm the Visual Studio instance you expect is the one that exists:
+`WindowsUserModeDriver10.0` must appear alongside `v143`.
 
-```powershell
-& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
-  -products * -format value -property installationPath
-```
-
-Two traps worth knowing about:
-
-- The WDK integrates into whichever Visual Studio instances are present when it
-  runs. If the WDK was installed before VS2022, or while only VS2019 was
-  present, VS2022 never receives the toolset, and re-running the installer can
-  report success while changing nothing.
-- An install that leaves an instance registered at a path which no longer exists
-  is a broken install, not a usable one. `vswhere` will happily list it.
+The documented remedy when the extension is missing or too old is to remove both
+the WDK and the "Windows Driver Kit" extension, reboot, and reinstall the WDK, so
+that it stages and installs the extension matching your Visual Studio. An
+extension left over from an older WDK can otherwise satisfy the installer's
+detection while providing nothing usable. The **Enterprise WDK (EWDK)** avoids
+this entirely: it is a standalone, self-contained build environment with the
+build tools, SDK and WDK together, and needs no Visual Studio integration.
 
 `wdf.h` lives under `Windows Kits\10\Include\wdf\umdf\<version>`, not under
 `Include\<version>\km`. If the driver cannot find it, the WDK's WDF header

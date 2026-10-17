@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "2c21bbe1745aff10643e650212d6144443ac4e62",
+  "public_base_revision": "ecb987926004f75b4aa454fecb29f4346dac31ce",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -101,7 +101,7 @@
       "mode": "100644"
     },
     "docs/WINDOWS_DRIVER.md": {
-      "sha256": "9745c592c25a352e734a3308c2fecc24a5a7ba360c708159fb3eafd73ce63ee5",
+      "sha256": "a3b3c289c39424d8615c397379a48d416dc7bd1ddff0b69833840f75616a81f9",
       "mode": "100644"
     },
     "docs/WINDOWS_INSTALLER_QUALIFICATION.json": {
