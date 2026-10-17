@@ -20,8 +20,10 @@ modem-control signals or connected-call hangup behavior.
 ## Windows: optional virtual-COM driver and pipe backend
 
 `--serial-backend pipe` requires a separately supplied compatible driver.
-No driver binary or modified driver source is distributed in this checkout or
-the current Windows ZIP. TCP and the com0com route below remain available.
+No driver binary is distributed in this checkout or the current Windows ZIP.
+The [MS-PL source overlay](../packaging/windows-driver/README.md) reconstructs
+the modified project from pinned Microsoft sources. A fresh driver build and
+installation remain unqualified. TCP and the com0com route below remain available.
 Ownership is inverted
 relative to the `com` backend: the driver *is* the COM port, so terminal
 programs (PuTTY, ZOC, SyncTerm, TTerm, Terminate) open the presented COM port

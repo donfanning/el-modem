@@ -1,15 +1,15 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "88c00316b8091594af29f6c976f0090f796d6045",
+  "public_base_revision": "6afa10df9f8f9d0322a6ec97556ecafa0135db64",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
-      "sha256": "c3e420feda67797af3291b1b65c22d905906b2efe63f88e403dc29aa75aaacb0",
+      "sha256": "850c4027e84b8d623f88e12f1b39e79d67565f9654fcd050e4032cb9bb4fed07",
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "eb32eccfb15203ce5aa52e8f5b1dc7210da72151c050334beee5037d1882dabb",
+      "sha256": "bc559fba403b32e5dd2b46c40ca579e2831440eb20aa32a517db395ad8fd4716",
       "mode": "100644"
     },
     ".github/workflows/macos-pty.yml": {
@@ -37,7 +37,7 @@
       "mode": "100644"
     },
     "NOTICE": {
-      "sha256": "6807223427e898a6efc42bcc4f9b34d0abacb61e4a359cadf1b6519dc967d4e2",
+      "sha256": "b47e74f28f9a288c13aebacafde4cd515aff56f6144bafcdc806821de6b02484",
       "mode": "100644"
     },
     "README.md": {
@@ -53,7 +53,7 @@
       "mode": "100644"
     },
     "docs/DESKTOP.md": {
-      "sha256": "960d6ce46f321ae3a2131c75447f414b085cdc36f3626cfe3fce51d6908f1050",
+      "sha256": "43165589ceb35445da7a40f0e5f810d127ceef1fe76a849156443a519a2d9d79",
       "mode": "100644"
     },
     "docs/LINUX_QUALIFICATION.json": {
@@ -73,7 +73,7 @@
       "mode": "100644"
     },
     "docs/REDISTRIBUTION.md": {
-      "sha256": "dd45611ddeb02224643ea15f65dd6f7c125cc5c4cdbec8a8211bcda80963e197",
+      "sha256": "d963c00b4533184c8c85973b8a55794ca92e57557f8758bb77b57ebf36a432da",
       "mode": "100644"
     },
     "docs/RUNTIME_REQUIREMENTS.json": {
@@ -85,7 +85,7 @@
       "mode": "100644"
     },
     "docs/SERIAL.md": {
-      "sha256": "ba8ca3784a43a563cd4f3979766c0998a51af0fd4ba3932cf1383213bb7acb4d",
+      "sha256": "60d5e0512772ba90228cd5b623f340407807b1409857542f25cd1cb596ccf05d",
       "mode": "100644"
     },
     "docs/SOURCE_PROVENANCE.md": {
@@ -101,7 +101,7 @@
       "mode": "100644"
     },
     "docs/WINDOWS_DRIVER.md": {
-      "sha256": "bd317c00b62bebb2c33a566a87baa5497e3a43a13b5b1919575cec1ba10054b4",
+      "sha256": "de69bae9785b51de67c0c80c5ebae1aa863439fdc63f5f7f12fe831c8e0529b1",
       "mode": "100644"
     },
     "docs/WINDOWS_INSTALLER_QUALIFICATION.json": {
@@ -1546,6 +1546,26 @@
     },
     "packaging/verify_binary_sources.py": {
       "sha256": "0452a909a2d5ed3c6bdb25e0926de56bc9bf9f8a800790dc858526366e47f33c",
+      "mode": "100644"
+    },
+    "packaging/windows-driver/LICENSE": {
+      "sha256": "07639618c7b94ab9953cc61715f6325877e1854dca611ed9b1bd54497cf5e93a",
+      "mode": "100644"
+    },
+    "packaging/windows-driver/README.md": {
+      "sha256": "b58f29c3c12d637b225747c6fcb7eb0ffa266d5b8704d7fe0eec04f8e5f66b9f",
+      "mode": "100644"
+    },
+    "packaging/windows-driver/overlay.patch": {
+      "sha256": "262dfe2da6d622b5a270abc7375b998cd9d884e5a7a6399dac76657c996fe924",
+      "mode": "100644"
+    },
+    "packaging/windows-driver/prepare_source.py": {
+      "sha256": "194443d7932ef9fddcfc14c1f308a2e934671821e2c9da25d8b61cd47434dbd1",
+      "mode": "100644"
+    },
+    "packaging/windows-driver/source-manifest.json": {
+      "sha256": "b5f45c3ab449c2958066d713a2b33a3f78016104d279170ab6e01fe858e4cbc0",
       "mode": "100644"
     },
     "packaging/windows/build_driver_cert.ps1": {

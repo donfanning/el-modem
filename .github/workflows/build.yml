@@ -30,6 +30,8 @@ jobs:
           python -m unittest discover -s packaging -p test_python_component_notices.py
           python -m unittest discover -s packaging -p test_runtime_requirements.py
           python -m unittest discover -s packaging -p test_audit_windows_install.py
+      - name: Reconstruct pinned MS-PL Windows driver sources (no WDK build)
+        run: python packaging/windows-driver/prepare_source.py "$RUNNER_TEMP/el-modem-driver-source"
       - name: Source and settings tests without private fixtures or calls
         env:
           PYTHONPATH: lab/asterisk:lab/asterisk/audio-peer:packaging

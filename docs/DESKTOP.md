@@ -10,8 +10,9 @@ el-modem --headless --modems 4
 
 Linux full serial support needs the [serial driver prerequisite](../packaging/serial/README.md).
 On Windows TCP is the default. The optional compatible virtual-COM driver is
-not distributed with the current ZIP, and its modified source is absent from
-this checkout. If you already have that driver installed,
+not distributed with the current ZIP. A reviewed [MS-PL source overlay](../packaging/windows-driver/README.md)
+reconstructs its modified source; fresh build/installation qualification remains
+open. If you already have that driver installed,
 `--serial-backend pipe` needs no `--serial-device`, because terminal programs
 open the COM port the driver presents rather than a peer port. The driver must
 be installed separately; see
