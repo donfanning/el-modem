@@ -16,6 +16,7 @@ the cached original Fisher files or that the re-expression was clean-room.
 | Numba / llvmlite / LLVM | Optional compiled DSP | Review pinned package license files and bundled LLVM notices |
 | Textual / Rich and dependencies | TUI | MIT and each actual transitive dependency's notices |
 | PyInstaller | Executable builder/bootloader | GPL exception permits applications under other licenses; retain required notices |
+| Windows UMDF2 source overlay and reconstruction helper | Separate virtual COM driver | MS-PL; pinned Microsoft baseline and original notices retained; no binary, certificate or private key included |
 | serialsim patch | Separate Linux driver prerequisite | GPL-2.0-or-later; retain driver provenance and source |
 | SpanDSP / minimodem | Optional independent lab references | Excluded from this preview; separate upstream repositories |
 | Smart Link modem blob | Independent lab peer | Excluded; do not redistribute |

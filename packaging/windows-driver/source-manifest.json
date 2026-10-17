@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "upstream": "https://github.com/microsoft/Windows-driver-samples",
+  "revision": "2dc3fd3a0cc84a2933f2194e7ec0871584979071",
+  "subdirectory": "serial/VirtualSerial2",
+  "normalization": "UTF-8 without BOM; LF line endings and trailing newline; source statements unchanged",
+  "upstream_files": {
+    "ComPort/VirtualSerial2um.vcxproj": "14986919adc692a89248296c7897b7032ba3b2181adfb78c13ed5dcc2f40b3b6",
+    "ComPort/virtualserial2um.inx": "9cbd4c57db468948bc3a904ad893b378cb2bac9e42acfbac77f6c4bb3fefb480",
+    "ComPort/virtualserial2um.rc": "b35bf5e9983b5b093bfb14d310ae82e0a3b088452f54309dd81d382230ed98a9",
+    "VirtualSerial.sln": "73aa9dfc8cabdeec2e30747292b4d750caf61da00661437aaa3edbcb11d67fe6",
+    "device.c": "c14a2694c04f6d624c57d11b839d2fe7583aac75b13a3557a21fe2b1cd995cb9",
+    "device.h": "600d8e7d9ba840721336ae7d3a9020ca0bf1f18dec97248abb2210c0934f77cd",
+    "driver.c": "d21b900ce89c354a5bd41303d992b5dff3595396a822e78c735707f7c6559fe9",
+    "driver.h": "0318c3f4171726520560e2369af3327c0aca477cb3f54fee8daedd5b45aea4e4",
+    "internal.h": "af3fb42441f8666a66673952c6a932ffbbf07f6e5d154d23b947e97aa9301623",
+    "queue.c": "9c41efaa48483c29409449288536ddb4defc99905a636aae660da77faafd6ecb",
+    "queue.h": "2604573fe1084284d1cf0e737bff38e1c7168561f3bc9216233d9e30a067b982",
+    "ringbuffer.c": "e19917565b782a4da21d9d67ee36b28159f3f74ce5a8dbb56a44b68966c8aec6",
+    "ringbuffer.h": "df69c49b5e7c853412f63159d510757a99dd3bf0323d9abc0f03781b9e958586",
+    "serial.h": "f5ec828409c64aa80b89808bcc9ad412a4499ab32015dec4533a1507c4ca84bc"
+  },
+  "result_files": {
+    "ComPort/VirtualSerial2um.vcxproj": "5ec90056f6d7ecacdd0aa280783f2d950419d056b1400a0fd864b7d46792ef83",
+    "ComPort/virtualserial2um.inx": "70cde5d4d83ca813de10f3600cacc23471864472ec7b78582e775ef712c3e084",
+    "ComPort/virtualserial2um.rc": "b35bf5e9983b5b093bfb14d310ae82e0a3b088452f54309dd81d382230ed98a9",
+    "VirtualSerial.sln": "279506540f80b1becec2a65f917a7d91748b90c7744926fee3622c6f8792b63a",
+    "broker.c": "5cd90cfcf3e3a08b93ede56495da8b0ce69aba5dab434daa4d61ff2aecea46c1",
+    "broker.h": "51c03ed162390c1bdd3fa8ff4dcf0a69d7d86fe68307a03fa3fe4dadc836b7c8",
+    "device.c": "cd568af15e73887e59159397b86e84b05e026e70eb96dd68f07aa649f30621f1",
+    "device.h": "d8a3f973d8c63413b079fbeba96f6db84234f5f8dd922a3da5e361c17ea9c672",
+    "driver.c": "d21b900ce89c354a5bd41303d992b5dff3595396a822e78c735707f7c6559fe9",
+    "driver.h": "0318c3f4171726520560e2369af3327c0aca477cb3f54fee8daedd5b45aea4e4",
+    "internal.h": "3d3cb820ae22a7a1cfa22536b527197940c2ce22238239e79f4b5dd0377af427",
+    "queue.c": "609a930277ec1642e53f0f5216592ba951e7bef89221c392ce7d56c0f4d90e5e",
+    "queue.h": "3041bc6241e1a8aa56fabbee0de9cacd4313bebcdbe5a2bd32164860ffdce1e1",
+    "ringbuffer.c": "e19917565b782a4da21d9d67ee36b28159f3f74ce5a8dbb56a44b68966c8aec6",
+    "ringbuffer.h": "3f8eef8786d1f1b3e850dd00fd89c26593a99252f681cd11108137f2033c9ba0",
+    "serial.h": "988a01a6fec05d6651a9d0042145fd1d7e3885653d34110d9d0713c3431666bc"
+  },
+  "license_sha256": "07639618c7b94ab9953cc61715f6325877e1854dca611ed9b1bd54497cf5e93a"
+}

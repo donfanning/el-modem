@@ -1,0 +1,1305 @@
+--- a/ComPort/VirtualSerial2um.vcxproj
++++ b/ComPort/VirtualSerial2um.vcxproj
+@@ -177,6 +177,7 @@
+     </DriverSign>
+   </ItemDefinitionGroup>
+   <ItemGroup>
++    <ClCompile Include="..\broker.c" />
+     <ClCompile Include="..\device.c" />
+     <ClCompile Include="..\driver.c" />
+     <ClCompile Include="..\queue.c" />
+--- a/ComPort/virtualserial2um.inx
++++ b/ComPort/virtualserial2um.inx
+@@ -19,7 +19,7 @@
+ PnpLockdown=1
+ 
+ [Manufacturer]
+-%ManufacturerString%=Microsoft,NT$ARCH$.10.0...17134, NT$ARCH$.10.0...22000
++%ManufacturerString%=Microsoft,NT$ARCH$.10.0...17134
+ 
+ [Microsoft.NT$ARCH$.10.0...17134]
+ %VirtualSerialDeviceName%=VirtualSerial_Install,UMDF\VirtualSerial2um
+@@ -98,8 +98,8 @@
+ ; =================== Generic ==================================
+ 
+ [Strings]
+-ProviderString="TODO-Set-Provider"
+-ManufacturerString="TODO-Set-Manufacturer"
+-MediaDescription="Microsoft Sample Driver Installation Media"
++ProviderString="El-Modem Project"
++ManufacturerString="El-Modem Project"
++MediaDescription="El-Modem Virtual COM Driver"
+ WudfRdDisplayName="Windows Driver Foundation - User-mode Driver Framework Reflector"
+-VirtualSerialDeviceName="Microsoft VirtualSerial Sample (UMDF 2)"
++VirtualSerialDeviceName="El-Modem Virtual COM Port"
+--- a/VirtualSerial.sln
++++ b/VirtualSerial.sln
+@@ -1,15 +1,10 @@
+-
+ Microsoft Visual Studio Solution File, Format Version 12.00
+ # Visual Studio 2013
+ VisualStudioVersion = 12.0
+ MinimumVisualStudioVersion = 12.0
+ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "ComPort", "ComPort", "{F7F21610-DDE7-4709-9C48-68A0ABD1FF65}"
+ EndProject
+-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "FakeModem", "FakeModem", "{704FA9C6-88FA-4381-8FA5-3407E62FAF20}"
+-EndProject
+ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "VirtualSerial2um", "ComPort\VirtualSerial2um.vcxproj", "{65A037CB-9245-442A-A791-5CFC34E97BF7}"
+-EndProject
+-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fakemodem2um", "FakeModem\fakemodem2um.vcxproj", "{CD78D78F-B132-4E6F-A11F-B62185A6152A}"
+ EndProject
+ Global
+ 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+@@ -21,26 +16,17 @@
+ 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+ 		{65A037CB-9245-442A-A791-5CFC34E97BF7}.Debug|ARM64.ActiveCfg = Debug|ARM64
+ 		{65A037CB-9245-442A-A791-5CFC34E97BF7}.Debug|ARM64.Build.0 = Debug|ARM64
+-		{CD78D78F-B132-4E6F-A11F-B62185A6152A}.Debug|ARM64.ActiveCfg = Debug|ARM64
+-		{CD78D78F-B132-4E6F-A11F-B62185A6152A}.Debug|ARM64.Build.0 = Debug|ARM64
+ 		{65A037CB-9245-442A-A791-5CFC34E97BF7}.Release|ARM64.ActiveCfg = Release|ARM64
+ 		{65A037CB-9245-442A-A791-5CFC34E97BF7}.Release|ARM64.Build.0 = Release|ARM64
+-		{CD78D78F-B132-4E6F-A11F-B62185A6152A}.Release|ARM64.ActiveCfg = Release|ARM64
+-		{CD78D78F-B132-4E6F-A11F-B62185A6152A}.Release|ARM64.Build.0 = Release|ARM64
+ 		{65A037CB-9245-442A-A791-5CFC34E97BF7}.Debug|x64.ActiveCfg = Debug|x64
+ 		{65A037CB-9245-442A-A791-5CFC34E97BF7}.Debug|x64.Build.0 = Debug|x64
+ 		{65A037CB-9245-442A-A791-5CFC34E97BF7}.Release|x64.ActiveCfg = Release|x64
+ 		{65A037CB-9245-442A-A791-5CFC34E97BF7}.Release|x64.Build.0 = Release|x64
+-		{CD78D78F-B132-4E6F-A11F-B62185A6152A}.Debug|x64.ActiveCfg = Debug|x64
+-		{CD78D78F-B132-4E6F-A11F-B62185A6152A}.Debug|x64.Build.0 = Debug|x64
+-		{CD78D78F-B132-4E6F-A11F-B62185A6152A}.Release|x64.ActiveCfg = Release|x64
+-		{CD78D78F-B132-4E6F-A11F-B62185A6152A}.Release|x64.Build.0 = Release|x64
+ 	EndGlobalSection
+ 	GlobalSection(SolutionProperties) = preSolution
+ 		HideSolutionNode = FALSE
+ 	EndGlobalSection
+ 	GlobalSection(NestedProjects) = preSolution
+ 		{65A037CB-9245-442A-A791-5CFC34E97BF7} = {F7F21610-DDE7-4709-9C48-68A0ABD1FF65}
+-		{CD78D78F-B132-4E6F-A11F-B62185A6152A} = {704FA9C6-88FA-4381-8FA5-3407E62FAF20}
+ 	EndGlobalSection
+ EndGlobal
+--- /dev/null
++++ b/broker.c
+@@ -0,0 +1,320 @@
++/*++
++
++Copyright (c) El-Modem Project
++
++Module Name:
++
++    broker.c
++
++Abstract:
++
++    Pumps bytes between the driver's serial ring buffer and a named pipe.
++
++--*/
++
++#include "internal.h"
++#include "broker.h"
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++
++//
++// Minimal diagnostic sink. The WPP Trace() calls in this driver have no
++// collector attached, so broker failures were invisible. This writes the
++// Win32 error straight to a world-readable file so a failed connect can be
++// diagnosed without attaching a debugger to WUDFHost.
++//
++#define BROKER_LOG_PATH    "C:\\Users\\Public\\elmodem-broker.log"
++
++VOID
++BrokerLogA(
++    _In_ PCSTR Message,
++    _In_ DWORD  Code
++    )
++{
++    HANDLE  file;
++    CHAR    line[192];
++    DWORD   written = 0;
++    int     n;
++
++    n = sprintf_s(line, sizeof(line), "%lu %s error=%lu\r\n",
++                  (unsigned long) GetTickCount(), Message, (unsigned long) Code);
++    if (n < 0) {
++        return;
++    }
++
++    file = CreateFileA(BROKER_LOG_PATH,
++                       FILE_APPEND_DATA,
++                       FILE_SHARE_READ | FILE_SHARE_WRITE,
++                       NULL,
++                       OPEN_ALWAYS,
++                       FILE_ATTRIBUTE_NORMAL,
++                       NULL);
++
++    if (file == INVALID_HANDLE_VALUE) {
++        return;
++    }
++
++    WriteFile(file, line, (DWORD) strlen(line), &written, NULL);
++    CloseHandle(file);
++}
++
++#define BrokerLog(m, c) BrokerLogA((m), (c))
++
++VOID
++BrokerPump(
++    _In_ PBROKER_CONTEXT BrokerContext
++    );
++
++DWORD
++WINAPI
++BrokerThreadProc(
++    _In_ LPVOID Parameter
++    )
++{
++    PBROKER_CONTEXT broker = (PBROKER_CONTEXT) Parameter;
++    BYTE            buffer[BROKER_BUFFER_SIZE];
++    int             firstAttempt = 1;
++
++    BrokerLog("thread entered", 0);
++
++    while (InterlockedCompareExchange(&broker->Stop, 0, 0) == 0) {
++
++        if (firstAttempt) {
++            BrokerLog("first CreateFile attempt", 0);
++            firstAttempt = 0;
++        }
++
++        if (broker->Pipe == INVALID_HANDLE_VALUE) {
++
++            //
++            // El-Modem may not be running yet, or may have restarted. Retry
++            // quietly until it appears.
++            //
++            broker->Pipe = CreateFileW(ELMODEM_PIPE_NAME,
++                                       GENERIC_READ | GENERIC_WRITE,
++                                       0,
++                                       NULL,
++                                       OPEN_EXISTING,
++                                       0,
++                                       NULL);
++
++            if (broker->Pipe == INVALID_HANDLE_VALUE) {
++                BrokerLog("CreateFile failed",
++                           (DWORD) GetLastError());
++                Sleep(100);
++                continue;
++            }
++
++            BrokerLog("connected", 0);
++
++            Trace(TRACE_LEVEL_INFO, "Broker connected to El-Modem pipe");
++        }
++
++        //
++        // The ring is inbound only. Terminal output is sent straight to the
++        // pipe by BrokerSend() from EvtIoWrite; pulling from the ring here
++        // would immediately echo the modem's own data straight back to it,
++        // and the terminal would never see anything.
++        //
++
++        //
++        // Deliver anything El-Modem sent to the terminal. PeekNamedPipe keeps
++        // this non-blocking so the pump never stalls behind a slow reader.
++        //
++        {
++            DWORD  inPipe = 0;
++            DWORD  got = 0;
++            NTSTATUS status;
++
++            if (!PeekNamedPipe(broker->Pipe,
++                               NULL, 0, NULL, &inPipe, NULL)) {
++
++                //
++                // El-Modem closed its end. PeekNamedPipe is the first call that
++                // can observe a disconnect, so its failure must be handled here:
++                // if it were only guarded by the "any bytes?" test below, the
++                // pump would spin on a dead handle forever and never reconnect
++                // after El-Modem restarted.
++                //
++                BrokerLog("pipe disconnected", (DWORD) GetLastError());
++                CloseHandle(broker->Pipe);
++                broker->Pipe = INVALID_HANDLE_VALUE;
++                continue;
++            }
++
++            if (inPipe > 0) {
++
++                DWORD toRead = (inPipe > sizeof(buffer)) ?
++                                (DWORD) sizeof(buffer) : inPipe;
++
++                if (!ReadFile(broker->Pipe, buffer, toRead, &got, NULL)) {
++                    BrokerLog("pipe ReadFile failed", (DWORD) GetLastError());
++                    CloseHandle(broker->Pipe);
++                    broker->Pipe = INVALID_HANDLE_VALUE;
++                    continue;
++                }
++
++                BrokerLog("pipe->ring bytes", (DWORD) got);
++
++                if (got > 0) {
++                    status = RingBufferWrite(&broker->QueueContext->RingBuffer,
++                                             buffer,
++                                             got);
++                    if (!NT_SUCCESS(status)) {
++                        Trace(TRACE_LEVEL_ERROR,
++                            "Broker: RingBufferWrite failed 0x%x",
++                            status);
++                    }
++
++                    //
++                    // Data just arrived. Hand any parked read request
++                    // whatever is now buffered, otherwise the terminal stays
++                    // blocked until its read timeout expires.
++                    //
++                    QueueServicePendingReads(broker->QueueContext);
++                }
++            }
++        }
++
++        Sleep(BROKER_POLL_MS);
++    }
++
++    //
++    // Leaving the thread.
++    //
++    if (broker->Pipe != INVALID_HANDLE_VALUE) {
++        FlushFileBuffers(broker->Pipe);
++        CloseHandle(broker->Pipe);
++        broker->Pipe = INVALID_HANDLE_VALUE;
++    }
++
++    Trace(TRACE_LEVEL_INFO, "Broker thread exiting");
++    return 0;
++}
++
++
++NTSTATUS
++BrokerSend(
++    _In_ PQUEUE_CONTEXT QueueContext,
++    _In_reads_bytes_(Length) PVOID  Data,
++    _In_ size_t            Length
++    )
++{
++    PBROKER_CONTEXT broker = (PBROKER_CONTEXT) QueueContext->Broker;
++    DWORD           written = 0;
++    size_t          offset = 0;
++
++    if ((broker == NULL) || (broker->Pipe == INVALID_HANDLE_VALUE)) {
++        //
++        // No peer. Report success and let the caller fall back to the
++        // built-in AT responder.
++        //
++        return STATUS_SUCCESS;
++    }
++
++    while (offset < Length) {
++        if (!WriteFile(broker->Pipe,
++                       ((BYTE*) Data) + offset,
++                       (DWORD) (Length - offset),
++                       &written,
++                       NULL)) {
++            BrokerLog("BrokerSend failed", (DWORD) GetLastError());
++            CloseHandle(broker->Pipe);
++            broker->Pipe = INVALID_HANDLE_VALUE;
++            break;
++        }
++
++        if (written == 0) {
++            break;
++        }
++        offset += written;
++    }
++
++    return STATUS_SUCCESS;
++}
++
++
++PBROKER_CONTEXT
++BrokerStart(
++    _In_ PQUEUE_CONTEXT QueueContext
++    )
++{
++    PBROKER_CONTEXT broker;
++
++    broker = (PBROKER_CONTEXT) calloc(1, sizeof(BROKER_CONTEXT));
++    if (broker == NULL) {
++        return NULL;
++    }
++
++    broker->QueueContext = QueueContext;
++    broker->Stop = 0;
++    broker->Pipe = INVALID_HANDLE_VALUE;
++
++    //
++    // NOTE: the 5th parameter of CreateThread is dwCreationFlags, NOT a
++    // priority. An earlier revision passed THREAD_PRIORITY_BELOW_NORMAL here;
++    // that constant is -1, so it became a bogus 0xFFFFFFFF creation flag and
++    // CreateThread returned a handle whose thread never actually ran. Priority
++    // must be set separately with SetThreadPriority.
++    //
++    broker->Thread = CreateThread(NULL,
++                                  0,
++                                  BrokerThreadProc,
++                                  broker,
++                                  0,
++                                  NULL);
++
++    if (broker->Thread == NULL) {
++        Trace(TRACE_LEVEL_ERROR,
++            "Broker: CreateThread failed %d", GetLastError());
++        free(broker);
++        return NULL;
++    }
++
++    //
++    // Keep the pump out of the terminal's way: its read latency matters far
++    // more than the broker's, and the pump must never starve serial callbacks.
++    //
++    SetThreadPriority(broker->Thread, THREAD_PRIORITY_BELOW_NORMAL);
++
++    QueueContext->Broker = broker;
++
++    BrokerLog("pump started", 0);
++    Trace(TRACE_LEVEL_INFO, "Broker pump started");
++    return broker;
++}
++
++
++VOID
++BrokerStop(
++    _In_opt_ PBROKER_CONTEXT BrokerContext
++    )
++{
++    if (BrokerContext == NULL) {
++        return;
++    }
++
++    InterlockedExchange(&BrokerContext->Stop, 1);
++
++    if (BrokerContext->Thread != NULL) {
++        WaitForSingleObject(BrokerContext->Thread, 2000);
++        CloseHandle(BrokerContext->Thread);
++        BrokerContext->Thread = NULL;
++    }
++
++    free(BrokerContext);
++}
++
++
++BOOLEAN
++BrokerIsConnected(
++    _In_opt_ PBROKER_CONTEXT BrokerContext
++    )
++{
++    if ((BrokerContext == NULL) || (BrokerContext->Pipe == INVALID_HANDLE_VALUE)) {
++        return FALSE;
++    }
++    return TRUE;
++}
+--- /dev/null
++++ b/broker.h
+@@ -0,0 +1,95 @@
++/*++
++
++Copyright (c) El-Modem Project
++
++Module Name:
++
++    broker.h
++
++Abstract:
++
++    Named-pipe transport for the virtual COM port.
++
++    The stock VirtualSerial sample answers AT commands internally and has no
++    way to reach a real modem. This broker gives the port a far end: bytes the
++    terminal writes are forwarded to a named pipe, and bytes arriving on that
++    pipe are handed back to the terminal.
++
++    It is strictly opt-in. Until El-Modem connects, the driver behaves exactly
++    as the sample did, so an unconnected port still answers AT locally.
++
++--*/
++
++#pragma once
++
++#define ELMODEM_PIPE_NAME    L"\\\\.\\pipe\\ElModemSerial"
++#define ELMODEM_PIPE_PATH    L"\\\\.\\pipe\\ElModemSerial"
++
++//
++// Size of the staging buffer used in each direction. Kept small so the pump
++// stays responsive and back-pressure is visible to the caller.
++//
++#define BROKER_BUFFER_SIZE   512
++
++//
++// Pump interval. The thread uses PeekNamedPipe so it never blocks; this only
++// bounds how long a byte can sit waiting.
++//
++#define BROKER_POLL_MS       5
++
++//
++// QUEUE_CONTEXT is declared in queue.h, which internal.h includes first.
++//
++typedef struct _BROKER_CONTEXT {
++    PQUEUE_CONTEXT         QueueContext;
++    volatile LONG          Stop;
++    HANDLE                 Thread;
++    HANDLE                 Pipe;
++} BROKER_CONTEXT, *PBROKER_CONTEXT;
++
++//
++// Start the pump and record it in QueueContext->Broker.
++// Returns NULL if the thread could not be created; the port then simply keeps
++// the sample's built-in AT behaviour.
++//
++PBROKER_CONTEXT
++BrokerStart(
++    _In_ PQUEUE_CONTEXT QueueContext
++    );
++
++//
++// Request the pump to stop and wait for the thread to exit. Safe to call with a
++// NULL context.
++//
++VOID
++BrokerStop(
++    _In_opt_ PBROKER_CONTEXT BrokerContext
++    );
++
++//
++// TRUE once El-Modem is connected. While this is true the driver must not
++// synthesise AT responses itself - El-Modem owns the conversation.
++//
++BOOLEAN
++BrokerIsConnected(
++    _In_opt_ PBROKER_CONTEXT BrokerContext
++    );
++
++//
++// Hands terminal output straight to El-Modem.
++//
++// The ring buffer is INBOUND ONLY: the pump refills it from the pipe and the
++// serial read path drains it. Terminal writes must therefore go direct to the
++// pipe rather than through the ring, otherwise the pump's next iteration would
++// pull them straight back out and echo them to the modem instead of the
++// terminal.
++//
++// Returns STATUS_SUCCESS even when no peer is attached; the caller decides
++// whether to fall back to the built-in AT responder.
++//
++NTSTATUS
++BrokerSend(
++    _In_ PQUEUE_CONTEXT QueueContext,
++    _In_reads_bytes_(Length) PVOID  Data,
++    _In_ size_t            Length
++    );
+--- a/device.c
++++ b/device.c
+@@ -72,6 +72,20 @@
+ 
+     deviceContext = GetDeviceContext(device);
+     deviceContext->Device = device;
++
++    //
++    // Start from a sane 115200 8N1 line with DTR and RTS asserted. Without
++    // this the registers stay zeroed, and GetCommState() reports a baud rate
++    // of 0 - which no terminal program can actually use.
++    //
++    deviceContext->BaudRate = 115200;
++    deviceContext->LineControlRegister = SERIAL_8_DATA |
++                                         SERIAL_1_STOP |
++                                         SERIAL_NONE_PARITY;
++    deviceContext->ModemControlRegister = 0;
++    deviceContext->FifoControlRegister = 0;
++    deviceContext->DtrSet = TRUE;
++    deviceContext->RtsSet = TRUE;
+ 
+     *DeviceContext = deviceContext;
+ 
+@@ -337,6 +351,14 @@
+     
+     DECLARE_CONST_UNICODE_STRING(deviceSubkey, SERIAL_DEVICE_MAP);
+ 
++    //
++    // Stop the broker pump before the queues it touches are torn down.
++    //
++    if (deviceContext->Broker != NULL) {
++        BrokerStop((PBROKER_CONTEXT) deviceContext->Broker);
++        deviceContext->Broker = NULL;
++    }
++
+     if (deviceContext->CreatedLegacyHardwareKey == TRUE) {
+     
+         RtlInitUnicodeString(&pdoString, deviceContext->PdoName);
+@@ -447,3 +469,37 @@
+ {
+     *Timeouts = DeviceContext->Timeouts;
+ }
++
++VOID
++SetDtr(
++    _In_  PDEVICE_CONTEXT   DeviceContext,
++    _In_  BOOLEAN           Value
++    )
++{
++    DeviceContext->DtrSet = Value;
++}
++
++BOOLEAN
++GetDtr(
++    _In_  PDEVICE_CONTEXT   DeviceContext
++    )
++{
++    return DeviceContext->DtrSet;
++}
++
++VOID
++SetRts(
++    _In_  PDEVICE_CONTEXT   DeviceContext,
++    _In_  BOOLEAN           Value
++    )
++{
++    DeviceContext->RtsSet = Value;
++}
++
++BOOLEAN
++GetRts(
++    _In_  PDEVICE_CONTEXT   DeviceContext
++    )
++{
++    return DeviceContext->RtsSet;
++}
+--- a/device.h
++++ b/device.h
+@@ -42,7 +42,24 @@
+ 
+     SERIAL_TIMEOUTS Timeouts;
+ 
++    //
++    // The stock VirtualSerial sample silently discards IOCTL_SERIAL_SET_DTR /
++    // SET_RTS / CLR_RTS, so it cannot answer GET_DTRRTS or GET_MODEMSTATUS.
++    // Terminal programs (SyncTerm, ZOC, PuTTY) rely on these to decide that
++    // the line came up and that hardware flow control is usable, so the
++    // state is tracked here.
++    //
++    BOOLEAN         DtrSet;
++
++    BOOLEAN         RtsSet;
++
+     BOOLEAN         CreatedLegacyHardwareKey;
++
++    //
++    // Broker pump owned by the default queue (see broker.h). Held here too so
++    // the device cleanup path can stop it without reaching into the queue.
++    //
++    PVOID           Broker;
+ 
+     PWSTR           PdoName;
+ 
+@@ -120,3 +137,25 @@
+     _In_  PDEVICE_CONTEXT   DeviceContext,
+     _Out_ SERIAL_TIMEOUTS   *Timeouts
+     );
++
++VOID
++SetDtr(
++    _In_  PDEVICE_CONTEXT   DeviceContext,
++    _In_  BOOLEAN           Value
++    );
++
++BOOLEAN
++GetDtr(
++    _In_  PDEVICE_CONTEXT   DeviceContext
++    );
++
++VOID
++SetRts(
++    _In_  PDEVICE_CONTEXT   DeviceContext,
++    _In_  BOOLEAN           Value
++    );
++
++BOOLEAN
++GetRts(
++    _In_  PDEVICE_CONTEXT   DeviceContext
++    );
+--- a/internal.h
++++ b/internal.h
+@@ -37,6 +37,7 @@
+ #include "device.h"
+ #include "ringbuffer.h"
+ #include "queue.h"
++#include "broker.h"
+ 
+ //
+ // Tracing and Assert
+--- a/queue.c
++++ b/queue.c
+@@ -19,6 +19,13 @@
+ 
+ 
+ #include "internal.h"
++
++//
++// Set once by QueueCreate. UMDF timers carry no typed context, so the read
++// timer callback resolves its queue through this. Safe for this driver, which
++// creates exactly one default queue.
++//
++static PQUEUE_CONTEXT g_queueContext = NULL;
+ 
+ NTSTATUS
+ QueueCreate(
+@@ -31,6 +38,7 @@
+     WDF_OBJECT_ATTRIBUTES   queueAttributes;
+     WDFQUEUE                queue;
+     PQUEUE_CONTEXT          queueContext;
++    WDF_TIMER_CONFIG        timerConfig;
+ 
+     //
+     // Create the default queue
+@@ -110,11 +118,135 @@
+ 
+     queueContext->WaitMaskQueue = queue;
+ 
++    //
++    // Deferred reads must complete when their timeout expires. The sample
++    // stored SERIAL_TIMEOUTS but never enforced them, so a read with nothing
++    // to return simply never completed.
++    //
++    // UMDF's WdfTimerCreate takes no parent argument - the parent comes from
++    // the config - and UMDF timers have no typed context of their own, so the
++    // single queue context is tracked here. That is adequate because this
++    // driver creates exactly one default queue per device.
++    //
++    g_queueContext = queueContext;
++
++    WDF_TIMER_CONFIG_INIT(&timerConfig, QueueEvtTimer);
++    WdfTimerCreate(&timerConfig, WDF_NO_OBJECT_ATTRIBUTES, &queueContext->ReadTimer);
++
+     RingBufferInitialize(&queueContext->RingBuffer,
+                             queueContext->Buffer,
+                             sizeof(queueContext->Buffer));
+ 
++    //
++    // Attach the named-pipe transport to El-Modem. Non-fatal: with no peer
++    // connected the port keeps the sample's built-in AT behaviour, which is
++    // exactly what we want for standalone terminal testing.
++    //
++    {
++        PBROKER_CONTEXT broker = BrokerStart(queueContext);
++        if (broker != NULL) {
++            DeviceContext->Broker = broker;
++        }
++    }
++
+     return status;
++}
++
++
++ULONG
++QueueGetReadTimeoutMs(
++    _In_ PQUEUE_CONTEXT QueueContext
++    )
++{
++    SERIAL_TIMEOUTS timeouts;
++    ULONGLONG       total;
++
++    GetTimeouts(QueueContext->DeviceContext, &timeouts);
++
++    //
++    // All fields MAXULONG is the documented way of saying "wait forever".
++    //
++    if ((timeouts.ReadIntervalTimeout        == MAXULONG) &&
++        (timeouts.ReadTotalTimeoutMultiplier == MAXULONG) &&
++        (timeouts.ReadTotalTimeoutConstant   == MAXULONG)) {
++        return INFINITE;
++    }
++
++    //
++    // For a read that has not yet returned any bytes the governing limit is
++    // the total; ReadIntervalTimeout only applies between bytes once a partial
++    // read is already under way, which this driver does not implement.
++    //
++    total = (ULONGLONG) timeouts.ReadTotalTimeoutMultiplier *
++            (ULONGLONG) timeouts.ReadTotalTimeoutConstant;
++
++    if (total > MAXULONG) {
++        return MAXULONG;
++    }
++
++    return (ULONG) total;
++}
++
++
++VOID
++QueueServicePendingReads(
++    _In_ PQUEUE_CONTEXT QueueContext
++    )
++{
++    for (;;) {
++        WDFREQUEST request = NULL;
++        NTSTATUS   status;
++        size_t     available = 0;
++        size_t     copied = 0;
++
++        status = WdfIoQueueRetrieveNextRequest(QueueContext->ReadQueue, &request);
++        if (!NT_SUCCESS(status)) {
++            break;
++        }
++
++        RingBufferGetAvailableData(&QueueContext->RingBuffer, &available);
++
++        if (available > 0) {
++            PVOID   buffer = NULL;
++            size_t  length = 0;
++
++            //
++            // WdfRequestRetrieveOutputBuffer returns both the buffer the
++            // request will receive into and how large it is, which is what
++            // bounds the copy.
++            //
++            if (NT_SUCCESS(WdfRequestRetrieveOutputBuffer(request,
++                                                           0,
++                                                           &buffer,
++                                                           &length)) &&
++                (buffer != NULL) && (length > 0)) {
++
++                RingBufferRead(&QueueContext->RingBuffer,
++                               (BYTE*) buffer,
++                               (available > length) ? length : available,
++                               &copied);
++            }
++        }
++
++        //
++        // copied == 0 is a legitimate outcome: it is how a read reports that
++        // its timeout expired with nothing to deliver.
++        //
++        WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, (ULONG) copied);
++    }
++}
++
++
++VOID
++QueueEvtTimer(
++    _In_ WDFTIMER        Timer
++    )
++{
++    UNREFERENCED_PARAMETER(Timer);
++
++    if (g_queueContext != NULL) {
++        QueueServicePendingReads(g_queueContext);
++    }
+ }
+ 
+ 
+@@ -400,10 +532,27 @@
+         break;
+     }
+ 
++    case IOCTL_SERIAL_SET_DTR:
++        SetDtr(deviceContext, TRUE);
++        status = STATUS_SUCCESS;
++        break;
++
++    case IOCTL_SERIAL_CLR_DTR:
++        SetDtr(deviceContext, FALSE);
++        status = STATUS_SUCCESS;
++        break;
++
++    case IOCTL_SERIAL_SET_RTS:
++        SetRts(deviceContext, TRUE);
++        status = STATUS_SUCCESS;
++        break;
++
++    case IOCTL_SERIAL_CLR_RTS:
++        SetRts(deviceContext, FALSE);
++        status = STATUS_SUCCESS;
++        break;
++
+     case IOCTL_SERIAL_SET_QUEUE_SIZE:
+-    case IOCTL_SERIAL_SET_DTR:
+-    case IOCTL_SERIAL_SET_RTS:
+-    case IOCTL_SERIAL_CLR_RTS:
+     case IOCTL_SERIAL_SET_XON:
+     case IOCTL_SERIAL_SET_XOFF:
+     case IOCTL_SERIAL_SET_CHARS:
+@@ -411,9 +560,164 @@
+     case IOCTL_SERIAL_GET_HANDFLOW:
+     case IOCTL_SERIAL_SET_HANDFLOW:
+     case IOCTL_SERIAL_RESET_DEVICE:
++    case IOCTL_SERIAL_SET_BREAK_ON:
++    case IOCTL_SERIAL_SET_BREAK_OFF:
++    case IOCTL_SERIAL_LSRMST_INSERT:
+         //
+         // NOTE: The application expects STATUS_SUCCESS for these IOCTLs.
+         //
++        status = STATUS_SUCCESS;
++        break;
++
++    //
++    // The stock VirtualSerial sample falls through to default (and therefore
++    // STATUS_INVALID_PARAMETER) for every IOCTL below. That makes the port
++    // unusable to real applications: ClearCommError fails outright, and .NET's
++    // SerialPort refuses to open it at all.
++    //
++
++    case IOCTL_SERIAL_GET_MODEMSTATUS:
++    {
++        //
++        // Report CTS/DSR/DCD as asserted using the MS_*_ON bit domain that
++        // GetCommModemStatus() callers decode. This is a null-modem-style port
++        // with no far-end DCE, so an application that waits for carrier or for
++        // CTS before writing would otherwise block forever.
++        //
++        ULONG modemStatus = MS_CTS_ON | MS_DSR_ON | MS_RLSD_ON;
++
++        status = RequestCopyFromBuffer(Request,
++                            &modemStatus,
++                            sizeof(modemStatus));
++        break;
++    }
++
++    case IOCTL_SERIAL_PURGE:
++    {
++        ULONG purgeFlags = 0;
++
++        status = RequestCopyToBuffer(Request,
++                            &purgeFlags,
++                            sizeof(purgeFlags));
++
++        if (NT_SUCCESS(status)) {
++            //
++            // PURGE_RXABORT / PURGE_RXCLEAR drop anything waiting to be read.
++            // PURGE_TXABORT / PURGE_TX_CLEAR discard queued transmit data.
++            //
++            // Both directions share one ring in this sample, so either flag
++            // empties it - which matches what a caller of PurgeComm()
++            // (PURGE_TXABORT|PURGE_RXABORT) actually wants before connecting.
++            //
++            if (purgeFlags & (PURGE_RXABORT | PURGE_RXCLEAR |
++                              PURGE_TXABORT | PURGE_TXCLEAR)) {
++                RingBufferEmpty(&queueContext->RingBuffer);
++            }
++        }
++        break;
++    }
++
++    case IOCTL_SERIAL_GET_PROPERTIES:
++    {
++        SERIAL_COMMPROP properties = {0};
++
++        //
++        // Describe a plain 16550-compatible port. Must match this SDK's
++        // SERIAL_COMMPROP layout exactly or GetCommProperties() fails with
++        // ERROR_INSUFFICIENT_BUFFER (122), which is what stopped .NET's
++        // SerialPort from opening the port.
++        //
++        properties.PacketLength = sizeof(SERIAL_COMMPROP);
++        properties.PacketVersion = 1;
++        properties.ServiceMask = 0;
++        properties.MaxTxQueue = 4096;
++        properties.MaxRxQueue = 4096;
++        properties.MaxBaud = 115200;
++        properties.ProvSubType = 0;
++        properties.ProvCapabilities = 0;
++        properties.SettableParams = 0;
++        properties.SettableBaud = 0;
++        properties.SettableData = 0;
++        properties.SettableStopParity = 0;
++        properties.CurrentTxQueue = 4096;
++        properties.CurrentRxQueue = 4096;
++        properties.ProvSpec1 = 0;
++        properties.ProvSpec2 = 0;
++        properties.ProvChar[0] = L'\0';
++
++        status = RequestCopyFromBuffer(Request,
++                            &properties,
++                            sizeof(properties));
++        break;
++    }
++
++    case IOCTL_SERIAL_GET_DTRRTS:
++    {
++        //
++        // ControlHandshake shares the SERIAL_MSR_* bit layout:
++        // 0x01 DTR, 0x40 RTS.
++        //
++        ULONG control = 0;
++
++        if (GetDtr(deviceContext)) { control |= 0x01; }
++        if (GetRts(deviceContext)) { control |= 0x40; }
++
++        status = RequestCopyFromBuffer(Request,
++                            &control,
++                            sizeof(control));
++        break;
++    }
++
++    case IOCTL_SERIAL_GET_COMMSTATUS:
++    {
++        SERIAL_STATUS serialStatus = {0};
++        size_t        available = 0;
++
++        //
++        // ClearCommError() maps this onto COMSTAT: AmountInInQueue becomes
++        // cbInQue. Reporting a hardcoded zero here makes in_waiting (pyserial)
++        // and any polling reader believe the port is always empty, so queued
++        // data would never be delivered. The stock sample never implemented
++        // this IOCTL at all, which is why the symptom was invisible before.
++        //
++        RingBufferGetAvailableData(&queueContext->RingBuffer, &available);
++
++        serialStatus.Errors = 0;
++        serialStatus.HoldReasons = 0;
++        serialStatus.AmountInInQueue = (ULONG) available;
++        serialStatus.AmountInOutQueue = 0;
++
++        status = RequestCopyFromBuffer(Request,
++                            &serialStatus,
++                            sizeof(serialStatus));
++        break;
++    }
++
++    case IOCTL_SERIAL_CLR_STATS:
++        //
++        // Nothing can fault on a virtual port, so there are no accumulated
++        // errors to discard.
++        //
++        status = STATUS_SUCCESS;
++        break;
++
++    case IOCTL_SERIAL_GET_STATS:
++    {
++        SERIAL_STATS serialStats = {0};
++
++        serialStats.ModemStatus = SERIAL_MSR_CTS | SERIAL_MSR_DSR |
++                                  SERIAL_MSR_RLSD;
++
++        status = RequestCopyFromBuffer(Request,
++                            &serialStats,
++                            sizeof(serialStats));
++        break;
++    }
++
++    case IOCTL_SERIAL_APPLY_DEFAULT_CONFIGURATION:
++        SetBaudRate(deviceContext, 115200);
++        SetDtr(deviceContext, TRUE);
++        SetRts(deviceContext, TRUE);
+         status = STATUS_SUCCESS;
+         break;
+ 
+@@ -439,7 +743,6 @@
+     NTSTATUS                status;
+     PQUEUE_CONTEXT          queueContext = GetQueueContext(Queue);
+     WDFMEMORY               memory;
+-    WDFREQUEST              savedRequest;
+     size_t                  availableData = 0;
+ 
+     Trace(TRACE_LEVEL_INFO,
+@@ -453,12 +756,23 @@
+     }
+ 
+     //
+-    // Process input
+-    //
+-    status = QueueProcessWriteBytes(
+-                            queueContext,
+-                            (PUCHAR)WdfMemoryGetBuffer(memory, NULL),
++    // Process input.
++    //
++    // Once El-Modem is attached, terminal output goes straight down the pipe.
++    // Putting it in the ring instead would let the broker pump pull it back
++    // out on its next pass and echo it to the modem rather than the terminal.
++    //
++    if (BrokerIsConnected((PBROKER_CONTEXT) queueContext->Broker)) {
++        status = BrokerSend(queueContext,
++                            (PUCHAR) WdfMemoryGetBuffer(memory, NULL),
+                             Length);
++    }
++    else {
++        status = QueueProcessWriteBytes(
++                                queueContext,
++                                (PUCHAR)WdfMemoryGetBuffer(memory, NULL),
++                                Length);
++    }
+     if( !NT_SUCCESS(status) ) {
+         return;
+     }
+@@ -477,28 +791,11 @@
+     }
+ 
+     //
+-    // Continue with the next request, if there is one pending
+-    //
+-    for ( ; ; ) {
+-
+-        status = WdfIoQueueRetrieveNextRequest(
+-                            queueContext->ReadQueue,
+-                            &savedRequest);
+-
+-        if (!NT_SUCCESS(status)) {
+-            break;
+-        }
+-
+-        status = WdfRequestForwardToIoQueue(
+-                            savedRequest,
+-                            Queue);
+-
+-        if( !NT_SUCCESS(status) ) {
+-            Trace(TRACE_LEVEL_ERROR,
+-                "Error: WdfRequestForwardToIoQueue failed 0x%x", status);
+-            WdfRequestComplete(savedRequest, status);
+-        }
+-    }
++    // Continue with the next request, if there is one pending. Parked reads
++    // are completed directly rather than forwarded back onto this queue, so
++    // that data already buffered is handed over without another round trip.
++    //
++    QueueServicePendingReads(queueContext);
+ }
+ 
+ 
+@@ -543,7 +840,9 @@
+     }
+     else {
+         //
+-        // No data to read. Queue the request for later processing.
++        // No data to read. Park the request and arm the read timer so it
++        // still completes when its timeout expires. Without this a read that
++        // arrives before any data simply never returns.
+         //
+         status = WdfRequestForwardToIoQueue(Request,
+                             queueContext->ReadQueue);
+@@ -551,6 +850,17 @@
+             Trace(TRACE_LEVEL_ERROR,
+                 "Error: WdfRequestForwardToIoQueue failed 0x%x", status);
+             WdfRequestComplete(Request, status);
++        } else {
++            ULONG timeout = QueueGetReadTimeoutMs(queueContext);
++
++            if (timeout == 0) {
++                //
++                // Non-blocking read requested: satisfy it straight away.
++                //
++                QueueServicePendingReads(queueContext);
++            } else if (timeout != INFINITE) {
++                WdfTimerStart(queueContext->ReadTimer, timeout);
++            }
+         }
+     }
+ }
+@@ -658,6 +968,17 @@
+                 //  got a CR, send a response to the command
+                 //
+                 QueueContext->CommandMatchState = COMMAND_MATCH_STATE_IDLE;
++
++                //
++                // Once El-Modem is attached it owns the AT conversation. The
++                // sample's synthesised OK/CONNECT would otherwise land in the
++                // ring and be forwarded straight back to the modem as if the
++                // terminal had typed it.
++                //
++                if (BrokerIsConnected((PBROKER_CONTEXT) QueueContext->Broker)) {
++                    QueueContext->ConnectCommand = FALSE;
++                    break;
++                }
+ 
+                 if (QueueContext->ConnectCommand) {
+                     //
+--- a/queue.h
++++ b/queue.h
+@@ -62,6 +62,17 @@
+ 
+     WDFQUEUE        WaitMaskQueue;      // Manual queue for pending ioctl wait-on-mask
+ 
++    //
++    // Arms deferred reads so they complete when their timeout expires.
++    //
++    WDFTIMER        ReadTimer;
++
++    //
++    // Named-pipe transport to El-Modem (see broker.h). Typed as PVOID to avoid
++    // a circular include between this header and broker.h; callers cast.
++    //
++    PVOID           Broker;
++
+     PDEVICE_CONTEXT DeviceContext;
+ 
+ } QUEUE_CONTEXT, *PQUEUE_CONTEXT;
+@@ -111,3 +122,32 @@
+     _In_  size_t            NumBytesToCopyTo
+     );
+ 
++//
++// Completes every request currently parked on the manual ReadQueue, handing
++// each one whatever is available in the ring buffer (possibly nothing).
++//
++// The stock sample only ever drained this queue from EvtIoWrite, so a terminal
++// that read without writing first waited forever. The broker pump also needs
++// this: it fills the ring from an arbitrary thread, and forwarding requests
++// from there does not reliably service them.
++//
++VOID
++QueueServicePendingReads(
++    _In_ PQUEUE_CONTEXT QueueContext
++    );
++
++//
++// Computes how long a deferred read may wait, in milliseconds, from the
++// current SERIAL_TIMEOUTS. Returns 0 for "no wait" and INFINITE-ish for a
++// read that should never time out.
++//
++ULONG
++QueueGetReadTimeoutMs(
++    _In_ PQUEUE_CONTEXT QueueContext
++    );
++
++VOID
++QueueEvtTimer(
++    _In_ WDFTIMER            Timer
++    );
++
+--- a/ringbuffer.h
++++ b/ringbuffer.h
+@@ -115,3 +115,20 @@
+     _In_  PRING_BUFFER      Self,
+     _Out_ size_t            *AvailableData
+     );
++
++//
++// Discards everything currently buffered by rewinding the read and write
++// points together. No memory is touched, so this is safe to call while data is
++// in flight. Needed by IOCTL_SERIAL_PURGE: the stock sample has no equivalent,
++// so PurgeComm() succeeded but silently left stale bytes behind - which is how
++// data written during one session resurfaced as a read in the next.
++//
++FORCEINLINE
++VOID
++RingBufferEmpty(
++    _Inout_ PRING_BUFFER    Self
++    )
++{
++    Self->Head = Self->Base;
++    Self->Tail = Self->Base;
++}
+--- a/serial.h
++++ b/serial.h
+@@ -120,6 +120,113 @@
+ #define MARK_PARITY      3
+ #define SPACE_PARITY     4
+ 
++//
++// Serial IOCTL codes 29-40. The stock sample stops at 39 and omits these, so
++// every one of them fell through to STATUS_INVALID_PARAMETER and made the port
++// unusable to real applications (ClearCommError failed outright and .NET's
++// SerialPort refused to open it).
++//
++//
++// There is no IOCTL_SERIAL_SET_DTRRTS. DTR/RTS are driven with
++// IOCTL_SERIAL_SET_DTR / CLR_DTR / SET_RTS / CLR_RTS. An earlier revision of
++// this file invented a SET_DTRRTS at function code 29, which collided with
++// IOCTL_SERIAL_GET_PROPERTIES (C2196: case value already used).
++//
++#ifndef IOCTL_SERIAL_LSRMST_INSERT
++#define IOCTL_SERIAL_LSRMST_INSERT          CTL_CODE(FILE_DEVICE_SERIAL_PORT, 31,METHOD_BUFFERED,FILE_ANY_ACCESS)
++#endif
++#define IOCTL_SERIAL_CONFIG_SIZE            CTL_CODE(FILE_DEVICE_SERIAL_PORT, 32,METHOD_BUFFERED,FILE_ANY_ACCESS)
++#define IOCTL_SERIAL_GET_COMMCONFIG         CTL_CODE(FILE_DEVICE_SERIAL_PORT, 33,METHOD_BUFFERED,FILE_ANY_ACCESS)
++#define IOCTL_SERIAL_SET_COMMCONFIG         CTL_CODE(FILE_DEVICE_SERIAL_PORT, 34,METHOD_BUFFERED,FILE_ANY_ACCESS)
++#define IOCTL_SERIAL_GET_STATS              CTL_CODE(FILE_DEVICE_SERIAL_PORT, 35,METHOD_BUFFERED,FILE_ANY_ACCESS)
++#define IOCTL_SERIAL_CLR_STATS              CTL_CODE(FILE_DEVICE_SERIAL_PORT, 36,METHOD_BUFFERED,FILE_ANY_ACCESS)
++#define IOCTL_SERIAL_APPLY_DEFAULT_CONFIGURATION CTL_CODE(FILE_DEVICE_SERIAL_PORT, 40,METHOD_BUFFERED,FILE_ANY_ACCESS)
++
++//
++// Modem status bits, as reported through SERIAL_MSR_*.
++//
++#define SERIAL_MSR_DCD         0x01
++#define SERIAL_MSR_RLSD        0x01   /* alias for DCD; Windows uses RLSD in SERIAL_STATUS.Mask */
++#define SERIAL_MSR_CTS         0x02
++#define SERIAL_MSR_DSR         0x04
++#define SERIAL_MSR_RI          0x08
++#define SERIAL_MSR_DTR         0x10
++#define SERIAL_MSR_RTS         0x20
++#define SERIAL_MSR_LOOP        0x40
++#define SERIAL_MSR_CALL        0x80
++
++//
++// Layout copied verbatim from the WDK's ntddser.h. Getting this wrong is not
++// cosmetic: returning the wrong size makes the I/O manager reject the request
++// with ERROR_INVALID_USER_BUFFER (1784), which is exactly what ClearCommError
++// surfaced as before this was corrected.
++//
++typedef struct _SERIAL_STATUS {
++    ULONG Errors;
++    ULONG HoldReasons;
++    ULONG AmountInInQueue;
++    ULONG AmountInOutQueue;
++    BOOLEAN EofReceived;
++    BOOLEAN WaitForImmediate;
++    } SERIAL_STATUS,*PSERIAL_STATUS;
++
++typedef struct _SERIAL_STATS {
++    ULONG Errors[4];
++    ULONG BytesInTransmitBuffer;
++    ULONG BytesInReceiveBuffer;
++    ULONG ModemStatus;
++    } SERIAL_STATS,*PSERIAL_STATS;
++
++//
++// Modem status values as GetCommModemStatus() reports them.
++//
++// NOTE: these are a DIFFERENT bit domain from the SERIAL_MSR_* values above.
++// GetCommModemStatus() hands the driver's IOCTL result straight to the caller,
++// and callers decode it with the MS_*_ON constants from winbase.h. Returning
++// SERIAL_MSR_* here makes every application believe the line is dead - which is
++// exactly what happened before this was corrected (GetCommModemStatus returned
++// 0x07 and reported no carrier at all).
++//
++#ifndef MS_CTS_ON
++#define MS_CTS_ON           ((ULONG)0x0010)
++#define MS_DSR_ON           ((ULONG)0x0020)
++#define MS_RING_ON          ((ULONG)0x0040)
++#define MS_RLSD_ON          ((ULONG)0x0080)
++#endif
++
++//
++// PURGE_TXABORT / PURGE_RXABORT / PURGE_TXCLEAR / PURGE_RXCLEAR already come
++// from winbase.h via <windows.h>, so they are deliberately not redefined here.
++// (Their real mapping is TXABORT=0x1, RXABORT=0x2, TXCLEAR=0x4, RXCLEAR=0x8 -
++// note PURGE_TXCLEAR has no underscore.)
++//
++
++//
++// Layout copied verbatim from the WDK's ntddser.h. The caller sizes its buffer
++// from this exact struct, so returning anything larger is rejected with
++// ERROR_INSUFFICIENT_BUFFER (122).
++//
++typedef struct _SERIAL_COMMPROP {
++    USHORT PacketLength;
++    USHORT PacketVersion;
++    ULONG ServiceMask;
++    ULONG Reserved1;
++    ULONG MaxTxQueue;
++    ULONG MaxRxQueue;
++    ULONG MaxBaud;
++    ULONG ProvSubType;
++    ULONG ProvCapabilities;
++    ULONG SettableParams;
++    ULONG SettableBaud;
++    USHORT SettableData;
++    USHORT SettableStopParity;
++    ULONG CurrentTxQueue;
++    ULONG CurrentRxQueue;
++    ULONG ProvSpec1;
++    ULONG ProvSpec2;
++    WCHAR ProvChar[1];
++    } SERIAL_COMMPROP,*PSERIAL_COMMPROP;
++
+ #endif  // #ifdef _KERNEL_MODE, #include <ntddser.h>
+ 
+ //

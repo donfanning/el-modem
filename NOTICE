@@ -13,3 +13,8 @@ This notice does not itself grant a proprietary license or promise rights to thi
 
 Third-party dependencies and the separate serialsim driver/patch retain their
 own licenses. Nothing here changes those licenses.
+
+The separate Windows UMDF2 driver component in packaging/windows-driver is
+distributed under MS-PL, including its source overlay and reconstruction helper.
+See that directory's LICENSE and README. Microsoft notices are retained; the
+commercial licensing offer above does not grant rights over Microsoft code.

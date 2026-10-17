@@ -3,14 +3,13 @@
 ## Availability
 
 The public `v0.1.0-rc1-windows` ZIP contains no virtual-COM driver. This
-repository currently contains the Python pipe backend and driver packaging
-tools, but **not** the modified UMDF2 solution, INF or C++ source. The build
-instructions below require that separate modified driver project; cloning this
-repository alone cannot build it. Microsoft's original VirtualSerial2 sample
-does not by itself establish compatibility with our named-pipe protocol.
-
-Until the modified source is supplied and its complete path is qualified, use
-TCP or the separately installed com0com route in [SERIAL.md](SERIAL.md).
+repository includes a reviewed [MS-PL source overlay](../packaging/windows-driver/README.md)
+and pinned, hash-checked reconstruction helper. It fetches 14 Microsoft baseline
+files and reconstructs 16 source/project files; no full vendor tree, signing key,
+certificate or driver binary is distributed. Source reconstruction is verified;
+a fresh WDK build, installation and source-to-binary binding remain unqualified.
+TCP and the separately installed com0com route in [SERIAL.md](SERIAL.md) remain
+available without building this driver.
 `pipe` is an opt-in integration for an already available compatible driver.
 Its byte protocol does not carry real DTR/DCD/RI/CTS transitions, and one driver
 using `ElModemSerial` serves one modem only. Additional modems require separate
@@ -45,8 +44,14 @@ runs in user mode inside `WUDFHost.exe`.
 
 ## Build
 
-From the separate modified driver's source root (not included here; the
-directory holding `VirtualSerial.sln`):
+With Python 3 and Git installed, reconstruct a fresh source directory first:
+
+```powershell
+python packaging/windows-driver/prepare_source.py C:\dev\el-modem-driver
+cd C:\dev\el-modem-driver
+```
+
+Then, from a Visual Studio developer shell with the matching SDK/WDK installed:
 
 ```powershell
 msbuild VirtualSerial.sln /t:Rebuild /p:Configuration=Release /p:Platform=x64
@@ -285,21 +290,16 @@ Reboot to clear any remaining device node.
 
 ## Signing
 
-A public signature is what makes this installable without touching certificate
-stores. The plan is a Microsoft-issued signature for an OSI-approved open
-source project, which costs nothing to obtain; the fallback is a paid EV
-certificate. Until one of those exists, test signing is the only route, and the
-trust-the-certificate step above is unavoidable.
-
-The driver source is not yet published in its own repository, so these
-instructions currently refer to a local build tree.
+This source release supplies no production-signed or test-signed driver package.
+Build locally and use your own development test certificate. Source availability
+does not change Windows signing, trust or boot-policy requirements. No certificate
+private key is included in this repository.
 
 ## Project test certificate and installer integration
 
-The per-build WDK certificate described above cannot be used for distribution:
-every build produces a different certificate, so a prebuilt package is
-installable only on the machine that built it. For shipping, the project keeps
-**one** certificate instead.
+The following optional helpers create a local development certificate and sign
+a local package. Retain its private key outside source control; this is not a
+production-signing workflow or permission to redistribute a project signing key.
 
 ```powershell
 # 1. Create the project certificate once. Output goes to a gitignored directory.
