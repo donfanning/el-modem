@@ -1109,10 +1109,10 @@ class ModulationNegotiationTests(unittest.TestCase):
             a.poll(time.monotonic())
             for session, sock, rx in ((a, a_sock, a_rx), (o, o_sock, o_rx)):
                 try:
-                    packet, _ = sock.recvfrom(2048)
+                    packet, source = sock.recvfrom(2048)
                 except (socket.timeout, OSError):
                     continue
-                rx.extend(session.handle_rtp_packet(packet))
+                rx.extend(session.handle_rtp_datagram(source,packet))
             if until(o_rx, a_rx):
                 break
         return o_rx, a_rx

@@ -283,13 +283,12 @@ class OnlineAudioSession:
     ):
         self._sock = sock
         self._remote_addr = remote_addr
-        # Actual send destination. Starts at the SDP address, but inbound
-        # RTP is the truth about where the peer is reachable (symmetric
-        # RTP, RFC 4961 style, like Asterisk's own rtp_symmetric and its
-        # "Strict RTP learning"): note_rtp_source() moves it to the
-        # observed source. This is what makes remotes behind NAT/proxies
-        # work when SDP carries an unroutable address.
+        # Start at SDP; qualify a consecutive RTP source before learning a
+        # symmetric destination. Pin address and SSRC for this call. The
+        # probation queue preserves startup samples rather than dropping them.
         self._send_addr = remote_addr
+        self._rtp_peer = None
+        self._rtp_candidate = []
         self._tx_role = tx_role
         self._rx_role = rx_role
         self._v22 = None
@@ -1124,22 +1123,52 @@ class OnlineAudioSession:
         self._rx_context['pcm_source'] = 'packet'
         return filled + self.handle_rtp_payload(packet[12:])
 
-    def note_rtp_source(self, addr) -> None:
-        """Latch the RTP send destination from an inbound packet's source.
+    def note_rtp_source(self, addr, packet, received_at=None, clock_context=None):
+        """Admit PCMU from a qualified address/SSRC, returning buffered packets.
 
-        Only called with packets that already passed the RTP version and
-        payload-type checks in the main loop. Replaces the tuple wholesale;
-        tuple replacement is atomic under the GIL for the send thread.
+        Three consecutive sequence numbers from one endpoint within one second
+        establish the peer. After that, foreign addresses or SSRCs cannot
+        redirect the transmitter or inject samples. This is source probation,
+        not authentication: a new SIP session is required for address/SSRC
+        changes, and deployments must still restrict reachable RTP ports.
+        Each returned tuple retains its original arrival time/clock metadata.
         """
         try:
             host, port = addr[0], int(addr[1])
-        except (TypeError, ValueError, IndexError):
-            return
-        if not isinstance(host, str) or not host or host == "0.0.0.0":
-            return
-        if not 1 <= port <= 65535:
-            return
-        self._send_addr = (host, port)
+            numeric = socket.inet_pton(socket.AF_INET, host)
+        except (TypeError, ValueError, IndexError, OSError):
+            return []
+        if numeric == bytes(4) or numeric[0] >= 224 or not 1 <= port <= 65535:
+            return []
+        # The existing decoder consumes a fixed 12-byte header. Do not admit
+        # CSRC/extension/padding layouts and interpret their bytes as audio.
+        if len(packet) <= 12 or packet[0] != 0x80 or packet[1] & 0x7f != 0:
+            return []
+        seq, ssrc = struct.unpack_from('!H', packet, 2)[0], packet[8:12]
+        peer = ((host, port), ssrc)
+        row = (packet, received_at, clock_context)
+        if self._rtp_peer is not None:
+            return [row] if peer == self._rtp_peer else []
+        now = time.monotonic() if received_at is None else received_at
+        if self._rtp_candidate:
+            old_peer, old_seq, old_at, _ = self._rtp_candidate[-1]
+            if peer != old_peer or seq != (old_seq + 1) & 0xffff or not 0 <= now-old_at <= 1:
+                self._rtp_candidate.clear()
+        self._rtp_candidate.append((peer, seq, now, row))
+        if len(self._rtp_candidate) < 3:
+            return []
+        self._rtp_peer = peer
+        self._send_addr = peer[0]
+        accepted = [item[3] for item in self._rtp_candidate]
+        self._rtp_candidate.clear()
+        return accepted
+
+    def handle_rtp_datagram(self, addr, packet, received_at=None, clock_context=None):
+        """Apply source admission before PCM/capture/decoder state is touched."""
+        output = bytearray()
+        for admitted, arrival, context in self.note_rtp_source(addr, packet, received_at, clock_context):
+            output.extend(self.handle_rtp_packet(admitted, received_at=arrival, clock_context=context))
+        return bytes(output)
 
     def _next_frame_samples(self) -> list[int]:
         if self._pending_tx_mode is not None and self.transmitter.pending() == 0:
@@ -2839,9 +2868,8 @@ def run_pty(
                 if len(packet) >= 12 and packet[0] >> 6 == 2 and packet[1] & 0x7F == 0:
                     payload = packet[12:]
                     if online_session is not None:
-                        online_session.note_rtp_source(rtp_from)
-                        decoded = online_session.handle_rtp_packet(packet,received_at=received_at,
-                                                                   clock_context=clock_context)
+                        decoded = online_session.handle_rtp_datagram(rtp_from,packet,received_at=received_at,
+                                                                     clock_context=clock_context)
                         deliver_received(decoded)
                     elif dce.outgoing_pending:
                         pcm = struct.pack(

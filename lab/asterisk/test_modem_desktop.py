@@ -12,6 +12,15 @@ from modem_supervisor import Supervisor
 from modem_control import Channel
 
 class SettingsTests(unittest.TestCase):
+    def test_pipe_backend_hayes_profile_roundtrip(self):
+        with tempfile.TemporaryDirectory() as root:
+            d=AtDce();d.load_profiles(root+'/profile.json')
+            self.assertIn(b'OK',d._execute('AT+CFG="serial.backend","pipe"'))
+            self.assertIn(b'OK',d._execute('AT+CFG="serial.device","ElModemSecond"'))
+            self.assertIn(b'OK',d._execute('AT&W'))
+            loaded=AtDce();loaded.load_profiles(root+'/profile.json')
+            self.assertEqual(loaded.extended_settings['serial.backend'],'pipe')
+            self.assertEqual(loaded.extended_settings['serial.device'],'ElModemSecond')
     def test_hayes_roundtrip_and_case_preservation(self):
         d=AtDce()
         self.assertIn(b'OK',d._execute('AT+CFG="sip.user","MixedCase"'))
@@ -54,6 +63,18 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaises(ValueError):set_value(d,name,value)
 
 class SupervisorTests(unittest.TestCase):
+    def test_pipe_names_are_exclusive_normalized_and_case_insensitive(self):
+        from modem_serial_pipe import DEFAULT_PIPE_NAME
+        with tempfile.TemporaryDirectory() as root:
+            s=Supervisor(root+'/config.json');s.add(serial='pipe')
+            for name in ('',DEFAULT_PIPE_NAME,'elmodemserial'):
+                with self.assertRaisesRegex(ValueError,'colliding serial pipes'):
+                    s.add(serial='pipe',device=name)
+                self.assertEqual(len(s.specs),1)
+            s.add(serial='pipe',device='OtherModem')
+            self.assertEqual(len(Supervisor(root+'/config.json').specs),2)
+            with self.assertRaisesRegex(ValueError,'colliding serial pipes'):
+                s.configure(s.specs[1],{'serial_device':DEFAULT_PIPE_NAME})
     def test_instances_isolated_and_retained_ids_not_reused(self):
         with tempfile.TemporaryDirectory() as root:
             s=Supervisor(root+'/config.json');one=s.add(serial='pty');two=s.add(serial='tcp')
@@ -78,6 +99,17 @@ class SupervisorTests(unittest.TestCase):
         finally:left.close();right.close()
 
 class UITests(unittest.IsolatedAsyncioTestCase):
+    async def test_pipe_instance_dialog_mounts_and_saves(self):
+        from modem_tui import ModemApp
+        with tempfile.TemporaryDirectory() as root:
+            s=Supervisor(root+'/config.json');s.add(serial='pipe');app=ModemApp(s)
+            async with app.run_test(size=(120,55)) as pilot:
+                await pilot.pause();await pilot.click('#configure');await pilot.pause()
+                from textual.widgets import Select
+                self.assertEqual(app.screen.query_one('#serial',Select).value,'pipe')
+                await pilot.click('#save');await pilot.pause()
+                self.assertEqual(s.specs[0].serial,'pipe')
+            s.close()
     async def test_dashboard_dialog_and_settings_screen(self):
         from modem_tui import ModemApp,SettingsScreen
         with tempfile.TemporaryDirectory() as root:

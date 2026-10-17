@@ -40,7 +40,7 @@ class InstanceDialog(ModalScreen):
         yield Label('Instance / serial / listening addresses (modem must be stopped)')
         for name in ('name','sip_host','sip_port','media_host','media_port','serial_port','serial_device','serial_baud'):
             yield Label(name);yield Input(str(getattr(self.spec,name,'')),id=name)
-        yield Select([(x,x) for x in ('driver','pty','tcp','com')],value=self.spec.serial,id='serial',allow_blank=False)
+        yield Select([(x,x) for x in ('driver','pty','tcp','com','pipe')],value=self.spec.serial,id='serial',allow_blank=False)
         yield Static('',id='error')
         with Horizontal():yield Button('Save',id='save');yield Button('Cancel',id='cancel')
     def on_button_pressed(self,event):

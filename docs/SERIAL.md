@@ -17,9 +17,12 @@ on the same PTY and clean teardown on both Intel and ARM macOS15.7.9. See
 hardware/software flow control for this PTY. This does not qualify physical
 modem-control signals or connected-call hangup behavior.
 
-## Windows: bundled virtual-COM driver
+## Windows: optional virtual-COM driver and pipe backend
 
-`--serial-backend pipe` is the recommended Windows path. Ownership is inverted
+`--serial-backend pipe` requires a separately supplied compatible driver.
+No driver binary or modified driver source is distributed in this checkout or
+the current Windows ZIP. TCP and the com0com route below remain available.
+Ownership is inverted
 relative to the `com` backend: the driver *is* the COM port, so terminal
 programs (PuTTY, ZOC, SyncTerm, TTerm, Terminate) open the presented COM port
 directly and El-Modem never opens it. The driver brokers between that port and
@@ -32,9 +35,8 @@ el-modem --serial-backend pipe --modems 1
 Terminals then connect to `COM3` (or whichever port the driver presents). No
 `--serial-device` is needed; the default pipe is `\\.\pipe\ElModemSerial`.
 
-This is the only backend on Windows where the modem needs no virtual-COM
-package, no TCP redirector and no peer port. The driver must be installed
-separately — see
+Once the compatible driver is installed, this backend needs no TCP redirector
+or peer COM port. See
 [installing the El-Modem virtual COM driver](WINDOWS_DRIVER.md) for build,
 certificate and install steps. The modem itself runs unprivileged and never
 installs or configures the driver.
@@ -45,12 +47,17 @@ fabricated `False` the DCE would misread. Terminals see a modem that is always
 present (CTS, DSR and DCD asserted, RI idle). The dashboard ASCII terminal
 cannot attach to a pipe; open a terminal program on the COM port instead.
 
-**Current distribution status:** the driver is UMDF2 and currently test-signed,
+**Current distribution status:** the separate driver is UMDF2 and test-signed,
 so it installs only where the WDK test certificate is trusted. Full
 installation instructions, including how to trust that certificate and how to
 remove it again afterwards, are in
 [WINDOWS_DRIVER.md](WINDOWS_DRIVER.md). A public signature is what removes the
 need for that step.
+
+Each modem needs an exclusive pipe endpoint. The supervisor rejects duplicate
+names after normalization (Windows pipe names are case insensitive). Changing
+the Python endpoint with `--serial-device OtherModem` also requires a driver
+configured for that same pipe. Multiple driver/modem pairs are not qualified.
 
 ## Windows: native COM backend
 
@@ -62,8 +69,7 @@ installs or configures the driver.
 
 This backend needs a virtual COM pair supplied by something else: a
 physical modem, or a third-party pair such as com0com. It is the legacy
-route; prefer the bundled driver above unless you specifically need real
-RTS/CTS gating between two COM ports. See the
+route for real RTS/CTS gating between two COM ports. See the
 [com0com prerequisite](../packaging/com0com/README.md) for the pairing
 tool.
 

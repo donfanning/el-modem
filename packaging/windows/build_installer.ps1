@@ -19,19 +19,20 @@ Expand-Archive -LiteralPath $Archive -DestinationPath $work
 $source = (Get-ChildItem $work -Directory | Select-Object -First 1).FullName
 New-Item -ItemType Directory -Force $Out | Out-Null
 # A signed driver is optional; without it the installer simply omits the driver.
-$driverArg = '/DDriverDir='
+$driverArgs = @()
 if ($DriverPackage) {
-    if (-not (Test-Path (Join-Path $DriverPackage 'wudf.cat'))) {
-        throw "-DriverPackage has no wudf.cat; it is not a signed driver package: $DriverPackage"
+    foreach ($name in @('virtualserial2um.inf', 'VirtualSerial2um.dll', 'wudf.cat', 'ElModemTestSigning.cer')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $DriverPackage $name) -PathType Leaf)) {
+            throw "-DriverPackage is missing $name"
+        }
     }
-    $key = Join-Path $DriverPackage 'ElModemTestSigning.pfx'
-    if (Test-Path $key) {
-        # The signing key must never end up in an installer.
-        throw 'the signing key .pfx is present in -DriverPackage; it must never be shipped'
+    if (Get-ChildItem -LiteralPath $DriverPackage -Recurse -File |
+            Where-Object { $_.Extension -in '.pfx', '.p12', '.key', '.pem' }) {
+        throw 'Private-key material is present in -DriverPackage; it must never be shipped'
     }
-    $driverArg = "/DDriverDir=$DriverPackage"
+    $driverArgs = @("/DDriverDir=$((Resolve-Path -LiteralPath $DriverPackage).Path)")
 }
-& $iscc "/DSourceDir=$source" "/DAppVersion=$Version" "/DOutputDir=$((Resolve-Path $Out).Path)" $driverArg packaging\windows\el-modem.iss
+& $iscc "/DSourceDir=$source" "/DAppVersion=$Version" "/DOutputDir=$((Resolve-Path $Out).Path)" @driverArgs packaging\windows\el-modem.iss
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
 $setup = (Get-ChildItem $Out -Filter *-setup.exe | Select-Object -First 1).FullName
 
@@ -43,6 +44,10 @@ $p = Start-Process $setup -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTAR
 Write-Host "installer exit code: $($p.ExitCode)"
 Get-Content $log | Select-String -Pattern "redist|Download|signature|Exception|Failed" | ForEach-Object { Write-Host $_.Line }
 if ($p.ExitCode -notin 0, 3010) { throw "installer failed: $($p.ExitCode)" }
+$auditArgs = @('packaging/audit_windows_install.py', $Archive, $target)
+if ($DriverPackage) { $auditArgs += @('--driver-package', $DriverPackage) }
+python @auditArgs
+if ($LASTEXITCODE -ne 0) { throw 'Installed payload differs from the reviewed archive/explicit driver files' }
 $exe = Join-Path $target 'el-modem.exe'
 if (-not (Test-Path $exe)) { throw 'installed program missing' }
 & $exe --self-test | Out-File (Join-Path $Out 'installed-self-test.json') -Encoding utf8
