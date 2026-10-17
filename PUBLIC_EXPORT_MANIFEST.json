@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "6afa10df9f8f9d0322a6ec97556ecafa0135db64",
+  "public_base_revision": "b271c22ebcab8214595016796175f14a70c4b166",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -1449,7 +1449,7 @@
       "mode": "100644"
     },
     "packaging/public_manifest.py": {
-      "sha256": "2e1704fdeeefba1e4a923b4cb776df7c4ee4c55e690cc6f6b6976b13c074504d",
+      "sha256": "414ab5d4494dc5bbb1871b6f579b8db6aa6b11532786da59bde7c71068fb6db5",
       "mode": "100644"
     },
     "packaging/python_component_notices.py": {

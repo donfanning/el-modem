@@ -50,7 +50,7 @@ def refresh(root):
                   scope='Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.',
                   files=snapshot(root),
                   historical_public_overlays=old.get('historical_public_overlays', old.get('public_overlays', [])))
-    (root / NAME).write_text(json.dumps(report, indent=2) + '\n')
+    (root / NAME).write_bytes((json.dumps(report, indent=2) + '\n').encode('utf-8'))
     return check(root)
 
 
