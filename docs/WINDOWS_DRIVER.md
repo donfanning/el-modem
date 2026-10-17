@@ -23,6 +23,9 @@ runs in user mode inside `WUDFHost.exe`.
 - The **Windows Driver Kit**, matching the Windows SDK version (currently WDK
   10.0.26100.6584). The driver does not build under Visual Studio 2019; the WDK
   no longer supports it.
+- Install the WDK **after** Visual Studio 2022, so it integrates with the
+  instance the driver will be built from. See
+  [If the build fails with MSB8020](#if-the-build-fails-with-msb8020).
 
 ## Build
 
@@ -39,6 +42,47 @@ the certificate you will need next:
 | --- | --- |
 | `VirtualSerial2um\` | `VirtualSerial2um.dll`, `virtualserial2um.inf`, `wudf.cat` — the installable package |
 | `VirtualSerial2um.cer` | the certificate that signed `wudf.cat` |
+
+### If the build fails with MSB8020
+
+```
+error MSB8020: The build tools for WindowsUserModeDriver10.0
+  (Platform Toolset = 'WindowsUserModeDriver10.0') cannot be found.
+```
+
+This is the common failure, and it is **not** a problem with the project. The
+driver targets the `WindowsUserModeDriver10.0` platform toolset, which Visual
+Studio does not ship; it comes from the Windows Driver Kit's Visual Studio
+integration. Having both VS2022 Build Tools and the WDK installed is not by
+itself enough — the WDK has to be integrated into that specific VS instance.
+
+To check what is actually registered:
+
+```powershell
+Get-ChildItem "$env:ProgramFiles(x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\Platforms\x64\PlatformToolsets"
+```
+
+`WindowsUserModeDriver10.0` must appear in that list alongside `v143`. If it is
+missing, re-run the WDK installer so it integrates with the VS2022 instance, and
+confirm the Visual Studio instance you expect is the one that exists:
+
+```powershell
+& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+  -products * -format value -property installationPath
+```
+
+Two traps worth knowing about:
+
+- The WDK integrates into whichever Visual Studio instances are present when it
+  runs. If the WDK was installed before VS2022, or while only VS2019 was
+  present, VS2022 never receives the toolset, and re-running the installer can
+  report success while changing nothing.
+- An install that leaves an instance registered at a path which no longer exists
+  is a broken install, not a usable one. `vswhere` will happily list it.
+
+`wdf.h` lives under `Windows Kits\10\Include\wdf\umdf\<version>`, not under
+`Include\<version>\km`. If the driver cannot find it, the WDK's WDF header
+payload is not installed; that ships as a separate MSI from the SDK headers.
 
 ## Trusting the test certificate
 
