@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "ecb987926004f75b4aa454fecb29f4346dac31ce",
+  "public_base_revision": "88c00316b8091594af29f6c976f0090f796d6045",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -9,7 +9,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "927ae6cc628797197965bf6359466077354bd66b82a02df698a4ee7114ea2543",
+      "sha256": "eb32eccfb15203ce5aa52e8f5b1dc7210da72151c050334beee5037d1882dabb",
       "mode": "100644"
     },
     ".github/workflows/macos-pty.yml": {
@@ -45,7 +45,7 @@
       "mode": "100644"
     },
     "docs/ASTERISK_NAT.md": {
-      "sha256": "f17ecc8b830b73ccb1bb95de69c497794b98db4dd379607261f1366672f70f45",
+      "sha256": "599b66f20a4584f66bd47319992c8bf663a6ba9c2fb558efabb6e75a1b2af0b1",
       "mode": "100644"
     },
     "docs/AT_COMMANDS.md": {
@@ -53,7 +53,7 @@
       "mode": "100644"
     },
     "docs/DESKTOP.md": {
-      "sha256": "f07530d833773c527a75f105385cb2750f8fea927b62566c4e68b0ced84f75da",
+      "sha256": "960d6ce46f321ae3a2131c75447f414b085cdc36f3626cfe3fce51d6908f1050",
       "mode": "100644"
     },
     "docs/LINUX_QUALIFICATION.json": {
@@ -85,7 +85,7 @@
       "mode": "100644"
     },
     "docs/SERIAL.md": {
-      "sha256": "8ed158435e6e664762651c53a4a38f4489399bd6fcc589c139f7d691db71d93a",
+      "sha256": "ba8ca3784a43a563cd4f3979766c0998a51af0fd4ba3932cf1383213bb7acb4d",
       "mode": "100644"
     },
     "docs/SOURCE_PROVENANCE.md": {
@@ -97,11 +97,11 @@
       "mode": "100644"
     },
     "docs/WINDOWS_COM_QUALIFICATION.md": {
-      "sha256": "ae64d1b8d4e36fad7cf66af8e900057eadef83918fb402e7e898ffc41b1864e8",
+      "sha256": "2753e42da26e8a83f1e5fe6dfaa625d6c3bc2cde020453a9214c0cd9c0a7be6f",
       "mode": "100644"
     },
     "docs/WINDOWS_DRIVER.md": {
-      "sha256": "a3b3c289c39424d8615c397379a48d416dc7bd1ddff0b69833840f75616a81f9",
+      "sha256": "bd317c00b62bebb2c33a566a87baa5497e3a43a13b5b1919575cec1ba10054b4",
       "mode": "100644"
     },
     "docs/WINDOWS_INSTALLER_QUALIFICATION.json": {
@@ -110,6 +110,10 @@
     },
     "docs/WINDOWS_INSTALLER_QUALIFICATION.md": {
       "sha256": "054e1af265a24ad5f7f5eb4fa3b5313d75573b3e73767f2e98a9ad431f6f1c21",
+      "mode": "100644"
+    },
+    "docs/WINDOWS_INSTALLER_WITHDRAWAL.md": {
+      "sha256": "0fd3a74351576388c29dba4f8fc7beb01c97570f164f74a87b37bbffe3bd4c3e",
       "mode": "100644"
     },
     "docs/macos-pty-evidence/macos-arm64/first-capture.txt": {
@@ -1181,7 +1185,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_dce.py": {
-      "sha256": "e6446103d14e920f902530791bb3fc0cde51aac7aab33ea1676358ee8b5aab58",
+      "sha256": "524bad8a1085cb9ef788e693ea7fa2c6fb8e925b1719ec3097aa1bff6eeeaf72",
       "mode": "100644"
     },
     "lab/asterisk/modem_selftest.py": {
@@ -1201,7 +1205,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_settings.py": {
-      "sha256": "caa6834e819acc62b95ac3bb2a638630b7e424cf4cc59896c2dacf06d8321650",
+      "sha256": "575f620714a1b9dd9e66b6403847cd819b9b8b32d17d6e3c901cd94a442aa0df",
       "mode": "100644"
     },
     "lab/asterisk/modem_storage.py": {
@@ -1209,11 +1213,11 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_supervisor.py": {
-      "sha256": "984fe4baa3df6f0860c880fd2a2503965989c28e43d0c5b5787a35b7fb2a4472",
+      "sha256": "981fff5abdebdfe27ef060bc2d771f0ee516fc03e937469a0f430142e43b80de",
       "mode": "100644"
     },
     "lab/asterisk/modem_tui.py": {
-      "sha256": "a33459894d3f5a20f45c4bad10c5634b888bef4edfc4e4ee96d54db382c86b69",
+      "sha256": "cee3308709f477cfb020f0f1a0808b099641803568f6065867de47214cc8742f",
       "mode": "100644"
     },
     "lab/asterisk/pcm_capture.py": {
@@ -1265,11 +1269,11 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_dce.py": {
-      "sha256": "7f27dd770d4ebb40f370fec3ec2cd8d4fc61c22bf4331ca30c42549b9d78adb5",
+      "sha256": "d51b8f5f5b42a480329719a911f0b0272538f216a3dbcc9fb82de5d10168907e",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
-      "sha256": "c8268b59830b128069faaaae6978ca43c3186d75f53749da9ef98c95b3c06f6d",
+      "sha256": "6aac5c69f6ab2631fe7feac9f6c3273882559cff3e6216fd7b82f4bade3337f2",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_instances.py": {
@@ -1301,7 +1305,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_symmetric_rtp.py": {
-      "sha256": "0b557bdcc40b5eba418117ed19891aa39554ccd698bde66be612791cd6204ee2",
+      "sha256": "4886d0dba246719e6ad3ad032bb75195a0ab38b95193e935931d64594f26fe55",
       "mode": "100644"
     },
     "lab/asterisk/test_online_control.py": {
@@ -1390,6 +1394,10 @@
     },
     "packaging/audit_v32_tables.py": {
       "sha256": "90f6f9cecac6c07322d6c63d0003aa93a36c0da11811acf154268f87fb57f4c6",
+      "mode": "100644"
+    },
+    "packaging/audit_windows_install.py": {
+      "sha256": "94167f5ea82fb3ae2052799035ad061669a73a0a968e2902b7d5b4a38cb06fce",
       "mode": "100644"
     },
     "packaging/build.sh": {
@@ -1492,6 +1500,10 @@
       "sha256": "28796a24e3be8036e67d262b55be4d2988f2c97bade660f14f2012cc8036fc26",
       "mode": "100644"
     },
+    "packaging/test_audit_windows_install.py": {
+      "sha256": "ec71709e4869d2e58beab51ba5547ea759bef2213d5a6cfcb1000efdfe60697d",
+      "mode": "100644"
+    },
     "packaging/test_build_with_lineage.py": {
       "sha256": "5e8b54b83eb78fca848f220a140dfa95fb4083ff9c8773ea5499bc53119cae2b",
       "mode": "100644"
@@ -1524,6 +1536,10 @@
       "sha256": "ea00d2fc53e094867da37ce8dfcf1d4271b8b1530310ac1b703788be56a266e2",
       "mode": "100644"
     },
+    "packaging/test_windows_installer_compile.py": {
+      "sha256": "cf2738756a2676fb6544c8146e162a90611719874ec4484162d6bdc3859e97d4",
+      "mode": "100644"
+    },
     "packaging/third-party/CPython-SHA3.LICENSE": {
       "sha256": "4633fc5859344c6f244939c27700fb941d12c4636215a8eccde17d9a6d1dcb0d",
       "mode": "100644"
@@ -1537,7 +1553,7 @@
       "mode": "100644"
     },
     "packaging/windows/build_installer.ps1": {
-      "sha256": "42ccb7318daa5b8e10dc3bff9489e5006db0abe4eff4375b83aa0c1c63309b72",
+      "sha256": "9a08d0314fafa84de7b59411e1f8d3cec690474f526d784f423ef1313e2dc490",
       "mode": "100644"
     },
     "packaging/windows/cleanup_com_driver.ps1": {
@@ -1545,7 +1561,7 @@
       "mode": "100644"
     },
     "packaging/windows/el-modem.iss": {
-      "sha256": "ff0619489135ab91f2804a7ba746b61c8c0b5b36dd5d3c6193fef08ad1cba27c",
+      "sha256": "ee55c0506887e1b9d44a11b89a433a73033b0ed61586bd8741d453f8a1d178eb",
       "mode": "100644"
     },
     "packaging/windows/install_driver.ps1": {

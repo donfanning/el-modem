@@ -4,7 +4,12 @@ If El-Modem registers and places a call but the far side cannot hear you (or
 the call dies shortly after connect), Asterisk may be advertising its
 internal container/lan address in SDP instead of the address you actually
 dialled.  El-Modem now also latches send-to to the address it receives RTP
-from (`modem_dce.py` `OnlineAudioSession.note_rtp_source`), but the correct
+from after three consecutive PCMU packets from one address and SSRC
+(`modem_dce.py` `OnlineAudioSession.note_rtp_source`). Those initial packets
+are buffered and delivered once qualified. The address and SSRC then stay
+locked for the call; a different peer or NAT rebinding requires a new SIP
+session. Source probation is not media authentication: restrict accessible RTP
+ports to the intended peers. The correct
 fix is at the SIP transport on the Asterisk side:
 
 ```ini

@@ -500,7 +500,10 @@ class NetworkSettingsTests(unittest.TestCase):
         dce.load_profiles(path)
         dce.feed(b"ATS104=reg.example.com:5061\rATS102=bob\rATS103=secret\rAT&W\r")
         self.assertTrue(changes and changes[-1][104] == "reg.example.com:5061")
-        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)             # holds a password
+        # Windows access uses inherited ACLs; its synthetic st_mode is not a
+        # POSIX permission check. ACL qualification is separate from readback.
+        if os.name == 'posix':
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
         again = AtDce()
         again.load_profiles(path)
         self.assertEqual((again.net[102], again.net[103], again.net[104]), ("bob", "secret", "reg.example.com:5061"))
@@ -1109,10 +1112,10 @@ class ModulationNegotiationTests(unittest.TestCase):
             a.poll(time.monotonic())
             for session, sock, rx in ((a, a_sock, a_rx), (o, o_sock, o_rx)):
                 try:
-                    packet, _ = sock.recvfrom(2048)
+                    packet, source = sock.recvfrom(2048)
                 except (socket.timeout, OSError):
                     continue
-                rx.extend(session.handle_rtp_packet(packet))
+                rx.extend(session.handle_rtp_datagram(source,packet))
             if until(o_rx, a_rx):
                 break
         return o_rx, a_rx

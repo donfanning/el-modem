@@ -1,10 +1,10 @@
 # Windows COM qualification
 
 > **Historical record.** This documents the `v0.1.0-rc1` test of the com0com
-> arrangement and is kept as evidence of what was actually verified. It is
-> superseded for day-to-day use by the bundled virtual-COM driver; see
+> arrangement and is kept as evidence of what was actually verified.
+> The optional pipe/UMDF2 path has separate qualification requirements; see
 > [WINDOWS_DRIVER.md](WINDOWS_DRIVER.md) and
-> [SERIAL.md](SERIAL.md#windows-bundled-virtual-com-driver). The COM41/COM42
+> [SERIAL.md](SERIAL.md#windows-optional-virtual-com-driver-and-pipe-backend). The COM41/COM42
 > port numbers below refer to that specific run and are not a current
 > arrangement. The captured machine output in
 > [windows-com-evidence/](windows-com-evidence/) is likewise unmodified.

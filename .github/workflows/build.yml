@@ -29,11 +29,12 @@ jobs:
           python -m unittest discover -s packaging -p test_public_manifest.py
           python -m unittest discover -s packaging -p test_python_component_notices.py
           python -m unittest discover -s packaging -p test_runtime_requirements.py
+          python -m unittest discover -s packaging -p test_audit_windows_install.py
       - name: Source and settings tests without private fixtures or calls
         env:
           PYTHONPATH: lab/asterisk:lab/asterisk/audio-peer:packaging
           OPENBLAS_NUM_THREADS: '1'
-        run: python -m unittest test_modem_desktop test_modem_com test_modem_symmetric_rtp test_modem_portability test_serial_port test_sip_auth test_sip_uac test_sip_uas
+        run: python -m unittest test_modem_desktop test_modem_com test_modem_pipe test_modem_symmetric_rtp test_modem_dce test_modem_portability test_serial_port test_sip_auth test_sip_uac test_sip_uas
   native-candidates:
     if: github.event_name == 'workflow_dispatch' && inputs.native_builds
     strategy:
@@ -61,9 +62,19 @@ jobs:
           PYTHONPATH: lab/asterisk:lab/asterisk/audio-peer:packaging
         run: |
           export PYTHONPATH="$(python -c 'import os; print(os.pathsep.join(["lab/asterisk", "lab/asterisk/audio-peer", "packaging"]))')"
-          python -m unittest test_modem_desktop test_modem_com test_modem_symmetric_rtp test_modem_portability test_sip_auth test_sip_uac test_sip_uas
+          python -m unittest test_modem_desktop test_modem_com test_modem_pipe test_modem_symmetric_rtp test_modem_dce test_modem_portability test_sip_auth test_sip_uac test_sip_uas
       - name: Build native single-file candidate
         run: python packaging/build_with_lineage.py --journal build/native-processing.jsonl --noconfirm --distpath dist --workpath build/el-modem packaging/el_modem.spec
+      - name: Compile driver and no-driver installer layouts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe')) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+          }
+          python -m unittest discover -s packaging -p test_windows_installer_compile.py
+          if ($LASTEXITCODE -ne 0) { throw 'Installer layout gate failed' }
       - name: Frozen payload and AT gates
         shell: bash
         run: |

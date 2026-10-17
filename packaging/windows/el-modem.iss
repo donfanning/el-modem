@@ -19,6 +19,8 @@
 ; is installed and no certificate is touched.
 #ifndef DriverDir
   #define DriverDir ""
+#endif
+#if DriverDir == ""
   #define DriverIncluded 0
 #else
   #define DriverIncluded 1
@@ -52,18 +54,24 @@ Source: "{#SourceDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\MANIFEST.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\third-party\*"; DestDir: "{app}\third-party"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\packaging\*"; DestDir: "{app}\packaging"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; The signed driver payload and the scripts that install and remove it.
 ; The signing key is NOT here: only the public .cer ever ships.
-Source: "{#DriverDir}\*"; DestDir: "{app}\driver"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "install_driver.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "uninstall_driver.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion skipifsourcedoesntexist
+#if DriverIncluded
+; Exact payload list: never enumerate a drive root or collect signing keys.
+Source: "{#DriverDir}\virtualserial2um.inf"; DestDir: "{app}\driver"; Flags: ignoreversion
+Source: "{#DriverDir}\VirtualSerial2um.dll"; DestDir: "{app}\driver"; Flags: ignoreversion
+Source: "{#DriverDir}\wudf.cat"; DestDir: "{app}\driver"; Flags: ignoreversion
+Source: "{#DriverDir}\ElModemTestSigning.cer"; DestDir: "{app}\driver"; Flags: ignoreversion
+Source: "install_driver.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion
+Source: "uninstall_driver.ps1"; DestDir: "{app}\driver"; Flags: ignoreversion
+#endif
 Source: "{#SourceDir}\qualification\*"; DestDir: "{app}\qualification"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Dirs]
-; The signed driver payload and the scripts that install and remove it. The
-; signing key is NOT here: only the public .cer ever ships. The directory is
-; always created; install_driver.ps1 reports clearly when there is no payload.
+#if DriverIncluded
 Name: "{app}\driver"
+#endif
 
 [Icons]
 ; El-Modem is a terminal application: the shortcut opens it in a console window.

@@ -1,5 +1,21 @@
 # Installing the El-Modem virtual COM driver on Windows
 
+## Availability
+
+The public `v0.1.0-rc1-windows` ZIP contains no virtual-COM driver. This
+repository currently contains the Python pipe backend and driver packaging
+tools, but **not** the modified UMDF2 solution, INF or C++ source. The build
+instructions below require that separate modified driver project; cloning this
+repository alone cannot build it. Microsoft's original VirtualSerial2 sample
+does not by itself establish compatibility with our named-pipe protocol.
+
+Until the modified source is supplied and its complete path is qualified, use
+TCP or the separately installed com0com route in [SERIAL.md](SERIAL.md).
+`pipe` is an opt-in integration for an already available compatible driver.
+Its byte protocol does not carry real DTR/DCD/RI/CTS transitions, and one driver
+using `ElModemSerial` serves one modem only. Additional modems require separate
+driver routing and distinct pipe names; that arrangement is not qualified.
+
 The El-Modem virtual COM driver presents a real COM port to terminal programs
 (PuTTY, ZOC, SyncTerm, TTerm, Terminate) and brokers bytes between that port and
 El-Modem over `\\.\pipe\ElModemSerial`. It replaces the older arrangement that
@@ -29,7 +45,8 @@ runs in user mode inside `WUDFHost.exe`.
 
 ## Build
 
-From the driver's source root (the directory holding `VirtualSerial.sln`):
+From the separate modified driver's source root (not included here; the
+directory holding `VirtualSerial.sln`):
 
 ```powershell
 msbuild VirtualSerial.sln /t:Rebuild /p:Configuration=Release /p:Platform=x64

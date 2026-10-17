@@ -109,6 +109,12 @@ class Supervisor:
                 key=('com',spec.serial_device.strip().upper())
                 if key in ports: raise ValueError('colliding serial devices')
                 ports.add(key)
+            if spec.serial=='pipe':
+                from modem_serial_pipe import normalize_pipe_name
+                key=('pipe',normalize_pipe_name(spec.serial_device).casefold())
+                if key in ports:
+                    raise ValueError('colliding serial pipes; each modem needs a distinct driver pipe endpoint')
+                ports.add(key)
     def acquire(self):
         self.path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
         self.lock=open(str(self.path)+'.lock','a+b')

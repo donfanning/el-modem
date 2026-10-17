@@ -69,7 +69,7 @@ ENV = {
  'recording.enabled':('EL_MODEM_RECORDING','1',('0','1')),
  'recording.seconds':('EL_MODEM_RECORDING_SECONDS','600',()),
  'instance.name':('EL_MODEM_NAME','Modem',()),
- 'serial.backend':('EL_MODEM_SERIAL_BACKEND','driver',('driver','pty','tcp','com')),
+ 'serial.backend':('EL_MODEM_SERIAL_BACKEND','driver',('driver','pty','tcp','com','pipe')),
  'serial.tcp_port':('EL_MODEM_SERIAL_PORT','9100',()),
  'serial.device':('EL_MODEM_SERIAL_DEVICE','',()),
  'serial.baud':('EL_MODEM_SERIAL_BAUD','115200',()),
