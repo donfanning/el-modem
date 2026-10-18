@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "9a395e6bfa77aecc48fe553905bbf8244c5dd27a",
+  "public_base_revision": "53e6578a696b8d25841cd8cdc73ae238af4b9b69",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -9,7 +9,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "5cb67bfa0ced800f179fcd4a3084e69cae07ca3091498e6ff6a7c5062d424be5",
+      "sha256": "1d97e9030bc9423fb23ee35ba6d94dfab424629840cbbe4e2a7c80f89def7cbd",
       "mode": "100644"
     },
     ".github/workflows/macos-pty.yml": {
@@ -49,7 +49,7 @@
       "mode": "100644"
     },
     "docs/AT_COMMANDS.md": {
-      "sha256": "9ff5d575c3ab6119b234d56ee3ecc586c1b63f058615e062cbe51858c5284998",
+      "sha256": "c62cd2cf5a328998780cbe667c7f90c52b3fda89028df60497ed8d423d8c12b8",
       "mode": "100644"
     },
     "docs/DESKTOP.md": {
@@ -1181,7 +1181,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_dce.py": {
-      "sha256": "577f1af70af35244deeeffaf9a9d7e770ded7210b870f4f342f132170fc113c7",
+      "sha256": "db3820fe3d8f8ce09d63105489ae98749653a464d60d0edfa30c8d8c0b640fc4",
       "mode": "100644"
     },
     "lab/asterisk/modem_selftest.py": {
@@ -1265,7 +1265,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_dce.py": {
-      "sha256": "6bc3024df10ef22e36cbadc6b533f7bfa036efb71947acebf54d0ae12fb7d2b9",
+      "sha256": "f4e3700543f8e8e9d7b428f2aa14931864d34119fe7d8057b9f97db894ff8179",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
@@ -1589,7 +1589,7 @@
       "mode": "100644"
     },
     "packaging/windows/build_installer.ps1": {
-      "sha256": "aa88692fc00779502a82a6c66131d5346d1a99587e53f9ddced22e62e5d164b6",
+      "sha256": "1526cf0da4b51ca42f93fbefaf3fde9630d73f1daeecf59a5be512b6ee42af54",
       "mode": "100644"
     },
     "packaging/windows/cleanup_com_driver.ps1": {
@@ -1597,7 +1597,7 @@
       "mode": "100644"
     },
     "packaging/windows/el-modem.iss": {
-      "sha256": "ee55c0506887e1b9d44a11b89a433a73033b0ed61586bd8741d453f8a1d178eb",
+      "sha256": "a55be62b89406979bcf214c1bb2334eb5340c42b1ded80260d59b3a4b5107f91",
       "mode": "100644"
     },
     "packaging/windows/install_driver.ps1": {

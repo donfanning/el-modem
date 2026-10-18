@@ -41,8 +41,8 @@ from iax_transport import IaxMediaSocket, IaxTransport  # noqa: E402
 
 MAX_COMMAND_BYTES = 256
 PRODUCT = "EL-MODEM"
-VERSION = "0.1.0"
-PRODUCT_CODE = "0010"          # four digits: major, minor, patch (V0.1.0)
+VERSION = "0.2.0"
+PRODUCT_CODE = "0020"          # four digits: major, minor, patch (V0.2.0)
 STORED_NUMBER_SLOTS = 4        # phone-number slots 0-3 (AT&Zn=, ATDSn)
 PNP_ID = "ELM0001"            # three-letter vendor tag + number; not registered with any PnP authority
 PROJECT_URL = "https://github.com/donfanning/el-modem"

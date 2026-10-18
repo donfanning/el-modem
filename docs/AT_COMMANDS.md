@@ -5,7 +5,7 @@
 ## Information screens (ATI)
 | Command | Shows |
 |---|---|
-| `ATI0` | four-digit product code (`0010` = V0.1.0) |
+| `ATI0` | four-digit product code (`0020` = V0.2.0) |
 | `ATI1` | CRC-16 of the program image (the executable, or the source file) |
 | `ATI2` | self test (CRC known answer, RAM pattern, FFT): `OK`/`ERROR`, then the command's own `OK` |
 | `ATI3` | banner, build date, revision, project URL |
