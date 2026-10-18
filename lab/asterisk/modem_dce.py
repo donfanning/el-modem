@@ -72,11 +72,11 @@ XOFF = 0x13
 # much higher baud rate than the negotiated line speed).
 FLOW_XOFF_HIGH_WATER_BITS = 300
 FLOW_XON_LOW_WATER_BITS = 100
-# Modulation switch guard times. After the CONFIRM exchange the sender goes
-# silent for TX_GUARD_FRAMES (20 ms each) before the new carrier starts, and
-# the receiver ignores audio for RX_DEAF_SAMPLES after decoding the peer's
-# CONFIRM, so the Bell 212 receiver's carrier-onset detector sees clean
-# silence and does not lock onto the tail of the old Bell 103 idle tone.
+# Modulation switch guard times. After the CONFIRM exchange the sender lets
+# the final old-mode frame drain, then goes silent for TX_GUARD_FRAMES (20 ms
+# each) before the new carrier starts. The receive deaf interval covers the
+# tail of the old-mode CONFIRM; Bell 212 then waits for the guard silence before
+# acquiring its new carrier.
 TX_GUARD_FRAMES = 10
 RX_DEAF_SAMPLES = 480
 
@@ -846,7 +846,9 @@ class OnlineAudioSession:
             # move to the agreed modulation after its own guard time.
             self.mode = mode
             if mode == MODE_BELL212:
-                self.receiver = Bell212Receiver(self._rx_role)
+                self.receiver = Bell212Receiver(
+                    self._rx_role, require_silence_before_carrier=True
+                )
                 self._rx_deaf_samples = RX_DEAF_SAMPLES
             self._rx_switched = True
         if self._pending_tx_mode is None and not self._tx_switched:

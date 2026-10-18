@@ -152,7 +152,13 @@ class Bell212Receiver:
     around symbols with large phase steps during development.
     """
 
-    def __init__(self, role: str, baud: float = BAUD):
+    def __init__(
+        self,
+        role: str,
+        baud: float = BAUD,
+        *,
+        require_silence_before_carrier: bool = False,
+    ):
         if role not in FREQUENCIES:
             raise ValueError(f"unknown Bell 212 role: {role}")
         if baud <= 0:
@@ -162,6 +168,12 @@ class Bell212Receiver:
         # Short fixed-size window used only for coarse carrier-onset
         # (energy) detection -- not for symbol phase decoding.
         self._energy_samples: deque[int] = deque(maxlen=WINDOW)
+        # A receiver created during a modulation handoff may initially be fed
+        # the tail of the previous carrier. Require the inter-mode quiet guard
+        # before treating the next energetic window as a fresh symbol clock.
+        self._require_silence_before_carrier = require_silence_before_carrier
+        self._silence_samples = 0
+        self._silence_armed = not require_silence_before_carrier
         self._ref_phase = 0.0
         self._sample_index = -1
         self._carrier_present = False
@@ -199,6 +211,15 @@ class Bell212Receiver:
                 self._energy_samples.append(sample)
                 if len(self._energy_samples) == WINDOW:
                     energy = sum(s * s for s in self._energy_samples) / WINDOW
+                    if not self._silence_armed:
+                        if energy < 200_000:
+                            self._silence_samples += 1
+                        else:
+                            self._silence_samples = 0
+                        if self._silence_samples >= round(SAMPLE_RATE * 0.01):
+                            self._silence_armed = True
+                            self._energy_samples.clear()
+                        continue
                     if energy >= 2_000_000:
                         # Carrier onset: the single timing reference this
                         # simplified receiver relies on. Symbol boundaries

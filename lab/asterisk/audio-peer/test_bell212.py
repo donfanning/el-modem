@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Self-tests for the lab's Bell 212A (1200 bps DPSK) endpoint."""
 
-import struct
+import math
 import random
+import struct
 import unittest
 
 from bell212 import Bell212Receiver, Bell212StreamTransmitter
@@ -44,6 +45,31 @@ def transfer(
 
 
 class Bell212Tests(unittest.TestCase):
+    def test_mode_switch_ignores_old_carrier_until_silence_guard(self) -> None:
+        payload = b"early-bird"
+        tx = Bell212StreamTransmitter("originate")
+        tx.feed_bytes(payload)
+        rx = Bell212Receiver("originate", require_silence_before_carrier=True)
+
+        # A delayed Bell 103 CONFIRM tail is still energetic, but must not
+        # become the Bell 212 receiver's one-shot symbol-clock reference.
+        old_carrier = [
+            int(7000 * math.sin(2 * math.pi * 980 * i / 8000))
+            for i in range(800)
+        ]
+        rx.feed_pcm(pcm_bytes(old_carrier))
+        self.assertFalse(rx._carrier_present)
+
+        silence = [0] * 800  # 100 ms, longer than the mode-switch guard
+        rx.feed_pcm(pcm_bytes(silence))
+        self.assertTrue(rx._silence_armed)
+        self.assertFalse(rx._carrier_present)
+
+        decoded = bytearray()
+        for _ in range(100):
+            decoded.extend(rx.feed_pcm(pcm_bytes(tx.samples(160))))
+        self.assertEqual(bytes(decoded), payload)
+
     def test_decodes_ascii_payload_originate_role(self) -> None:
         payload = b"Hello Bell212!"
         self.assertEqual(transfer("originate", payload), payload)
