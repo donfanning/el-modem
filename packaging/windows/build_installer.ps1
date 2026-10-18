@@ -32,7 +32,9 @@ if ($DriverPackage) {
     }
     $driverArgs = @("/DDriverDir=$((Resolve-Path -LiteralPath $DriverPackage).Path)")
 }
-& $iscc "/DSourceDir=$source" "/DAppVersion=$Version" "/DOutputDir=$((Resolve-Path $Out).Path)" @driverArgs packaging\windows\el-modem.iss
+# Resolve our own paths from this script: CI runs from the checkout root, which
+# hid a dependency on the caller's working directory.
+& $iscc "/DSourceDir=$source" "/DAppVersion=$Version" "/DOutputDir=$((Resolve-Path $Out).Path)" @driverArgs (Join-Path $PSScriptRoot 'el-modem.iss')
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
 $setup = (Get-ChildItem $Out -Filter *-setup.exe | Select-Object -First 1).FullName
 
@@ -44,7 +46,7 @@ $p = Start-Process $setup -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTAR
 Write-Host "installer exit code: $($p.ExitCode)"
 Get-Content $log | Select-String -Pattern "redist|Download|signature|Exception|Failed" | ForEach-Object { Write-Host $_.Line }
 if ($p.ExitCode -notin 0, 3010) { throw "installer failed: $($p.ExitCode)" }
-$auditArgs = @('packaging/audit_windows_install.py', $Archive, $target)
+$auditArgs = @((Join-Path (Split-Path $PSScriptRoot -Parent) 'audit_windows_install.py'), $Archive, $target)
 if ($DriverPackage) { $auditArgs += @('--driver-package', $DriverPackage) }
 python @auditArgs
 if ($LASTEXITCODE -ne 0) { throw 'Installed payload differs from the reviewed archive/explicit driver files' }

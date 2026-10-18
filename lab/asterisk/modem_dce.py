@@ -37,6 +37,7 @@ from negotiation import (  # noqa: E402
 from pcm_capture import capture_from_env  # noqa: E402
 from sip_uac import SipOriginateCall  # noqa: E402
 from sip_uas import SipIncomingCallServer  # noqa: E402
+from iax_transport import IaxMediaSocket, IaxTransport  # noqa: E402
 
 MAX_COMMAND_BYTES = 256
 PRODUCT = "EL-MODEM"
@@ -155,7 +156,7 @@ class EscapeSequenceDetector:
         return False
 
 
-def dial_abort_applies(active_outbound, online_session, online, connect_pending) -> bool:
+def dial_abort_applies(active_outbound, online_session, online, connect_pending, iax_dial_pending=False) -> bool:
     """Whether DTE input before connect must break the chain like a Hayes
     break: hang up and report NO CARRIER. Fires while an originate attempt is
     in flight, or while a session is up but CONNECT is still held for
@@ -163,7 +164,7 @@ def dial_abort_applies(active_outbound, online_session, online, connect_pending)
     (those never set active_outbound and have no session)."""
     if online:
         return False
-    if active_outbound is not None and online_session is None and not connect_pending:
+    if (active_outbound is not None or iax_dial_pending) and online_session is None and not connect_pending:
         return True
     return online_session is not None and bool(connect_pending)
 
@@ -911,6 +912,11 @@ class OnlineAudioSession:
         return None
 
     def handle_rtp_payload(self, payload: bytes) -> bytes:
+        # The IAX adapter has already removed packet headers and jitter, so it
+        # enters here with raw PCMU rather than a complete RTP packet. Keep the
+        # same carrier-liveness clock used by handle_rtp_packet(); otherwise
+        # every IAX call is falsely declared lost after CARRIER_LOSS_SECONDS.
+        self._last_rtp_at = time.monotonic()
         pcm = struct.pack(
             f"<{len(payload)}h", *(ulaw_to_linear(sample) for sample in payload)
         )
@@ -1653,10 +1659,10 @@ class AtDce:
     def _network_screen(self) -> list[str]:
         sip_host, iax_host = self.net[100], self.net[110]
         lines = ["SIP SETTINGS (S100-S106):"] + self._net_lines()[:7] + ["IAX SETTINGS (S110-S115):"] + self._net_lines()[7:13]
-        lines.append(f"TRUNK FOR ATD: {'IAX' if self.net[120] == '1' else 'SIP'} (S120)")
+        lines.append(f"TRUNK FOR ATD: {'IAX2' if self.net[120] == '1' else 'SIP'} (S120)")
         lines.append("SIP: " + ("CONFIGURED" if sip_host else "USING COMMAND-LINE DIAL HOST") +
                      (f", REGISTERED AS {self.net[102]}" if self.net[104] and self.net[102] else ", NO REGISTRATION"))
-        lines.append("IAX: " + ("SETTINGS STORED" if iax_host else "NOT CONFIGURED") + " - NO IAX2 CLIENT IN THIS BUILD YET")
+        lines.append("IAX: " + ("CONFIGURED" if iax_host else "NOT CONFIGURED") + " - RFC 5456 / G.711 U-LAW")
         return lines
 
     # -- call diagnostics and the ATI screens --------------------------------------------------------------------------
@@ -2369,6 +2375,10 @@ def run_pty(
     profile_file: str | None = None,
     serial_backend=None,
     control=None,
+    iax_host: str | None = None,
+    iax_port: int = 4569,
+    iax_user: str | None = None,
+    iax_password: str | None = None,
 ) -> None:
     # SpanDSP's V.22bis runs its own handshake, so lab negotiation is off,
     # but CONNECT is still deferred until it trains.
@@ -2391,6 +2401,8 @@ def run_pty(
         ser.write(data)
     media_socket: socket.socket | None = None
     sip_server: SipIncomingCallServer | None = None
+    iax_transport: IaxTransport | None = None
+    iax_media_socket: IaxMediaSocket | None = None
     registration = None
     registration_key = None
     final_hangup: Callable[[], None] = lambda: None     # set once the SIP side exists; sends BYE on shutdown
@@ -2401,7 +2413,7 @@ def run_pty(
 
         tcp_host, tcp_port = tcp_listen.rsplit(":", 1)
         serve_pty_over_tcp(link or slave_name, tcp_host, int(tcp_port))
-    if sip_host:
+    if sip_host or iax_host or profile_file:
         media_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         media_socket.bind((media_host, media_port))
         media_socket.setblocking(False)
@@ -2418,29 +2430,36 @@ def run_pty(
             100: dial_host or "", 101: str(dial_port), 102: sip_user or "",
             103: (os.environ.get("EL_MODEM_SIP_PASSWORD") or os.environ.get("SOFTMODEM_SIP_PASSWORD") or "") if sip_user else "",
             104: sip_register or "", 105: caller_number or "", 106: sip_contact_host or "",
+            110: iax_host or "", 111: str(iax_port), 112: iax_user or "",
+            113: iax_password or "", 114: caller_number or "", 115: "1" if iax_user else "0",
+            120: "1" if os.environ.get("EL_MODEM_NETWORK_TRUNK", "sip").lower() == "iax" else "0",
         }
         dce.load_profiles(profile_file)
         dce.terminal_kind = "TCP" if serial_tcp else ("COM" if getattr(ser, "is_com", False) else "PTY")
         dce.config_lines = [
             f"SERIAL: {ser.name}",
             f"LINE MODE: {line_mode.upper()}" + (f" V.22 {v22_rate}" if line_mode == "v22bis" else ""),
-            f"SIP: LISTEN {sip_host}:{sip_port}  RTP {media_host}:{media_port}",
+            f"SIP: LISTEN {sip_host}:{sip_port}  RTP {media_host}:{media_port}" if sip_host else "SIP: DISABLED",
+            f"IAX: {iax_host}:{iax_port}" if iax_host else "IAX: DISABLED",
             f"DIAL VIA: {dial_host or 'NONE'}:{dial_port}" + (f" AS {sip_user}" if sip_user else ""),
             f"REGISTRAR: {sip_register}" if sip_register else "REGISTRAR: NONE",
             f"V.42 FRAME SIZE: {v42_frame_size}",
         ]
         dce.defer_connect = announce_later
-        sip_server = SipIncomingCallServer(
-            host=sip_host,
-            port=sip_port,
-            media_host=media_host,
-            media_port=media_port,
-            on_incoming=lambda: dce.begin_incoming_call(sip_server.last_caller),
-            on_ring=dce.notify_incoming_ring,
-            on_hangup=lambda: dce.notify_call_progress("NO CARRIER"),
-        )
+        if sip_host:
+            sip_server = SipIncomingCallServer(
+                host=sip_host,
+                port=sip_port,
+                media_host=media_host,
+                media_port=media_port,
+                on_incoming=lambda: dce.begin_incoming_call(sip_server.last_caller),
+                on_ring=dce.notify_incoming_ring,
+                on_hangup=lambda: dce.notify_call_progress("NO CARRIER"),
+            )
 
         active_outbound: SipOriginateCall | None = None
+        iax_dial_pending = False
+        iax_media_active = False
         online_session: OnlineAudioSession | None = None
         arq_session: ArqSession | None = None
         data_mode = False
@@ -2462,7 +2481,8 @@ def run_pty(
                     session_args["calling_tone"] = True
                     dce.calling_tone_once = False
                 online_session = OnlineAudioSession(
-                    media_socket, remote_rtp, tx_role, rx_role,
+                    (iax_media_socket if iax_media_active else media_socket),
+                    remote_rtp, tx_role, rx_role,
                     **session_args,
                     v42=(dce.error_control == 3), v42_frame_size=v42_frame_size,
                     v42bis=bool(dce.compression), mnp=(dce.error_control == 2),
@@ -2484,12 +2504,13 @@ def run_pty(
             escape_detector.__init__()
 
         def end_online_session() -> None:
-            nonlocal online_session, arq_session, data_mode, connect_pending
+            nonlocal online_session, arq_session, data_mode, connect_pending, iax_media_active
             session=online_session
             online_session = None
             arq_session = None
             data_mode = False
             connect_pending = False
+            iax_media_active = False
             escaped.clear()
             dce.calling_tone_once = False
             if session is not None:
@@ -2550,11 +2571,19 @@ def run_pty(
                 active_outbound = None
                 if call is not None:
                     call.hangup()
-                else:
+                elif sip_server is not None:
                     sip_server.hangup()
+                if iax_transport is not None and iax_transport.call_id is not None:
+                    iax_transport.hangup()
 
         def answer_incoming() -> bool:
-            answered = sip_server.answer()
+            nonlocal iax_media_active
+            if iax_transport is not None and iax_transport.incoming_call_id is not None:
+                answered = iax_transport.answer()
+                if answered:
+                    iax_media_active = True
+                return answered
+            answered = sip_server.answer() if sip_server is not None else False
             if answered:
                 remote_rtp = sip_server.remote_rtp()
                 if remote_rtp:
@@ -2563,25 +2592,37 @@ def run_pty(
 
         dce.attach_call_control(answer_incoming, unified_hangup)
         final_hangup = unified_hangup
-        sip_server.on_hangup = lambda: (end_online_session(), dce.notify_call_progress("NO CARRIER"))
-        sip_server.start()
+        if sip_server is not None:
+            sip_server.on_hangup = lambda: (end_online_session(), dce.notify_call_progress("NO CARRIER"))
+            sip_server.start()
         def apply_network() -> None:
-            """(Re)start the SIP registration to match S102/S103/S104/S106 -- called at start-up and on any change."""
-            nonlocal registration, registration_key
+            """Apply active SIP registration and IAX endpoint settings."""
+            nonlocal registration, registration_key, iax_transport, iax_media_socket
             net = dce.net
             key = (net[104], net[102], net[103], net[106] or sip_host) if net[104] and net[102] else None
-            if key == registration_key:
-                return
-            if registration is not None:
-                registration.stop()
-                registration = None
-            registration_key = key
-            if key:
-                from sip_auth import SipRegistration  # noqa: PLC0415
+            if key != registration_key:
+                if registration is not None:
+                    registration.stop()
+                    registration = None
+                registration_key = key
+                if key and sip_server is not None:
+                    from sip_auth import SipRegistration  # noqa: PLC0415
 
-                reg_host, _, reg_port = key[0].partition(":")
-                registration = SipRegistration(reg_host, int(reg_port or 5060), key[1], key[2], key[3], sip_port)
-                registration.start(shared_with=sip_server)
+                    reg_host, _, reg_port = key[0].partition(":")
+                    registration = SipRegistration(reg_host, int(reg_port or 5060), key[1], key[2], key[3], sip_port)
+                    registration.start(shared_with=sip_server)
+
+            iax_key = (net[110], int(net[111] or 4569), net[112], net[113]) if net[110] and net[112] else None
+            current_key = getattr(iax_transport, "config_key", None)
+            if iax_key != current_key:
+                if iax_transport is not None:
+                    iax_transport.close()
+                    iax_transport = None
+                    iax_media_socket = None
+                if iax_key:
+                    iax_transport = IaxTransport(*iax_key)
+                    iax_transport.config_key = iax_key
+                    iax_media_socket = IaxMediaSocket(iax_transport)
 
         dce.on_network_change = apply_network
         apply_network()
@@ -2589,7 +2630,7 @@ def run_pty(
         if True:
 
             def dial_number(number: str) -> str | None:
-                nonlocal active_outbound
+                nonlocal active_outbound, iax_dial_pending, iax_media_active
                 if active_outbound is not None:
                     return
                 dce._call_progress_monitor = None
@@ -2615,8 +2656,21 @@ def run_pty(
                     dce.notify_call_progress("NO CARRIER")
 
                 net = dce.net
+                if net[120] == "1":
+                    if iax_transport is None or not net[110] or not net[112]:
+                        return "NO DIALTONE"
+                    try:
+                        iax_media_active = True
+                        iax_dial_pending = True
+                        iax_transport.dial(destination)
+                    except (OSError, ValueError) as exc:
+                        iax_dial_pending = False
+                        iax_media_active = False
+                        print(f"[modem] IAX dial failed: {exc}", file=sys.stderr, flush=True)
+                        return "NO CARRIER"
+                    return None
                 target_host = net[100] or dial_host
-                if net[120] == "1" or not target_host:           # IAX trunk selected (no IAX2 client yet) or no server
+                if not target_host or sip_server is None:
                     return "NO DIALTONE"
                 call = SipOriginateCall(
                     host=sip_host,
@@ -2643,6 +2697,10 @@ def run_pty(
         online_session = None
         arq_session = None
         data_mode = False
+        iax_dial_pending = False
+        iax_media_active = False
+        iax_transport = None
+        iax_media_socket = None
         # Bound on every path: the main loop reads these unconditionally, and
         # the SIP suite below only assigns them when SIP exists. Without this
         # the standalone daemon dies on the first keystroke (UnboundLocalError).
@@ -2672,6 +2730,8 @@ def run_pty(
             escaped.hold(delivered)
             return
         term_write(delivered)
+        if os.environ.get("MODEM_DEBUG") == "1" and online_session is not None and data_mode:
+            print(f"[dce] terminal receive bytes={len(delivered)}", file=sys.stderr, flush=True)
         dce.count_chars(received=len(delivered))
     try:
         while True:
@@ -2687,11 +2747,20 @@ def run_pty(
 
             if media_socket:
                 readers.append(media_socket.fileno())
+            if iax_transport is not None:
+                # IAX media shares the DSP event loop; include its UDP socket
+                # so startup audio wakes us immediately instead of batching
+                # it behind the 250 ms idle timeout.
+                readers.append(iax_transport.fileno())
             timeout = 0.05 if data_mode else 0.25
             if online_session is not None:
                 due = online_session.rtp_deadline_delay(time.monotonic())
                 if due is not None:
                     timeout = min(timeout,due)
+            if iax_transport is not None and iax_media_active and online_session is not None:
+                audio_due = iax_transport.audio_delay()
+                if audio_due is not None:
+                    timeout = min(timeout, audio_due)
             loop_trace = online_session.timing_trace if online_session is not None else None
             select_started = time.monotonic() if loop_trace is not None else None
             readable, writable, _ = select.select(readers, ser.write_fds(), [], timeout)
@@ -2701,6 +2770,39 @@ def run_pty(
             serial_ended = time.monotonic() if loop_trace is not None else None
             if dropped:
                 terminal_dropped()
+            if iax_transport is not None:
+                for event in iax_transport.poll():
+                    kind = event.get("type")
+                    if kind == "incoming":
+                        dce.begin_incoming_call({"number": event.get("from", ""), "technology": "IAX2"})
+                        dce.notify_incoming_ring()
+                    elif kind == "answered":
+                        iax_dial_pending = False
+                        iax_media_active = True
+                        if online_session is None:
+                            roles = ("answer", "originate") if iax_transport.call_direction == "incoming" else ("originate", "answer")
+                            start_online_session(*roles, (iax_host or "127.0.0.1", iax_port))
+                            if not announce_later:
+                                dce.notify_call_progress("CONNECT")
+                    elif kind == "ended":
+                        was_pending = iax_dial_pending
+                        iax_dial_pending = False
+                        iax_media_active = False
+                        if os.environ.get("MODEM_DEBUG") == "1":
+                            rx_frames, tx_frames, jitter_stats = iax_transport.audio_stats()
+                            print(f"[iax] call ended reason={event.get('reason', 'unknown')} "
+                                  f"audio_rx={rx_frames} audio_tx={tx_frames} "
+                                  f"jitter(played,concealed,late,overflow,target_ms,buffered)={jitter_stats}",
+                                  file=sys.stderr, flush=True)
+                        if online_session is not None:
+                            end_online_session()
+                        if was_pending or dce.online or dce.outgoing_pending:
+                            dce.notify_call_progress("NO CARRIER")
+                    elif kind == "register_lost":
+                        print(f"[iax] registration lost: {event.get('reason', 'unknown')}", file=sys.stderr, flush=True)
+                if online_session is not None and iax_media_active:
+                    for ulaw in iax_transport.drain_audio():
+                        deliver_received(online_session.handle_rtp_payload(ulaw))
             if online_session is not None:
                 online_session.poll(time.monotonic())
                 if dce.online_return_pending:
@@ -2756,6 +2858,13 @@ def run_pty(
                 elif not connect_pending and online_session.link_lost:
                     # The error-controlled link died: drop the call like a
                     # real modem instead of passing on a damaged stream.
+                    if os.environ.get("MODEM_DEBUG") == "1":
+                        engine = online_session._v22
+                        print(f"[modem] link lost: v42_mode={getattr(engine, 'v42_mode', None)!r} "
+                              f"v42_lost={getattr(engine, 'v42_lost', None)!r} "
+                              f"carrier_down_at={online_session._carrier_down_at!r} "
+                              f"last_media_age={time.monotonic() - (online_session._last_rtp_at or online_session._created):.3f}s",
+                              file=sys.stderr, flush=True)
                     unified_hangup()
                     dce.notify_call_progress("NO CARRIER")
                 elif connect_pending and online_session.failed:
@@ -2769,7 +2878,7 @@ def run_pty(
             escape_detector.guard_time = max(0.02, dce.registers[12] / 50.0)      # S12 in 1/50 s
             escape_detector.plus_char = dce.registers[2]                          # S2
             if data:
-                if dial_abort_applies(active_outbound, online_session, dce.online, connect_pending):
+                if dial_abort_applies(active_outbound, online_session, dce.online, connect_pending, iax_dial_pending):
                     # Break before connect: hang up everything in flight and
                     # report NO CARRIER, ready for the next command. Both legs
                     # are torn down unconditionally once committed: the SIP
@@ -2787,11 +2896,17 @@ def run_pty(
                     if online_session is not None:
                         unified_hangup()
                         connect_pending = False
+                    elif iax_transport is not None and iax_dial_pending:
+                        iax_transport.hangup()
+                        iax_dial_pending = False
+                        iax_media_active = False
                     dce.outgoing_pending = False
                     dce.notify_call_progress("NO CARRIER")
                 elif data_mode and online_session is not None:
                     passthrough = escape_detector.feed(data, time.monotonic())
                     if passthrough:
+                        if os.environ.get("MODEM_DEBUG") == "1":
+                            print(f"[dce] terminal transmit bytes={len(passthrough)}", file=sys.stderr, flush=True)
                         if arq_session is not None:
                             arq_session.feed_terminal_bytes(passthrough)
                             framed = arq_session.pump_outgoing(time.monotonic())
@@ -2896,6 +3011,8 @@ def run_pty(
             print(f"[modem] hangup on shutdown failed: {exc}", file=sys.stderr, flush=True)
         if registration is not None:
             registration.stop()
+        if iax_transport is not None:
+            iax_transport.close()
         if sip_server:
             sip_server.close()
         if online_session:
@@ -2941,6 +3058,9 @@ def main(serial_backend=None, control=None) -> None:
         help="Asterisk (or other SIP proxy) address used as the ATD originate target",
     )
     parser.add_argument("--dial-port", type=int, default=5060)
+    parser.add_argument("--iax-host", default=os.environ.get("EL_MODEM_IAX_HOST"), help="Asterisk IAX2 server (UDP; credentials from --iax-user and EL_MODEM_IAX_PASSWORD)")
+    parser.add_argument("--iax-port", type=int, default=int(os.environ.get("EL_MODEM_IAX_PORT", "4569")))
+    parser.add_argument("--iax-user", default=os.environ.get("EL_MODEM_IAX_USER"), help="IAX2 endpoint username")
     parser.add_argument(
         "--line-mode",
         choices=["bell103", "v21", "v22bis", "auto", "v32", "v34", "ms", "chain"],
@@ -3067,6 +3187,10 @@ def main(serial_backend=None, control=None) -> None:
             caller_number=args.caller_number,
             serial_tcp=args.serial_tcp or ("127.0.0.1:9100" if os.name == "nt" else None),
             serial_backend=serial_backend, control=control,
+            iax_host=args.iax_host,
+            iax_port=args.iax_port,
+            iax_user=args.iax_user,
+            iax_password=os.environ.get("EL_MODEM_IAX_PASSWORD", ""),
         )
     except FileExistsError as exc:
         parser.error(f"refusing to replace existing path: {exc.filename}")

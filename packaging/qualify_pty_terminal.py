@@ -115,10 +115,13 @@ def terminal_session(endpoint, root, name):
         (root / (name + '-ui.txt')).write_bytes(data)
 
 
-def qualify(executable, target, root):
+def qualify(executable, target, root, expected_sha256=None):
     digest = hashlib.sha256(executable.read_bytes()).hexdigest()
-    if digest != HASHES[target]:
-        raise RuntimeError('Executable differs from published pinned artifact')
+    expected_sha256 = HASHES[target] if expected_sha256 is None else expected_sha256.lower()
+    if not re.fullmatch(r'[0-9a-f]{64}', expected_sha256):
+        raise ValueError('Expected SHA-256 must contain exactly 64 hexadecimal characters')
+    if digest != expected_sha256:
+        raise RuntimeError('Executable differs from its expected SHA-256')
     if target.startswith('macos') and platform.system() != 'Darwin':
         raise RuntimeError('Actual macOS required for macOS qualification')
     expected_cpu = {'macos-x86_64': 'x86_64', 'macos-arm64': 'arm64'}.get(target)
@@ -178,5 +181,7 @@ if __name__ == '__main__':
     parser.add_argument('executable', type=Path)
     parser.add_argument('--target', choices=HASHES, required=True)
     parser.add_argument('--reports', type=Path, required=True)
+    parser.add_argument('--expected-sha256',
+                        help='Expected artifact hash; defaults to the published target pin')
     args = parser.parse_args()
-    qualify(args.executable, args.target, args.reports.resolve())
+    qualify(args.executable, args.target, args.reports.resolve(), args.expected_sha256)

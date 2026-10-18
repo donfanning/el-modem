@@ -11,7 +11,7 @@ def make_session():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", 0))
     session = OnlineAudioSession(
-        sock, ("10.9.9.9", 10000), "originate", "answer",
+        sock, ("192.0.2.9", 10000), "originate", "answer",
         negotiate=False, line_mode="bell103",
     )
     session._stop.set()  # never started; make doubly sure no thread runs
@@ -26,20 +26,21 @@ class SymmetricRtpTests(unittest.TestCase):
     def test_initial_destination_is_sdp_address(self):
         session, sock = make_session()
         try:
-            self.assertEqual(session._send_addr, ("10.9.9.9", 10000))
+            self.assertEqual(session._send_addr, ("192.0.2.9", 10000))
         finally:
             sock.close()
 
     def test_latches_to_observed_source(self):
         session, sock = make_session()
         try:
-            addr=("192.168.192.21",10004)
+            # Documentation-only TEST-NET address; never expose lab topology.
+            addr=("192.0.2.21",10004)
             for seq in range(2):
                 self.assertEqual(session.note_rtp_source(addr,self.packet(seq)),[])
-                self.assertEqual(session._send_addr,("10.9.9.9",10000))
+                self.assertEqual(session._send_addr,("192.0.2.9",10000))
             accepted=session.note_rtp_source(addr,self.packet(2))
             self.assertEqual([x[0] for x in accepted],[self.packet(x) for x in range(3)])
-            self.assertEqual(session._send_addr, ("192.168.192.21", 10004))
+            self.assertEqual(session._send_addr, ("192.0.2.21", 10004))
             # A later source cannot hijack the media destination or DSP.
             for seq in range(3,6):
                 self.assertEqual(session.note_rtp_source((addr[0],10008),self.packet(seq)),[])
@@ -55,7 +56,7 @@ class SymmetricRtpTests(unittest.TestCase):
                         ("host", 0), ("host", 65536), ("host", -1),
                         ("host", "notaport"), (12345, 10000), ('224.0.0.1',1234)):
                 self.assertEqual(session.note_rtp_source(bad,self.packet(0)),[])
-                self.assertEqual(session._send_addr, ("10.9.9.9", 10000),
+                self.assertEqual(session._send_addr, ("192.0.2.9", 10000),
                                  "accepted %r" % (bad,))
         finally:
             sock.close()

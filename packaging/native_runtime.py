@@ -21,11 +21,12 @@ NATIVE_ENV = {
 }
 
 
-def override(image, capture_prefix):
+def override(image, capture_prefix, media_host, dial_host):
     prefix = PurePosixPath(capture_prefix)
-    if (not image or not prefix.is_absolute() or '..' in prefix.parts
+    if (not image or not media_host or not dial_host
+            or not prefix.is_absolute() or '..' in prefix.parts
             or not str(prefix).startswith('/tmp/cap/') or prefix.name in ('', '.')):
-        raise ValueError('image and an absolute capture prefix below /tmp/cap are required')
+        raise ValueError('image, media host, dial host, and an absolute capture prefix below /tmp/cap are required')
     prefix = str(prefix)
     env = dict(NATIVE_ENV, MODEM_DEBUG='1',
                V34_CLOCK_FIT_DUMP=prefix,
@@ -35,8 +36,8 @@ def override(image, capture_prefix):
     command = ['python3', '-u', '/app/modem_dce.py', '--line-mode', 'ms',
                '--link', '/tmp/modem0', '--tcp-listen', '0.0.0.0:9100',
                '--sip-host', '0.0.0.0', '--sip-port', '5062',
-               '--media-host', '172.29.103.30', '--media-port', '16000',
-               '--dial-host', '172.29.103.10', '--dial-port', '5060',
+               '--media-host', media_host, '--media-port', '16000',
+               '--dial-host', dial_host, '--dial-port', '5060',
                '--timing-trace', '--capture', prefix+'.pcm',
                '--capture-seconds', '300', '--dsp-capture', prefix+'.dsp',
                '--metrics-file', prefix+'.metrics.json']
@@ -49,8 +50,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', required=True)
     parser.add_argument('--capture-prefix', required=True)
+    parser.add_argument('--media-host', required=True,
+                        help='media bind/advertise address reachable by the peer')
+    parser.add_argument('--dial-host', required=True,
+                        help='SIP registrar or proxy address')
     args = parser.parse_args()
-    print(json.dumps(override(args.image, args.capture_prefix), indent=2))
+    print(json.dumps(override(args.image, args.capture_prefix,
+                              args.media_host, args.dial_host), indent=2))
 
 
 if __name__ == '__main__':

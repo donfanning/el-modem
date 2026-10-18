@@ -75,6 +75,9 @@ def run(executable, output):
         os.write(master, data)
         read(.4)
 
+    def click_at(x, y):
+        send(f'\x1b[<0;{x+1};{y+1}M\x1b[<0;{x+1};{y+1}m'.encode())
+
     def type_text(text):
         for ch in text:
             os.write(master, ch.encode())
@@ -93,20 +96,37 @@ def run(executable, output):
     try:
         wait(lambda:'idle' in view() and 'UI qualification' in view(), 120)
         save('dashboard')
-        assert 'RTS CTS' in view()
+        assert '(?)HS' in view() and '(?)ARQ' in view()
         checks.append('dashboard displays actual idle worker and modem lamp columns')
         send(b's')
         wait(lambda:'modem.echo' in view() and 'sip.user' in view())
         save('settings')
-        assert 'IAX is stored only' in view()
+        assert 'IAX2 share the modem DSP' in view()
+        click('All')
+        wait(lambda:'Iax' in view())
+        click('Iax')
+        wait(lambda:'iax.user' in view())
         assert 'iax.user' in view()
+        click('Iax')
+        wait(lambda:'Routing' in view())
+        click('Routing')
+        wait(lambda:'network.trunk' in view())
+        assert 'network.trunk' in view()
+        click('Routing')
+        wait(lambda:'All' in view())
+        click('All')
+        wait(lambda:'modem.echo' in view())
         checks.append('settings screen loads live modem, SIP and stored IAX values')
         click('modem.echo')
         # Selecting the row fills the editor. Tab from the table focuses it.
         click('modem.echo')
-        send(b'\t')
-        send(b'\x1b[H\x1b[3~')
+        save('settings-selected')
+        # The modal puts the value editor at a stable fixed row below the
+        # scrollable table. Focus it directly; Tab order varies by Textual.
+        click_at(42,32)
+        send(b'\x1b[H\x1b[3~')  # Home, Delete: replace the current Input value.
         type_text('0')
+        save('settings-editor')
         click('Apply')
         wait(lambda:re.search(r'modem\.echo\s+0\s+0\s+immediate',view()) is not None)
         save('settings-applied')
@@ -114,10 +134,10 @@ def run(executable, output):
         profile=output/'instances/modem-1/profiles.json'
         wait(lambda:profile.exists() and json.loads(profile.read_text()).get('profiles',{}).get('0',{}).get('echo') == 0)
         checks.append('setting edited and saved through actual UI callbacks into worker profile')
-        click('Back')
+        send(b'\x1b')
         wait(lambda:'UI qualification' in view() and 'idle' in view())
         send(b't')
-        wait(lambda:'ASCII terminal' in view())
+        wait(lambda:'ASCII TERMINAL' in view().upper())
         type_text('ATS0?')
         send(b'\r')
         wait(lambda:'OK' in view())
@@ -140,16 +160,16 @@ def run(executable, output):
         click('modem.echo')
         wait(lambda:re.search(r'modem\.echo\s+1\s+1\s+immediate',view()) is not None)
         save('settings-echo-restored')
-        click('Back')
-        click('Stop')
+        click('Close [Esc]')
+        send(b'5')  # modem action 5: start/stop
         wait(lambda:'stopped' in view())
-        click('Instance')
-        wait(lambda:'Instance / serial / listening addresses' in view())
+        send(b'4')  # modem action 4: configure instance
+        wait(lambda:'INSTANCE / CONNECTION SETUP' in view())
         save('instance-dialog')
         assert 'sip_port' in view() and 'media_port' in view() and '27232' in view()
         click('Cancel')
         wait(lambda:'UI qualification' in view() and 'stopped' in view())
-        click('Start')
+        send(b'5')
         wait(lambda:'idle' in view(),120)
         checks.append('instance dialog displays actual ports; worker stops and restarts through dashboard')
         send(b'q')
@@ -174,12 +194,60 @@ def run(executable, output):
     return report
 
 
+def qualify_posix_device(executable, output):
+    """Exercise the frozen worker's real-device backend using a PTY pair."""
+    if os.name!='posix':
+        return dict(status='SKIP',reason='POSIX serial-device backend only')
+    master,slave=pty.openpty()
+    device_dir=output/'device';device_dir.mkdir()
+    config=device_dir/'config.json'
+    config.write_text(json.dumps(dict(schema=1,modems=[dict(
+        id='modem-1',name='POSIX device qualification',serial='device',
+        serial_device=os.ttyname(slave),serial_baud=115200,enabled=True,
+        sip_host='127.0.0.1',sip_port=28232,media_host='127.0.0.1',
+        media_port=28432,serial_port=28234)])))
+    process=subprocess.Popen([str(executable),'--headless','--config',str(config)],
+                             stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
+                             stderr=subprocess.PIPE)
+    try:
+        os.set_blocking(master,False)
+        start=time.monotonic()
+        deadline=time.monotonic()+15
+        response=bytearray()
+        sent=False
+        while time.monotonic()<deadline:
+            if process.poll() is not None:
+                raise RuntimeError(f'packaged device worker exited {process.returncode}')
+            if not sent and time.monotonic()>=start+1:
+                os.write(master,b'ATI\r');sent=True
+            ready,_,_=select.select([master],[],[],.1)
+            if ready:
+                try:response.extend(os.read(master,4096))
+                except BlockingIOError:pass
+            if b'EL-MODEM' in response and b'OK' in response:break
+        assert b'ATI' in response and b'OK' in response, response.decode('ascii','replace')
+        return dict(status='PASS',check='frozen worker returned a Hayes ATI response over POSIX device backend',
+                    response=response.decode('ascii','replace'))
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:process.wait(timeout=10)
+            except subprocess.TimeoutExpired:process.kill();process.wait()
+        os.close(master);os.close(slave)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('executable',type=Path)
     parser.add_argument('output',type=Path)
     args=parser.parse_args()
-    print(json.dumps(run(args.executable,args.output),indent=2))
+    report=run(args.executable,args.output)
+    device=qualify_posix_device(args.executable,args.output)
+    report['posix_device_backend']=device
+    if report['status']=='PASS' and device['status'] not in ('PASS','SKIP'):
+        report['status']='FAIL'
+    (args.output/'result.json').write_text(json.dumps(report,indent=2)+'\n')
+    print(json.dumps(report,indent=2))
 
 
 if __name__=='__main__':

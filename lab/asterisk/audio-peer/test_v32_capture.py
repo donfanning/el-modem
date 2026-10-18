@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Replay real PSTN V.32 captures through the receive state machine.
 
-The fixtures are the receive side of calls to NIST ACTS (303) 494-4774, recorded with
+The fixtures are the receive side of calls to NIST ACTS, recorded with
 ``MODEM_CAPTURE``. Replaying them pins the handshake against a real peer without dialling, which
 matters because that peer's training sequence is shorter than our own answerer sends and stops
 matching our expected TRN partway through.

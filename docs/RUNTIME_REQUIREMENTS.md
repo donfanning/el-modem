@@ -79,7 +79,9 @@ GLIBC 2.36 result does not apply to this rc1 Linux ZIP.
   is bundled. PTY and native serial/modem-control signals are not interchangeable.
   See [serial interfaces](SERIAL.md) and [desktop settings](DESKTOP.md).
 - Calls need configured SIP credentials/routing and reachable SIP/RTP endpoints;
-  no provider configuration is supplied. Native IAX calling is not implemented.
+  no provider configuration is supplied. IAX2 calls use UDP and G.711 µ-law;
+  local Asterisk interoperability is tested, while provider interoperability is
+  not yet qualified.
 
 Separate command-path evidence now covers [Windows COM](WINDOWS_COM_QUALIFICATION.md)
 and [macOS PTY](MACOS_PTY_QUALIFICATION.md) with actual legacy applications on the

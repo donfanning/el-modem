@@ -79,7 +79,7 @@
  EndGlobal
 --- /dev/null
 +++ b/broker.c
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,537 @@
 +/*++
 +
 +Copyright (c) El-Modem Project
@@ -100,6 +100,7 @@
 +#include <stdlib.h>
 +#include <stdio.h>
 +#include <string.h>
++#include <wchar.h>
 +
 +//
 +// Minimal diagnostic sink. The WPP Trace() calls in this driver have no
@@ -109,22 +110,16 @@
 +//
 +#define BROKER_LOG_PATH    "C:\\Users\\Public\\elmodem-broker.log"
 +
-+VOID
-+BrokerLogA(
-+    _In_ PCSTR Message,
-+    _In_ DWORD  Code
++//
++// Append one already-formatted line to the diagnostic log.
++//
++static VOID
++BrokerLogLine(
++    _In_ PCSTR Line
 +    )
 +{
 +    HANDLE  file;
-+    CHAR    line[192];
 +    DWORD   written = 0;
-+    int     n;
-+
-+    n = sprintf_s(line, sizeof(line), "%lu %s error=%lu\r\n",
-+                  (unsigned long) GetTickCount(), Message, (unsigned long) Code);
-+    if (n < 0) {
-+        return;
-+    }
 +
 +    file = CreateFileA(BROKER_LOG_PATH,
 +                       FILE_APPEND_DATA,
@@ -138,11 +133,113 @@
 +        return;
 +    }
 +
-+    WriteFile(file, line, (DWORD) strlen(line), &written, NULL);
++    WriteFile(file, Line, (DWORD) strlen(Line), &written, NULL);
 +    CloseHandle(file);
 +}
 +
++VOID
++BrokerLogA(
++    _In_ PCSTR Message,
++    _In_ DWORD  Code
++    )
++{
++    CHAR    line[192];
++    int     n;
++
++    n = sprintf_s(line, sizeof(line), "%lu %s error=%lu\r\n",
++                  (unsigned long) GetTickCount(), Message, (unsigned long) Code);
++    if (n < 0) {
++        return;
++    }
++
++    BrokerLogLine(line);
++}
++
 +#define BrokerLog(m, c) BrokerLogA((m), (c))
++
++//
++// Record which port and pipe a line is about. This earns its own sink: the log
++// is one file for every port on the machine, so with more than one installed
++// "which port is this line about" has to be answerable from the line itself.
++//
++static VOID
++BrokerLogPort(
++    _In_ PBROKER_CONTEXT Broker,
++    _In_ PCSTR           Message,
++    _In_ DWORD           Code
++    )
++{
++    CHAR    pipe[ELMODEM_PIPE_NAME_CCH * 2];
++    CHAR    port[ELMODEM_PORT_NAME_CCH * 2];
++    CHAR    line[sizeof(pipe) + sizeof(port) + 96];
++    int     n;
++
++    pipe[0] = '\0';
++    port[0] = '\0';
++
++    WideCharToMultiByte(CP_ACP, 0, Broker->PipeName, -1,
++                        pipe, sizeof(pipe), NULL, NULL);
++    WideCharToMultiByte(CP_ACP, 0, Broker->PortName, -1,
++                        port, sizeof(port), NULL, NULL);
++
++    n = sprintf_s(line, sizeof(line), "%lu pipe=%s port=%s %s error=%lu\r\n",
++                  (unsigned long) GetTickCount(),
++                  pipe,
++                  port,
++                  Message,
++                  (unsigned long) Code);
++    if (n < 0) {
++        return;
++    }
++
++    BrokerLogLine(line);
++}
++
++//
++// Read one REG_SZ out of a key the caller has already opened. Returns TRUE only
++// for a non-empty value that fits; anything else leaves the caller's fallback in
++// place. Failures are not logged here because "the value is absent" is the
++// normal case for both callers.
++//
++static BOOLEAN
++BrokerReadValue(
++    _In_  WDFKEY    Key,
++    _In_  PCWSTR    ValueName,
++    _Out_ PWCHAR    Value,
++    _In_  size_t    ValueCch
++    )
++{
++    UNICODE_STRING  name;
++    UNICODE_STRING  given;
++    WDFSTRING       string = NULL;
++    size_t          chars;
++    size_t          index;
++    NTSTATUS        status;
++
++    RtlInitUnicodeString(&name, ValueName);
++
++    status = WdfStringCreate(NULL, WDF_NO_OBJECT_ATTRIBUTES, &string);
++    if (!NT_SUCCESS(status)) {
++        return FALSE;
++    }
++
++    status = WdfRegistryQueryString(Key, &name, string);
++    if (NT_SUCCESS(status)) {
++        WdfStringGetUnicodeString(string, &given);
++        chars = given.Length / sizeof(WCHAR);
++        if ((chars > 0) && (chars < ValueCch)) {
++            for (index = 0; index < chars; index++) {
++                Value[index] = given.Buffer[index];
++            }
++            Value[chars] = L'\0';
++            WdfObjectDelete(string);
++            return TRUE;
++        }
++    }
++
++    WdfObjectDelete(string);
++    return FALSE;
++}
 +
 +VOID
 +BrokerPump(
@@ -174,7 +271,7 @@
 +            // El-Modem may not be running yet, or may have restarted. Retry
 +            // quietly until it appears.
 +            //
-+            broker->Pipe = CreateFileW(ELMODEM_PIPE_NAME,
++            broker->Pipe = CreateFileW(broker->PipeName,
 +                                       GENERIC_READ | GENERIC_WRITE,
 +                                       0,
 +                                       NULL,
@@ -183,13 +280,14 @@
 +                                       NULL);
 +
 +            if (broker->Pipe == INVALID_HANDLE_VALUE) {
-+                BrokerLog("CreateFile failed",
-+                           (DWORD) GetLastError());
++                BrokerLogPort(broker,
++                              "CreateFile failed",
++                              (DWORD) GetLastError());
 +                Sleep(100);
 +                continue;
 +            }
 +
-+            BrokerLog("connected", 0);
++            BrokerLogPort(broker, "connected", 0);
 +
 +            Trace(TRACE_LEVEL_INFO, "Broker connected to El-Modem pipe");
 +        }
@@ -220,7 +318,9 @@
 +                // pump would spin on a dead handle forever and never reconnect
 +                // after El-Modem restarted.
 +                //
-+                BrokerLog("pipe disconnected", (DWORD) GetLastError());
++                BrokerLogPort(broker,
++                              "pipe disconnected",
++                              (DWORD) GetLastError());
 +                CloseHandle(broker->Pipe);
 +                broker->Pipe = INVALID_HANDLE_VALUE;
 +                continue;
@@ -302,7 +402,9 @@
 +                       (DWORD) (Length - offset),
 +                       &written,
 +                       NULL)) {
-+            BrokerLog("BrokerSend failed", (DWORD) GetLastError());
++            BrokerLogPort(broker,
++                          "BrokerSend failed",
++                          (DWORD) GetLastError());
 +            CloseHandle(broker->Pipe);
 +            broker->Pipe = INVALID_HANDLE_VALUE;
 +            break;
@@ -315,6 +417,111 @@
 +    }
 +
 +    return STATUS_SUCCESS;
++}
++
++
++//
++// Decide which pipe this port talks to.
++//
++// The port's own device key wins, which is what allows several ports to serve
++// several El-Modem instances at once. With no value set - every single-port
++// install - the default name is used and the port behaves exactly as it did
++// before this was configurable.
++//
++// This never fails the port. A key that cannot be read, or a value that is not
++// a name El-Modem could be listening on, keeps the default and says so in the
++// log: coming up on the default is recoverable, connecting to a name nobody
++// chose is not.
++//
++static VOID
++BrokerResolveIdentity(
++    _In_  WDFDEVICE Device,
++    _Out_ PWCHAR    Name,
++    _In_  size_t    NameCch,
++    _Out_ PWCHAR    Port,
++    _In_  size_t    PortCch
++    )
++{
++    static const WCHAR prefix[] = L"\\\\.\\pipe\\";
++    const size_t    prefixChars = (sizeof(prefix) / sizeof(prefix[0])) - 1;
++    const size_t    maxChars = ELMODEM_PIPE_NAME_CCH - 1 - prefixChars;
++    WDFKEY          key = NULL;
++    WCHAR           buffer[ELMODEM_PIPE_NAME_CCH];
++    size_t          chars;
++    size_t          index;
++    NTSTATUS        status;
++
++    wcsncpy_s(Name, NameCch, ELMODEM_PIPE_DEFAULT, _TRUNCATE);
++    wcsncpy_s(Port, PortCch, L"?", _TRUNCATE);
++
++    //
++    // PLUGPLAY_REGKEY_DEVICE already lands on the device's "Device Parameters"
++    // key, which is where the Ports class installer puts PortName - the sample
++    // reads it exactly this way - and so also where a per-port pipe name
++    // belongs. Measured, not assumed: opening a subkey called "Device
++    // Parameters" beneath this one answers STATUS_OBJECT_NAME_NOT_FOUND.
++    //
++    status = WdfDeviceOpenRegistryKey(Device,
++                                      PLUGPLAY_REGKEY_DEVICE,
++                                      KEY_QUERY_VALUE,
++                                      WDF_NO_OBJECT_ATTRIBUTES,
++                                      &key);
++    if (!NT_SUCCESS(status)) {
++        BrokerLog("identity: device key unreadable", (DWORD) status);
++        return;
++    }
++
++    //
++    // The port number is read for the log only. Windows owns this value; the
++    // driver never writes it.
++    //
++    BrokerReadValue(key, L"PortName", Port, PortCch);
++
++    if (!BrokerReadValue(key,
++                         ELMODEM_PIPE_VALUE,
++                         buffer,
++                         ELMODEM_PIPE_NAME_CCH)) {
++        //
++        // No override on this port. That is the normal single-port case, so it
++        // is not a fault; the resolved identity is logged either way.
++        //
++        WdfRegistryClose(key);
++        return;
++    }
++
++    WdfRegistryClose(key);
++
++    chars = wcslen(buffer);
++
++    if (chars > maxChars) {
++        BrokerLog("identity: override too long for a pipe name", 0);
++        return;
++    }
++
++    if ((chars > prefixChars) && (_wcsnicmp(buffer, prefix, prefixChars) == 0)) {
++        //
++        // Already a full pipe path.
++        //
++        wcsncpy_s(Name, NameCch, buffer, _TRUNCATE);
++        return;
++    }
++
++    if (wcschr(buffer, L'\\') == NULL) {
++        //
++        // A bare name, exactly as --serial-device accepts it.
++        //
++        for (index = 0; index < prefixChars; index++) {
++            Name[index] = prefix[index];
++        }
++        for (index = 0; index < chars; index++) {
++            Name[prefixChars + index] = buffer[index];
++        }
++        Name[prefixChars + chars] = L'\0';
++        return;
++    }
++
++    BrokerLog("identity: override is neither a name nor a pipe path", 0);
++    wcsncpy_s(Name, NameCch, ELMODEM_PIPE_DEFAULT, _TRUNCATE);
 +}
 +
 +
@@ -333,6 +540,16 @@
 +    broker->QueueContext = QueueContext;
 +    broker->Stop = 0;
 +    broker->Pipe = INVALID_HANDLE_VALUE;
++
++    //
++    // Settle the pipe and port names before the pump starts using them.
++    //
++    BrokerResolveIdentity(QueueContext->DeviceContext->Device,
++                          broker->PipeName,
++                          ELMODEM_PIPE_NAME_CCH,
++                          broker->PortName,
++                          ELMODEM_PORT_NAME_CCH);
++    BrokerLogPort(broker, "identity", 0);
 +
 +    //
 +    // NOTE: the 5th parameter of CreateThread is dwCreationFlags, NOT a
@@ -402,7 +619,7 @@
 +}
 --- /dev/null
 +++ b/broker.h
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,124 @@
 +/*++
 +
 +Copyright (c) El-Modem Project
@@ -423,12 +640,39 @@
 +    It is strictly opt-in. Until El-Modem connects, the driver behaves exactly
 +    as the sample did, so an unconnected port still answers AT locally.
 +
++    One port owns one pipe. A port can be given a name of its own through its
++    device key, which is what lets several ports serve several El-Modem
++    instances at once.
++
 +--*/
 +
 +#pragma once
 +
-+#define ELMODEM_PIPE_NAME    L"\\\\.\\pipe\\ElModemSerial"
-+#define ELMODEM_PIPE_PATH    L"\\\\.\\pipe\\ElModemSerial"
++//
++// The pipe every port uses unless its own device key names another one.
++//
++#define ELMODEM_PIPE_DEFAULT  L"\\\\.\\pipe\\ElModemSerial"
++
++//
++// Per-port override, read from the port's own "Device Parameters" key. A REG_SZ
++// holding either a bare name ("ElModemSerial2") or a full pipe path. That key
++// belongs to a single device node, so two ports can name two pipes. El-Modem
++// must then be started with the matching --serial-device.
++//
++// Nothing sets this today; its absence is the normal single-port case.
++//
++#define ELMODEM_PIPE_VALUE    L"ElModemPipeName"
++
++//
++// Room for a resolved pipe name, terminator included.
++//
++#define ELMODEM_PIPE_NAME_CCH 128
++
++//
++// Room for the port's own name ("COM24"). The log is shared between ports, so
++// every line that matters says which port it came from.
++//
++#define ELMODEM_PORT_NAME_CCH 32
 +
 +//
 +// Size of the staging buffer used in each direction. Kept small so the pump
@@ -450,6 +694,8 @@
 +    volatile LONG          Stop;
 +    HANDLE                 Thread;
 +    HANDLE                 Pipe;
++    WCHAR                  PipeName[ELMODEM_PIPE_NAME_CCH];
++    WCHAR                  PortName[ELMODEM_PORT_NAME_CCH];
 +} BROKER_CONTEXT, *PBROKER_CONTEXT;
 +
 +//
@@ -828,7 +1074,7 @@
      case IOCTL_SERIAL_SET_XON:
      case IOCTL_SERIAL_SET_XOFF:
      case IOCTL_SERIAL_SET_CHARS:
-@@ -411,9 +560,164 @@
+@@ -411,9 +560,167 @@
      case IOCTL_SERIAL_GET_HANDFLOW:
      case IOCTL_SERIAL_SET_HANDFLOW:
      case IOCTL_SERIAL_RESET_DEVICE:
@@ -926,13 +1172,16 @@
 +    case IOCTL_SERIAL_GET_DTRRTS:
 +    {
 +        //
-+        // ControlHandshake shares the SERIAL_MSR_* bit layout:
-+        // 0x01 DTR, 0x40 RTS.
++        // IOCTL_SERIAL_GET_DTRRTS reports DTR and RTS as the two flags the
++        // caller reads. serial.h copies only IOCTL codes out of ntddser.h for
++        // user-mode builds, so SERIAL_DTR_STATE and SERIAL_RTS_STATE are spelled
++        // out as 0x01 and 0x02. An earlier revision used 0x40 for RTS, which is
++        // SERIAL_RI_STATE in this same domain: callers saw RTS clear, RI asserted.
 +        //
 +        ULONG control = 0;
 +
 +        if (GetDtr(deviceContext)) { control |= 0x01; }
-+        if (GetRts(deviceContext)) { control |= 0x40; }
++        if (GetRts(deviceContext)) { control |= 0x02; }
 +
 +        status = RequestCopyFromBuffer(Request,
 +                            &control,

@@ -26,17 +26,29 @@ This component must not be described as part of the GPL-owned DSP core or
 covered by proprietary incorporation rights over Microsoft's code. It remains
 a separate driver communicating with the modem over a byte pipe.
 
-The source hardcodes the `ElModemSerial` pipe. Multiple modems need distinct
-driver routing, not just additional Python workers. The driver also has local
-AT fallback when disconnected: AT responses alone cannot prove the Python
-modem was reached. A live probe on the existing COM3 driver exchanged exact
-530-byte arbitrary binary vectors both ways through the real Python pipe
-backend; no driver installation, trust change or modem call was performed.
+Each port owns one pipe. With no override a port uses `\\.\pipe\ElModemSerial`,
+as it always has; a port can name its own pipe instead with a `REG_SZ` value
+`ElModemPipeName` in its own `Device Parameters` key, which is how more than one
+port reaches its own modem. A port that attaches to nothing does not simply
+fail: the stock sample's AT responder stays armed, so it answers `ATD` with
+`CONNECT` and no modem behind it. Every line the driver writes to its log in
+`Users/Public` names the pipe and the port, and a port sharing another port's
+name logs `CreateFile failed error=231` (`ERROR_PIPE_BUSY`).
+
+The driver also has local AT fallback when disconnected: AT responses alone
+cannot prove the Python modem was reached. Live probes have exchanged exact
+arbitrary binary vectors both ways through the real Python pipe backend, most
+recently two ports at once on separate names, byte-exact in both directions and
+with no bytes crossing between them. No modem call was involved.
 
 Further driver review is needed before a binary distribution: synchronous pipe
 writes and close paths, ring-buffer concurrency, shutdown after the two-second
-thread wait, and constant modem-signal behavior are not qualified by that byte
-probe. The diagnostic log in Users/Public contains event codes/byte counts;
+thread wait are not qualified by that byte probe. Constant modem-signal behavior
+is no longer on that list: a separate probe against the installed driver measured
+it - CTS/DSR/RLSD asserted and RI idle by design, DTR/RTS answered truthfully by
+`IOCTL_SERIAL_GET_DTRRTS`, and a DTR cycle or a break does not disturb the byte
+path. That is one host, and the pipe protocol still carries no signal lines.
+The diagnostic log in Users/Public contains event codes/byte counts;
 it is not a substitute for bounded structured diagnostics.
 
 ## Build and signing
@@ -54,7 +66,15 @@ msbuild VirtualSerial.sln /t:Rebuild /p:Configuration=Release /p:Platform=x64
 ```
 
 CI verifies source reconstruction, not a WDK compile or driver installation.
-A fresh compiled package and its binding to these sources remain unqualified.
+The current overlay has also been manually reconstructed, built with the EWDK,
+test-signed, installed and exercised on one Windows 11 x64 host; the installed
+DLL matched the signed build, and one- and two-port byte routing passed. This
+does not qualify other hosts or Windows builds, a publicly signed package,
+three or more ports, or broader driver concurrency and shutdown behavior. See
+[Windows driver instructions](../../docs/WINDOWS_DRIVER.md) for the measured
+scope. A rebuild is not expected to be byte-identical to anyone else's: two
+builds of byte-identical source were measured to differ in the PE timestamp and
+debug-directory regions, so compare sources rather than binary hashes.
 Use your own local development test certificate; no project private key or
 certificate is published here. Test-signed packages require explicit machine
 trust and applicable Windows test policy. See [Windows driver instructions](../../docs/WINDOWS_DRIVER.md)

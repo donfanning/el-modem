@@ -10,11 +10,16 @@ cd "$(dirname "$0")/.."
 if [ "${1:-}" = docker ]; then
   mkdir -p packaging/dist
   docker run --rm -v "$PWD/lab/asterisk":/work/lab/asterisk:ro \
+    -v "$PWD/native":/work/native:ro \
     -v "$PWD/packaging":/work/packaging:ro \
     -v "$PWD/packaging/dist":/out -w /work python:3.12-slim sh -ec '
       apt-get update -qq >/dev/null
-      apt-get install -y -qq binutils >/dev/null 2>&1
-      pip install -q numpy numba pyinstaller textual==0.89.1
+      apt-get install -y -qq binutils curl ca-certificates build-essential >/dev/null 2>&1
+      export CARGO_HOME=/tmp/cargo RUSTUP_HOME=/tmp/rustup PATH=/tmp/cargo/bin:$PATH
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+      pip install -q numpy numba pyinstaller textual==0.89.1 maturin==1.9.4
+      CARGO_TARGET_DIR=/tmp/el-modem-iax-target maturin build --release --manifest-path native/iax/Cargo.toml --interpreter python -o /tmp/iax-wheel
+      pip install -q --no-deps /tmp/iax-wheel/*.whl
       pyinstaller --noconfirm --distpath /out --workpath /tmp/el-modem-build packaging/el_modem.spec
     '
 elif [ "${1:-}" = docker-bookworm ] || [ "${1:-}" = docker-bookworm-optimized ] || [ "${1:-}" = docker-bookworm-lto ]; then
@@ -30,12 +35,18 @@ elif [ "${1:-}" = docker-bookworm ] || [ "${1:-}" = docker-bookworm-optimized ] 
     task_builder=el-modem-builder-bookworm-lto
   fi
   docker run --rm -v "$PWD/lab/asterisk":/work/lab/asterisk:ro \
+    -v "$PWD/native":/work/native:ro \
     -v "$PWD/packaging":/work/packaging:ro \
     -v "$PWD/packaging/dist":/out -w /work "$task_builder" sh -ec '
       /opt/el-modem-build/bin/python -c "import sys,numpy,numba,llvmlite; print(dict(python=sys.version,numpy=numpy.__version__,numba=numba.__version__,llvmlite=llvmlite.__version__))"
+      CARGO_TARGET_DIR=/tmp/el-modem-iax-target /opt/el-modem-build/bin/maturin build --release --manifest-path native/iax/Cargo.toml --interpreter /opt/el-modem-build/bin/python --out /tmp/iax-wheel
+      /opt/el-modem-build/bin/pip install --no-deps /tmp/iax-wheel/*.whl
       /opt/el-modem-build/bin/python -m PyInstaller --noconfirm --distpath /out --workpath /tmp/el-modem-build packaging/el_modem.spec
     '
 else
-  python -m pip install numpy numba pyinstaller textual==0.89.1
+  python -m pip install numpy numba pyinstaller textual==0.89.1 maturin==1.9.4
+  mkdir -p /tmp/el-modem-iax-wheel
+  maturin build --release --manifest-path native/iax/Cargo.toml --interpreter "$(command -v python)" --out /tmp/el-modem-iax-wheel
+  python -m pip install --no-deps /tmp/el-modem-iax-wheel/*.whl
   python -m PyInstaller --noconfirm --distpath dist --workpath build/el-modem packaging/el_modem.spec
 fi

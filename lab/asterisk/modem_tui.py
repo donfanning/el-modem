@@ -1,9 +1,16 @@
 """Textual dashboard. UI never runs in a DSP worker."""
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Grid, Horizontal, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Select, Static, TextArea
+from textual.widgets import Button, DataTable, Footer, Input, Label, Select, Static
+
+def serial_backend_choices(platform=None):
+    import sys
+    platform=platform or sys.platform
+    if platform=='win32':return ('tcp','pipe','com')
+    if platform.startswith('linux'):return ('driver','pty','tcp','device')
+    return ('pty','tcp','device')
 
 class AsciiBuffer:
     def __init__(self,limit=1000): self.lines=[''];self.limit=limit
@@ -27,8 +34,11 @@ class AsciiBuffer:
 class Confirm(ModalScreen):
     def __init__(self,text,callback):super().__init__();self.text=text;self.callback=callback
     def compose(self):
-        yield Label(self.text)
-        with Horizontal():yield Button('Confirm',id='yes',variant='warning');yield Button('Cancel',id='no')
+        with Vertical(id='confirm-window'):
+            yield Static('+-- CONFIRM ----------------------------------------------------------+')
+            yield Label(self.text)
+            with Horizontal():yield Button('Confirm',id='yes',variant='warning');yield Button('Cancel',id='no')
+            yield Static('+-----------------------------------------------------------------------+')
     def on_button_pressed(self,event):
         event.stop()
         self.dismiss()
@@ -37,12 +47,17 @@ class Confirm(ModalScreen):
 class InstanceDialog(ModalScreen):
     def __init__(self,spec,callback):super().__init__();self.spec=spec;self.callback=callback
     def compose(self):
-        yield Label('Instance / serial / listening addresses (modem must be stopped)')
-        for name in ('name','sip_host','sip_port','media_host','media_port','serial_port','serial_device','serial_baud'):
-            yield Label(name);yield Input(str(getattr(self.spec,name,'')),id=name)
-        yield Select([(x,x) for x in ('driver','pty','tcp','com','pipe')],value=self.spec.serial,id='serial',allow_blank=False)
-        yield Static('',id='error')
-        with Horizontal():yield Button('Save',id='save');yield Button('Cancel',id='cancel')
+        serial_options=serial_backend_choices()
+        with Vertical(id='instance-window'):
+            yield Static('+-- INSTANCE / CONNECTION SETUP -------------------------------------+')
+            yield Static('The modem must be stopped before changing these values.')
+            for name in ('name','sip_host','sip_port','media_host','media_port','serial_port','serial_device','serial_baud'):
+                yield Label(name);yield Input(str(getattr(self.spec,name,'')),id=name)
+            current=self.spec.serial if self.spec.serial in serial_options else serial_options[0]
+            yield Select([(x,x) for x in serial_options],value=current,id='serial',allow_blank=False)
+            yield Static('',id='error')
+            with Horizontal():yield Button('Save',id='save');yield Button('Cancel',id='cancel')
+            yield Static('+-----------------------------------------------------------------------+')
     def on_button_pressed(self,event):
         event.stop()
         if event.button.id=='cancel':self.dismiss();return
@@ -53,18 +68,20 @@ class InstanceDialog(ModalScreen):
             self.callback(changes);self.dismiss()
         except (ValueError,OSError) as exc:self.query_one('#error',Static).update(str(exc))
 
-class SettingsScreen(Screen):
+class SettingsScreen(ModalScreen):
     BINDINGS=[('escape','back','Back')]
     def __init__(self,ident):super().__init__();self.ident=ident;self.rows={}
     def compose(self):
-        yield Header();yield Label('Modem settings — IAX is stored only; native IAX is unavailable')
-        yield Select([(x.title(),x) for x in ('all','modem','sip','iax','advanced')],value='all',allow_blank=False,id='category')
-        yield DataTable(id='settings')
-        yield Label('Select a setting, edit its value, then Apply. Save profile makes changes survive reset/restart.')
-        yield Input(id='value',placeholder='Value (password fields never read back)')
-        with Horizontal():
-            yield Button('Apply',id='apply');yield Button('Save profile',id='save');yield Button('Refresh',id='refresh');yield Button('Back',id='back')
-        yield Footer()
+        with Vertical(id='settings-window'):
+            yield Static('+-- MODEM CONFIGURATION ----------------------------------------------+')
+            yield Static('Settings are per modem. SIP and IAX2 share the modem DSP and data-link stack.')
+            yield Select([(x.title(),x) for x in ('all','modem','sip','iax','routing','advanced')],value='all',allow_blank=False,id='category')
+            yield DataTable(id='settings')
+            yield Static('Select a row, edit the value below, then Apply. Save profile persists changes.')
+            yield Input(id='value',placeholder='Value (password fields never read back)')
+            with Horizontal():
+                yield Button('Apply',id='apply');yield Button('Save profile',id='save');yield Button('Refresh',id='refresh');yield Button('Close [Esc]',id='back')
+            yield Static('+-----------------------------------------------------------------------+')
     def on_mount(self):
         self.query_one(DataTable).add_columns('Setting','Value','Active','Apply');self.query_one(DataTable).cursor_type='row';self.refresh_settings()
     def refresh_settings(self):self.app.command(self.ident,'settings',self.load_rows)
@@ -75,8 +92,11 @@ class SettingsScreen(Screen):
         for name,row in self.rows.items():
             if category=='modem' and not (name.startswith('modem.') or name.startswith('s') and name[1:].isdigit()):continue
             if category in ('sip','iax') and not name.startswith(category+'.'):continue
+            if category=='routing' and name!='network.trunk':continue
             if category=='advanced' and not name.startswith(('dsp.','runtime.','recording.')):continue
-            table.add_row(name,str(row['value']),str(row['active']),row['apply'],key=name)
+            shown=str(row['value'])
+            if name=='network.trunk':shown={'0':'0 (SIP)','1':'1 (IAX2)'} .get(shown,shown)
+            table.add_row(name,shown,str(row['active']),row['apply'],key=name)
     def on_select_changed(self,event):
         if self.rows:self.render_rows()
     def selected(self):
@@ -99,46 +119,106 @@ class SettingsScreen(Screen):
     def action_back(self):self.app.pop_screen()
 
 class TerminalScreen(Screen):
-    BINDINGS=[Binding('f10','close','Release terminal',priority=True),Binding('f9','hangup','Hang up',priority=True)] + [
-        Binding('ctrl+'+chr(96+n),f'send_control({n})',show=False,priority=True) for n in range(1,27)
-    ] + [Binding(key,f'send_control({n})',show=False,priority=True)
-         for key,n in [('enter',13),('backspace',8),('tab',9),('escape',27),('ctrl+space',0)]]
-    def __init__(self,ident):super().__init__();self.ident=ident;self.buffer=AsciiBuffer()
+    BINDINGS=[Binding('f10','close','Release terminal',priority=True),Binding('f9','hangup','Hang up',priority=True)]
+    def __init__(self,ident):super().__init__();self.ident=ident;self.buffer=AsciiBuffer();self.typed=''
     def compose(self):
-        yield Header();yield Label('ASCII terminal — exclusive DTE ownership; F10 releases port using AT&D behavior')
-        yield TextArea(read_only=True,id='terminal');yield Footer()
+        yield Static('EL-MODEM // ASCII TERMINAL     F9 HANGUP   F10 RELEASE   Ctrl-C BREAK',id='term-head')
+        with VerticalScroll(id='terminal'):
+            yield Static('',id='terminal-output')
+        with Horizontal(id='term-entry'):
+            yield Static('DTE >',id='term-label')
+            yield Input(placeholder='Type to modem; Enter sends CR',id='term-input')
+        yield Footer()
     def data(self,data):
-        area=self.query_one(TextArea);area.load_text(self.buffer.feed(data));area.scroll_end(animate=False)
+        self.query_one('#terminal-output',Static).update(self.buffer.feed(data))
+        self.query_one('#terminal',VerticalScroll).scroll_end(animate=False)
+    def on_mount(self):self.query_one('#term-input',Input).focus()
     def action_send_control(self, byte):
         self.app.command(self.ident,'terminal.write',None,hex=bytes([byte]).hex())
     async def on_key(self,event):
-        mapping={'enter':13,'backspace':8,'tab':9,'escape':27,'ctrl+space':0}
-        if event.key=='f10':return
+        mapping={'tab':9,'escape':27,'ctrl+space':0}
         byte=mapping.get(event.key)
         if event.key.startswith('ctrl+') and len(event.key)==6 and 'a'<=event.key[-1]<='z':byte=ord(event.key[-1])-96
-        if byte is None and event.character and len(event.character)==1 and ord(event.character)<128:byte=ord(event.character)
         if byte is not None:
-            event.stop();event.prevent_default();self.app.command(self.ident,'terminal.write',None,hex=bytes([byte]).hex())
+            event.stop();event.prevent_default()
+            self.app.command(self.ident,'terminal.write',None,hex=bytes([byte]).hex())
+    def on_input_changed(self,event):
+        # Printable keys are sent immediately; this line is the local DTE echo
+        # and editing surface, fixed below the scrolling receive display.
+        value=event.value
+        if value.startswith(self.typed):
+            added=value[len(self.typed):]
+            for char in added:
+                if ord(char)<128:self.app.command(self.ident,'terminal.write',None,hex=char.encode('ascii').hex())
+        elif self.typed.startswith(value):
+            for _ in range(len(self.typed)-len(value)):self.app.command(self.ident,'terminal.write',None,hex=b'\x08'.hex())
+        else:
+            # An edit inside the line is represented as a backspace-and-retype
+            # sequence on the DTE, which is the closest useful serial behavior.
+            for _ in range(len(self.typed)):self.app.command(self.ident,'terminal.write',None,hex=b'\x08'.hex())
+            for char in value:
+                if ord(char)<128:self.app.command(self.ident,'terminal.write',None,hex=char.encode('ascii').hex())
+        self.typed=value
+    def on_input_submitted(self,event):
+        self.app.command(self.ident,'terminal.write',None,hex=b'\r'.hex())
+        self.typed=''
+        self.query_one('#term-input',Input).value=''
     def action_hangup(self):self.app.destructive(self.ident,lambda:self.app.command(self.ident,'hangup'))
     def action_close(self):self.app.command(self.ident,'terminal.close',lambda _:self.app.pop_screen())
 
 class ModemApp(App):
     TITLE='EL-MODEM'
-    CSS='''DataTable {height: 1fr;} Horizontal {height: auto;} Button {margin: 0 1;} ModalScreen {align: center middle; padding: 2 8; background: $surface;} ModalScreen Input {height: 3;} #terminal {height: 1fr;} #actions {grid-size: 4; grid-gutter: 0 1; height: 6;} #actions Button {width: 100%; margin: 0;} ModalScreen {overflow-y: auto;}'''
+    CSS='''
+    Screen { background: #080d08; color: #c4d7b2; }
+    Footer { background: #152315; color: #b9ca9d; }
+    #masthead { height: 1; padding: 0 1; color: #f3c969; }
+    #workarea { height: 1fr; margin: 0 1; }
+    #stack, #context { border: ascii $success; padding: 0 1; }
+    #stack { width: 2fr; }
+    #context { width: 1fr; margin-left: 1; }
+    #stack-title, #context-title { height: 1; color: #f3c969; text-style: bold; }
+    #modems { height: 1fr; overflow-y: auto; }
+    #menu { height: 1fr; }
+    #help { height: 1; padding: 0 1; color: #f3c969; }
+    #details { height: 2; color: #ef9a8d; }
+    #term-head { height: 3; padding: 0 1; color: #f3c969; border: ascii $success; }
+    #terminal { height: 1fr; border: ascii $success; padding: 0 1; color: #c4d7b2; }
+    #terminal-output { width: 1fr; height: auto; color: #c4d7b2; }
+    #term-entry { height: 3; margin-top: 1; border: ascii $warning; background: #101810; }
+    #term-label { width: 7; height: 1; padding: 0 1; color: #f3c969; }
+    #term-input { width: 1fr; height: 1; border: none; background: #101810; color: #f3c969; }
+    ModalScreen { align: center middle; background: #000000 75%; }
+    #settings-window, #instance-window, #confirm-window { width: 90%; max-width: 110; max-height: 90%; padding: 1 2; border: ascii $warning; background: #101810; }
+    #settings-window DataTable { height: 1fr; }
+    #settings-window Input, #instance-window Input { height: 3; }
+    #settings-window Button, #instance-window Button, #confirm-window Button { margin: 0 1; }
+    #settings-window Select { width: 1fr; }
+    '''
     BINDINGS=[Binding('ctrl+c','interrupt',show=False,priority=True),('q','quit_checked','Quit'),('n','create','New modem'),('s','settings','Settings'),('t','terminal','Terminal'),('h','hangup','Hang up')]
     def __init__(self,supervisor):super().__init__();self.supervisor=supervisor;self.callbacks={}
     def compose(self):
-        yield Header();yield Label('Native DSP modems — user-selected instance count; monitor timing when adding calls')
-        yield DataTable(id='modems')
-        with Grid(id='actions'):
-            for ident,title in [('new','New'),('configure','Instance'),('settings','Settings'),('terminal','Terminal'),('start','Start'),('stop','Stop'),('restart','Restart'),('remove','Remove')]:yield Button(title,id=ident)
-        yield Static('',id='details');yield Footer()
+        yield Static('',id='masthead')
+        with Horizontal(id='workarea'):
+            with VerticalScroll(id='stack'):
+                yield Static(' MODEM STACK',id='stack-title')
+                yield Static('',id='modems')
+            with Vertical(id='context'):
+                yield Static(' SYSTEM ACTIONS',id='context-title')
+                yield Static('',id='menu')
+        yield Static('',id='details')
+        yield Static('[←/→ Tab] pane  [↑/↓] modem/menu  [1-7] modem action  [Enter] system action  [N] add  [Q] quit',id='help')
+        yield Footer()
     def on_mount(self):
         self.dashboard=self.screen
-        self.dashboard_table=self.query_one('#modems',DataTable)
-        self.details=self.query_one('#details',Static)
-        self.query_one(DataTable).add_columns('Modem','State','Serial','Owner','SIP','Rate','DSP ms','AA CD OH RD SD TR MR RI RTS CTS')
-        self.query_one(DataTable).cursor_type='row';self.set_interval(.1,self.tick);self.tick()
+        self.dashboard_widgets={w.id:w for w in self.dashboard.query('*') if w.id}
+        self.dashboard_table=self.dashboard_widgets['modems']
+        self.details=self.dashboard_widgets['details']
+        self.focus_pane='left';self.modem_row=0;self.menu_row=0
+        self.set_interval(.1,self.tick);self.set_interval(1,self.clock_tick);self.tick();self.clock_tick()
+    def clock_tick(self):
+        from datetime import datetime
+        masthead=self.dashboard_widgets.get('masthead')
+        if masthead and masthead.is_mounted:masthead.update('EL-MODEM  |  DSP MODEM POOL'+datetime.now().strftime('%d-%b-%Y %H:%M:%S').rjust(55))
     def check_action(self, action, parameters):
         if isinstance(self.screen,TerminalScreen) and action in ('quit_checked','create','settings','terminal','hangup'):
             return False
@@ -163,22 +243,85 @@ class ModemApp(App):
             if isinstance(self.screen,TerminalScreen) and self.screen.ident==ident:self.screen.data(bytes.fromhex(data))
         self.supervisor.events.clear()
         if not self.dashboard_table.is_mounted:return
-        table=self.dashboard_table;cursor=table.cursor_row;table.clear()
+        cards=[]; self.visible_ids=[]
         for spec in self.supervisor.specs:
             state=self.supervisor.states.get(spec.id,{})
             lights=state.get('lights',{})
-            lamps=' '.join('●' if lights.get(name) else '○' if lights.get(name) is not None else '—' for name in ('AA','CD','OH','RD','SD','TR','MR','RI','RTS','CTS'))
+            names=('HS','AA','CD','OH','RD','SD','TR','MR','RS','CS','SYN','ARQ')
+            mapped={'HS':None,'AA':lights.get('AA'),'CD':lights.get('CD'),'OH':lights.get('OH'),'RD':lights.get('RD'),'SD':lights.get('SD'),'TR':None,'MR':lights.get('MR'),'RS':lights.get('RTS'),'CS':lights.get('CTS'),'SYN':None,'ARQ':None}
+            lamps=' '.join(f"{'(*)' if mapped[n] is True else '( )' if mapped[n] is False else '(?)'}{n}" for n in names)
             try: name=self.supervisor.effective(spec).name
             except (ValueError,OSError,TypeError): name=spec.name
-            table.add_row(name,state.get('state','stopped'),state.get('serial',''),state.get('owner',''),state.get('registration',''),str((state.get('call') or {}).get('speed','')),str(state.get('health',{}).get('mean_dsp_ms','')),lamps,key=spec.id)
-        if table.row_count:table.move_cursor(row=min(cursor,table.row_count-1))
-        if table.row_count:
-            ident=str(table.ordered_rows[table.cursor_row].key.value)
+            self.visible_ids.append(spec.id)
+            idx=len(self.visible_ids);focus='>' if self.focus_pane=='left' and idx-1==self.modem_row else ' '
+            call=state.get('call') or {}
+            cards.append(f"{focus} [{idx}/{len(self.supervisor.specs)}] {name} | {state.get('serial','')} | SIP {state.get('registration','unknown')} | {state.get('state','stopped')} | {call.get('speed','')}\n  {lamps}\n  DSP {state.get('health',{}).get('mean_dsp_ms','—')} ms   Owner {state.get('owner','—')}\n")
+        self.dashboard_table.update('\n'.join(cards) if cards else '  No modem instances. Press N to add one.')
+        actions=(['Settings','Terminal','Statistics','Configure','Start / Stop','Hang up','Remove'],['Add modem','Save config','Load config','Background','Quit'])
+        labels=actions[0] if self.focus_pane=='left' else actions[1]
+        self.dashboard_widgets['context-title'].update(' MODEM ACTIONS' if self.focus_pane=='left' else ' SYSTEM ACTIONS')
+        self.dashboard_widgets['menu'].update('\n'.join(('>' if i==self.menu_row else ' ')+f' {i+1}. {item}' for i,item in enumerate(labels)))
+        self.dashboard_widgets['stack'].border_title='FOCUS' if self.focus_pane=='left' else 'MODEMS'
+        self.dashboard_widgets['context'].border_title='FOCUS' if self.focus_pane=='right' else 'ACTIONS'
+        self.modem_row=min(self.modem_row,max(0,len(self.visible_ids)-1))
+        if self.visible_ids:
+            ident=self.visible_ids[self.modem_row]
             self.details.update(self.supervisor.states.get(ident,{}).get('error',''))
+    def on_key(self,event):
+        if isinstance(self.screen,TerminalScreen):return
+        if event.key in ('left','right','tab'):
+            event.stop();event.prevent_default();self.focus_pane='right' if self.focus_pane=='left' else 'left';self.tick()
+        elif event.key in ('up','down'):
+            event.stop();event.prevent_default()
+            if self.focus_pane=='left':self.modem_row=max(0,min(len(self.supervisor.specs)-1,self.modem_row+(-1 if event.key=='up' else 1)))
+            else:self.menu_row=max(0,min((4 if self.focus_pane=='right' else 6),self.menu_row+(-1 if event.key=='up' else 1)))
+            self.tick()
+            if self.focus_pane=='left':self.dashboard_widgets['stack'].scroll_to(y=self.modem_row*4,animate=False)
+        elif event.key=='enter':
+            event.stop();event.prevent_default()
+            if self.focus_pane=='right':self.activate_menu()
+        elif self.focus_pane=='left' and event.character and event.character in '1234567':
+            self.menu_row=int(event.character)-1;self.activate_menu()
+    def activate_menu(self):
+        if self.focus_pane=='right':
+            (self.action_create,self.save_config,self.load_config,self.background,self.action_quit_checked)[self.menu_row]()
+        else:
+            actions=(self.action_settings,self.action_terminal,self.show_statistics,self.configure_selected,self.toggle_selected,self.action_hangup,self.remove_selected)
+            if self.visible_ids:actions[self.menu_row]()
     def selected(self):
-        table=self.dashboard.query_one('#modems',DataTable)
-        if not table.row_count:raise ValueError('create a modem first')
-        return str(table.ordered_rows[table.cursor_row].key.value)
+        if not self.supervisor.specs:raise ValueError('create a modem first')
+        self.modem_row=min(self.modem_row,len(self.supervisor.specs)-1)
+        return self.supervisor.specs[self.modem_row].id
+    def save_config(self):self.supervisor.save();self.notify('Configuration saved')
+    def load_config(self):
+        import json
+        from modem_supervisor import ModemSpec
+        if self.supervisor.workers:
+            self.notify('Stop all modem workers before reloading configuration',severity='warning');return
+        try:
+            data=json.loads(self.supervisor.path.read_text())
+            if data.get('schema')!=1:raise ValueError('unsupported configuration schema')
+            old=self.supervisor.specs
+            self.supervisor.specs=[ModemSpec(**item).validate() for item in data['modems']]
+            try:self.supervisor.validate()
+            except BaseException:self.supervisor.specs=old;raise
+            self.notify('Configuration loaded')
+        except (OSError,ValueError,TypeError,KeyError) as exc:self.notify(f'Configuration not loaded: {exc}',severity='error')
+    def background(self):self.notify('Use Ctrl-Z in the launching terminal to background the process')
+    def show_statistics(self):
+        state=self.supervisor.states.get(self.selected(),{})
+        self.push_screen(Confirm(f"Statistics: {state.get('state','unknown')} | {state.get('call') or 'No active call'} | {state.get('health') or 'No DSP metrics'}",lambda:None))
+    def configure_selected(self):
+        ident=self.selected()
+        if ident in self.supervisor.workers:raise ValueError('stop the modem before changing its instance configuration')
+        spec=next(s for s in self.supervisor.specs if s.id==ident)
+        self.push_screen(InstanceDialog(self.supervisor.effective(spec),lambda changes:self.configure_spec(spec,changes)))
+    def toggle_selected(self):
+        ident=self.selected()
+        if ident in self.supervisor.workers:self.destructive(ident,lambda:self.supervisor.stop(ident))
+        else:self.supervisor.start(ident)
+    def remove_selected(self):
+        ident=self.selected();self.destructive(ident,lambda:self.supervisor.remove(ident))
     def action_hangup(self):
         ident=self.selected();self.destructive(ident,lambda:self.command(ident,'hangup'))
     def action_settings(self):self.push_screen(SettingsScreen(self.selected()))
@@ -201,25 +344,6 @@ class ModemApp(App):
         state=self.supervisor.states.get(ident,{}).get('state')
         if state in ('connected','dialing','ringing'):self.push_screen(Confirm('This will terminate the active call.',callback))
         else:callback()
-    def on_button_pressed(self,event):
-        event.stop()
-        try:
-            action=event.button.id
-            if action=='new':self.action_create();return
-            ident=self.selected()
-            if action=='settings':self.action_settings()
-            elif action=='terminal':self.action_terminal()
-            elif action=='configure':
-                if ident in self.supervisor.workers:raise ValueError('stop the modem before changing its instance configuration')
-                spec=next(s for s in self.supervisor.specs if s.id==ident)
-                self.push_screen(InstanceDialog(self.supervisor.effective(spec),lambda changes:self.configure_spec(spec,changes)))
-            elif action=='start':self.supervisor.start(ident)
-            elif action=='stop':self.destructive(ident,lambda:self.supervisor.stop(ident))
-            elif action=='remove':self.destructive(ident,lambda:self.supervisor.remove(ident))
-            elif action=='restart':
-                def restart():self.supervisor.stop(ident);self.supervisor.start(ident)
-                self.destructive(ident,restart)
-        except (ValueError,OSError) as exc:self.notify(str(exc),severity='error')
     def action_interrupt(self):
         if isinstance(self.screen,TerminalScreen):self.screen.action_send_control(3)
         else:self.action_quit_checked()

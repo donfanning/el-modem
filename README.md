@@ -7,7 +7,9 @@ or multiple independent modem processes with `--modems N`.
 Implemented modem families include V.21/Bell 103, V.22/V.22bis, V.32/V.32bis and
 V.34 up to 33,600 bit/s, with V.8 selection and V.42 LAPM error control.
 The desktop factory profile requests LAPM and disables compression and echo
-cancellation. Native IAX calling is not implemented; IAX settings are stored.
+cancellation. IAX2 calling is implemented over UDP with G.711 µ-law and
+automatic registration; configure a reachable IAX2 endpoint before selecting
+S120=1. SIP remains the default.
 
 This is an experimental Linux-first source preview, not a stable release.
 Real PSTN calls have reached V.34/LAPM and PPP, including login and communication
@@ -53,11 +55,14 @@ PBX or provider; no service account or trunk credentials are supplied.
 [AT command reference](docs/AT_COMMANDS.md) · [Serial interfaces](docs/SERIAL.md) ·
 [Release OS/runtime requirements](docs/RUNTIME_REQUIREMENTS.md)
 
-For source development, install NumPy, Numba and `textual==0.89.1`, then use:
+For source development, install NumPy, Numba, `textual==0.89.1`, Rust/Cargo and
+Maturin. Build and install the IAX2 extension into the active Python environment
+with `maturin develop --release --locked --manifest-path native/iax/Cargo.toml`,
+then use:
 
 ```sh
 PYTHONPATH=lab/asterisk:lab/asterisk/audio-peer:packaging python lab/asterisk/el_modem.py --serial-backend pty
-PYTHONPATH=lab/asterisk:lab/asterisk/audio-peer:packaging python -m unittest test_modem_desktop test_serial_port test_sip_auth test_sip_uac test_sip_uas
+PYTHONPATH=lab/asterisk:lab/asterisk/audio-peer:packaging python -m unittest test_modem_desktop test_serial_port test_iax_transport test_sip_auth test_sip_uac test_sip_uas
 ```
 
 Those tests do not require private recordings or dial an external number.

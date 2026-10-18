@@ -364,12 +364,12 @@ class AtiScreenTests(unittest.TestCase):
         dce = AtDce()
         self.assertIn("(NO STORED NUMBERS)", self.ati(dce, 8))
         self.assertTrue(dce.feed(b"AT&Z0=5551234\r").endswith(b"OK\r\n"))
-        self.assertTrue(dce.feed(b"AT&Z1=18005550000\r").endswith(b"OK\r\n"))
+        self.assertTrue(dce.feed(b"AT&Z1=2025550100\r").endswith(b"OK\r\n"))
         self.assertTrue(dce.feed(b"AT&Z4=1\r").endswith(b"ERROR\r\n"))              # only slots 0-3
         out = self.ati(dce, 8)
         self.assertIn("LIST CAPACITIES: MAXIMUM 4 ENTRIES", out)
         self.assertIn("0: 5551234 DELAY: NONE", out)
-        self.assertIn("1: 18005550000 DELAY: NONE", out)
+        self.assertIn("1: 2025550100 DELAY: NONE", out)
         self.assertIn("BLACK LIST SCREEN: EMPTY", out)
         stored = self.ati(dce, 5)
         self.assertIn("  0= 5551234", stored)
@@ -382,10 +382,10 @@ class AtiScreenTests(unittest.TestCase):
         self.assertEqual(dialed, ["5551234", "5551234"])
         self.assertIn("REDIAL: ATDL (5551234)", self.ati(dce, 8))
         self.assertIn("EMPTY", self.ati(dce, 15))
-        dce.begin_incoming_call({"number": "7195550100", "name": "Test Caller"})
+        dce.begin_incoming_call({"number": "2025550100", "name": "Test Caller"})
         out = self.ati(dce, 15)
         self.assertIn("CALLER ID HISTORIC REGISTER:", out)
-        self.assertRegex(out, r"DATE=\d{4}\r\nTIME=\d{4}\r\nNMBR=7195550100\r\nNAME=Test Caller")
+        self.assertRegex(out, r"DATE=\d{4}\r\nTIME=\d{4}\r\nNMBR=2025550100\r\nNAME=Test Caller")
 
     def test_numbers_persist_in_nvram(self) -> None:
         import tempfile
@@ -486,7 +486,7 @@ class NetworkSettingsTests(unittest.TestCase):
         self.assertIn("S100: SIP SERVER = pbx.lan", out)
         self.assertIn("S101: SIP PORT = 5060", out)
         self.assertIn("S111: IAX PORT = 4569", out)
-        self.assertIn("NO IAX2 CLIENT", out)
+        self.assertIn("RFC 5456 / G.711 U-LAW", out)
         self.assertIn("S102: SIP USER = modem1", dce.feed(b"ATI4\r").decode())
 
     def test_profiles_store_network_and_notify(self) -> None:
@@ -577,7 +577,7 @@ class DialNormalizationTests(unittest.TestCase):
 
     def test_strips_pauses_flash_and_wait_for_dialtone(self) -> None:
         self.assertEqual(normalize_dial_number("5551234,,,9"), "55512349")
-        self.assertEqual(normalize_dial_number("W18005551234"), "18005551234")
+        self.assertEqual(normalize_dial_number("W2025550100"), "2025550100")
         self.assertEqual(normalize_dial_number("!5551234"), "5551234")
 
     def test_leaves_plain_digits_and_dtmf_symbols_untouched(self) -> None:
@@ -849,6 +849,8 @@ class DialAbortTests(unittest.TestCase):
         session = object()
         self.assertTrue(dial_abort_applies(call, None, False, False),
                         "originate attempt in flight")
+        self.assertTrue(dial_abort_applies(None, None, False, False, iax_dial_pending=True),
+                        "IAX originate attempt in flight")
         self.assertTrue(dial_abort_applies(None, session, False, True),
                         "session up but CONNECT held for negotiation")
         self.assertFalse(dial_abort_applies(None, None, False, False),
@@ -862,6 +864,14 @@ class DialAbortTests(unittest.TestCase):
 
 
 class OnlineAudioSessionTests(unittest.TestCase):
+    def test_raw_media_payload_refreshes_carrier_liveness(self) -> None:
+        session = object.__new__(OnlineAudioSession)
+        session._last_rtp_at = None
+        session._receive_pcm = lambda pcm: pcm
+        result = session.handle_rtp_payload(bytes((0xFF,)) * 160)
+        self.assertEqual(len(result), 320)
+        self.assertIsNotNone(session._last_rtp_at)
+
     def test_originate_and_answer_sessions_exchange_bytes_over_loopback_rtp(self) -> None:
         import socket
 

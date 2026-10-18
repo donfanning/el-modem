@@ -6,20 +6,36 @@ The public `v0.1.0-rc1-windows` ZIP contains no virtual-COM driver. This
 repository includes a reviewed [MS-PL source overlay](../packaging/windows-driver/README.md)
 and pinned, hash-checked reconstruction helper. It fetches 14 Microsoft baseline
 files and reconstructs 16 source/project files; no full vendor tree, signing key,
-certificate or driver binary is distributed. Source reconstruction is verified;
-a fresh WDK build, installation and source-to-binary binding remain unqualified.
+certificate or driver binary is distributed.
+
+The whole chain is qualified on one host (Windows 11 build 26340, x64):
+reconstruct, build with the EWDK, sign, install and exchange bytes both ways,
+with the installed binary byte-identical to the signed one. That is one host, one
+certificate and one Windows build, and it says nothing about other Windows builds
+or about a publicly signed package. Two ports on separate pipe names were then
+measured routing independently and byte-exact, with no bytes crossing between
+them; that is what [Running more than one
+port](#running-more-than-one-port) relies on, and three or more ports are
+untested rather than disproven. The port's
+own signal surface is measured on that host -
+CTS/DSR/RLSD asserted, RI idle, DTR/RTS reported through
+`IOCTL_SERIAL_GET_DTRRTS` - but the pipe protocol carries no signal lines, so
+nothing propagates between the port and the modem.
 TCP and the separately installed com0com route in [SERIAL.md](SERIAL.md) remain
 available without building this driver.
 `pipe` is an opt-in integration for an already available compatible driver.
-Its byte protocol does not carry real DTR/DCD/RI/CTS transitions, and one driver
-using `ElModemSerial` serves one modem only. Additional modems require separate
-driver routing and distinct pipe names; that arrangement is not qualified.
+Its byte protocol does not carry real DTR/DCD/RI/CTS transitions.
+One port owns one pipe: a port with no name of its own uses
+`\\.\pipe\ElModemSerial`, so a second port needs its own name or it will not
+reach a modem at all - see
+[Running more than one port](#running-more-than-one-port) for the procedure and
+for what an unconfigured second port does instead.
 
-The El-Modem virtual COM driver presents a real COM port to terminal programs
-(PuTTY, ZOC, SyncTerm, TTerm, Terminate) and brokers bytes between that port and
-El-Modem over `\\.\pipe\ElModemSerial`. It replaces the older arrangement that
-needed com0com plus a TCP redirector: there is no peer port and no second piece
-of third-party software. `el-modem --serial-backend pipe` then talks to it.
+The El-Modem virtual COM driver presents a real COM port and brokers bytes
+between that port and El-Modem over `\\.\pipe\ElModemSerial`. It replaces the
+older arrangement that needed com0com plus a TCP redirector: there is no peer
+port and no second piece of third-party software.
+`el-modem --serial-backend pipe` then talks to it.
 
 The driver is derived from Microsoft's `serial/VirtualSerial2` UMDF2 sample and
 runs in user mode inside `WUDFHost.exe`.
@@ -55,6 +71,15 @@ Then, from a Visual Studio developer shell with the matching SDK/WDK installed:
 
 ```powershell
 msbuild VirtualSerial.sln /t:Rebuild /p:Configuration=Release /p:Platform=x64
+```
+
+The reconstruction helper overrides `core.autocrlf` for its patch application,
+so you do not need to change your global Git configuration. If reconstruction
+still stops at `Overlay result mismatch`, verify that you are using the current
+helper and a fresh destination, then report the mismatching path:
+
+```powershell
+python packaging/windows-driver/prepare_source.py C:\dev\el-modem-driver
 ```
 
 The WDK test-signs the output automatically. You get an installable package and
@@ -225,6 +250,57 @@ port.close()
 
 Then start the modem with `--serial-backend pipe` and point a terminal program
 at COM3.
+
+## Running more than one port
+
+One port owns one pipe, and the pipe name is how the port and El-Modem find each
+other. A port with no name of its own uses `\\.\pipe\ElModemSerial`; the first
+port on a machine should keep that, because every existing configuration does.
+Each additional port needs a name of its own, and El-Modem pointed at the same
+name.
+
+The name lives in the port's own `Device Parameters` key, beside the `PortName`
+Windows assigned, so it can differ per port. A bare name (`ElModemSerial2`) or a
+full path (`\\.\pipe\ElModemSerial2`) is accepted, matching `--serial-device`.
+
+The driver reads it while the device is being added, so the port has to be
+restarted afterwards for the value to take effect. `Disable-PnpDevice` followed
+by `Enable-PnpDevice` does that, and the port came back clean (problem 0) on the
+qualification host; re-creating the node is not required. This is a value of the
+driver's own rather than `PortName`, which is what the `CM_PROB_FAILED_ADD`
+warning above is about. If a port does not come back, delete the value and
+restart it again.
+
+Elevated PowerShell, for a second port that came up as `ROOT\PORTS\0001`:
+
+```powershell
+$key = 'HKLM:\SYSTEM\CurrentControlSet\Enum\ROOT\PORTS\0001\Device Parameters'
+Set-ItemProperty -Path $key -Name 'ElModemPipeName' -Value 'ElModemSerial24' -Type String
+Disable-PnpDevice -InstanceId 'ROOT\PORTS\0001' -Confirm:$false
+Enable-PnpDevice  -InstanceId 'ROOT\PORTS\0001' -Confirm:$false
+```
+
+Then run a second modem against that name:
+
+```powershell
+el-modem --serial-backend pipe --serial-device ElModemSerial24
+```
+
+Confirm the pairing in the driver's log in `C:\Users\Public`, which names the
+pipe and the port on every line:
+
+```text
+61621687 pipe=\\.\pipe\ElModemSerial port=COM3 connected error=0
+61621843 pipe=\\.\pipe\ElModemSerial24 port=COM24 connected error=0
+```
+
+**A second port left unconfigured does not fail visibly.** It cannot attach to a
+pipe another port already owns, and the sample's AT responder stays armed, so a
+terminal on it dials, is told `CONNECT`, and is talking to the driver rather than
+to a modem. That case is the one that logs `CreateFile failed error=231`
+(`ERROR_PIPE_BUSY`) against the shared name. Two ports on two names were measured
+byte-exact in both directions with no bytes crossing between them; three or more
+are untested, and the limits under [Availability](#availability) still apply.
 
 ## Updating after a rebuild
 

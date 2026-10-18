@@ -26,7 +26,7 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(r[1].bit_rate, 14400)
 
     def test_short_answerer_trn_is_detected_not_trained_past(self):
-        # ACTS (303) 494-4774 sends a training sequence that stops matching our expected TRN at
+        # NIST ACTS sends a training sequence that stops matching our expected TRN at
         # ~2440 symbols, then keeps transmitting something else. We must notice the training end
         # and fall back to decision-directed decoding, not equalise against the wrong sequence.
         # The old detector could not: it started watching the error floor at symbol 2500, so for a

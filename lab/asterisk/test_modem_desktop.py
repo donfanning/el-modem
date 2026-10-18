@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import socket
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,14 +14,16 @@ from modem_control import Channel
 
 class SettingsTests(unittest.TestCase):
     def test_pipe_backend_hayes_profile_roundtrip(self):
+        backend='pipe' if sys.platform=='win32' else 'device'
+        endpoint='ElModemSecond' if backend=='pipe' else '/dev/ttyUSB1'
         with tempfile.TemporaryDirectory() as root:
             d=AtDce();d.load_profiles(root+'/profile.json')
-            self.assertIn(b'OK',d._execute('AT+CFG="serial.backend","pipe"'))
-            self.assertIn(b'OK',d._execute('AT+CFG="serial.device","ElModemSecond"'))
+            self.assertIn(b'OK',d._execute(f'AT+CFG="serial.backend","{backend}"'))
+            self.assertIn(b'OK',d._execute(f'AT+CFG="serial.device","{endpoint}"'))
             self.assertIn(b'OK',d._execute('AT&W'))
             loaded=AtDce();loaded.load_profiles(root+'/profile.json')
-            self.assertEqual(loaded.extended_settings['serial.backend'],'pipe')
-            self.assertEqual(loaded.extended_settings['serial.device'],'ElModemSecond')
+            self.assertEqual(loaded.extended_settings['serial.backend'],backend)
+            self.assertEqual(loaded.extended_settings['serial.device'],endpoint)
     def test_hayes_roundtrip_and_case_preservation(self):
         d=AtDce()
         self.assertIn(b'OK',d._execute('AT+CFG="sip.user","MixedCase"'))
@@ -28,6 +31,13 @@ class SettingsTests(unittest.TestCase):
         self.assertIn(b'MixedCase',d._execute('AT+CFG?'))
         self.assertIn(b'ERROR',d._execute('AT+CFG="dsp.eq_span","0"'))
         self.assertIn(b'ERROR',d._execute('AT+CFG="unknown","1"'))
+    def test_trunk_choice_is_a_validated_switch(self):
+        d=AtDce()
+        self.assertEqual(set_value(d,'network.trunk','1'),'idle')
+        rows={row['name']:row for row in snapshot(d)}
+        self.assertEqual(rows['network.trunk']['value'],'1')
+        with self.assertRaisesRegex(ValueError,'expected one of'):
+            set_value(d,'network.trunk','2')
     def test_settings_do_not_touch_online_data(self):
         d=AtDce();d.online=True
         with self.assertRaises(ValueError):set_value(d,'sip.server','example.invalid')
@@ -63,6 +73,48 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaises(ValueError):set_value(d,name,value)
 
 class SupervisorTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='posix','POSIX serial backend only')
+    def test_native_device_backend_uses_character_tty(self):
+        import pty
+        import select
+        from modem_serial_device import DeviceSerial, SUPPORTED_BAUDS
+        master,slave=pty.openpty();path=os.ttyname(slave)
+        try:
+            serial=DeviceSerial(path,115200)
+            try:
+                os.write(master,b'AT\r')
+                readable,_,_=select.select(serial.fds(),[],[],.2)
+                data,dropped=serial.service(readable,[])
+                self.assertEqual(data,b'AT\r');self.assertFalse(dropped)
+                serial.write(b'OK\r\n')
+                self.assertEqual(os.read(master,5),b'OK\r\n')
+                self.assertEqual(serial.name,path)
+                self.assertIn(115200,SUPPORTED_BAUDS)
+                terminal=serial.open_terminal()
+                serial.terminal_write(b'ATI')
+                self.assertEqual(serial.service([],[])[0],b'ATI')
+                serial.write(b'EL-MODEM')
+                self.assertEqual(serial.terminal_read(),b'EL-MODEM')
+                serial.release_terminal(terminal)
+            finally:serial.close()
+        finally:os.close(master);os.close(slave)
+
+    @unittest.skipUnless(os.name=='posix','POSIX serial backend only')
+    def test_device_backend_config_is_switchable_and_exclusive(self):
+        import pty
+        with tempfile.TemporaryDirectory() as root:
+            master,slave=pty.openpty();path=os.ttyname(slave)
+            try:
+                s=Supervisor(root+'/config.json');one=s.add(serial='device',device=path,baud=115200)
+                self.assertEqual(one.serial,'device');self.assertEqual(one.serial_device,path)
+                with self.assertRaisesRegex(ValueError,'colliding serial devices'):
+                    s.add(serial='device',device=path)
+                s.configure(one,{'serial':'pty','serial_device':''})
+                self.assertEqual(s.specs[0].serial,'pty')
+                self.assertEqual(Supervisor(root+'/config.json').specs[0].serial,'pty')
+            finally:os.close(master);os.close(slave)
+
+    @unittest.skipUnless(sys.platform=='win32','Windows named-pipe backend only')
     def test_pipe_names_are_exclusive_normalized_and_case_insensitive(self):
         from modem_serial_pipe import DEFAULT_PIPE_NAME
         with tempfile.TemporaryDirectory() as root:
@@ -99,27 +151,66 @@ class SupervisorTests(unittest.TestCase):
         finally:left.close();right.close()
 
 class UITests(unittest.IsolatedAsyncioTestCase):
-    async def test_pipe_instance_dialog_mounts_and_saves(self):
+    def test_serial_choices_are_platform_specific(self):
+        from modem_tui import serial_backend_choices
+        self.assertEqual(serial_backend_choices('win32'),('tcp','pipe','com'))
+        self.assertEqual(serial_backend_choices('darwin'),('pty','tcp','device'))
+        self.assertEqual(serial_backend_choices('linux'),('driver','pty','tcp','device'))
+    async def test_split_pane_focus_and_ascii_status_surface(self):
         from modem_tui import ModemApp
-        with tempfile.TemporaryDirectory() as root:
-            s=Supervisor(root+'/config.json');s.add(serial='pipe');app=ModemApp(s)
-            async with app.run_test(size=(120,55)) as pilot:
-                await pilot.pause();await pilot.click('#configure');await pilot.pause()
-                from textual.widgets import Select
-                self.assertEqual(app.screen.query_one('#serial',Select).value,'pipe')
-                await pilot.click('#save');await pilot.pause()
-                self.assertEqual(s.specs[0].serial,'pipe')
-            s.close()
-    async def test_dashboard_dialog_and_settings_screen(self):
-        from modem_tui import ModemApp,SettingsScreen
+        from textual.widgets import Static
         with tempfile.TemporaryDirectory() as root:
             s=Supervisor(root+'/config.json');s.add(serial='pty');app=ModemApp(s)
             async with app.run_test(size=(120,45)) as pilot:
-                await pilot.pause();await pilot.click('#configure');await pilot.pause()
+                await pilot.pause()
+                self.assertIn('[1/1] Modem 1',str(app.query_one('#modems',Static).renderable))
+                self.assertIn('(?)HS',str(app.query_one('#modems',Static).renderable))
+                await pilot.press('right')
+                self.assertEqual(app.focus_pane,'right')
+                self.assertIn('Add modem',str(app.query_one('#menu',Static).renderable))
+                await pilot.press('left')
+                self.assertEqual(app.focus_pane,'left')
+            s.close()
+
+    async def test_instance_dialog_mounts_and_saves(self):
+        from modem_tui import ModemApp
+        with tempfile.TemporaryDirectory() as root:
+            s=Supervisor(root+'/config.json');s.add(serial='pty');app=ModemApp(s)
+            async with app.run_test(size=(120,55)) as pilot:
+                await pilot.pause();app.configure_selected();await pilot.pause()
+                from textual.widgets import Select
+                self.assertEqual(app.screen.query_one('#serial',Select).value,'pty')
+                await pilot.click('#save');await pilot.pause()
+                self.assertEqual(s.specs[0].serial,'pty')
+            s.close()
+
+    async def test_instance_dialog_offers_native_serial_device_on_posix(self):
+        import sys
+        if os.name!='posix':self.skipTest('POSIX only')
+        from modem_tui import InstanceDialog,ModemApp,serial_backend_choices
+        with tempfile.TemporaryDirectory() as root:
+            s=Supervisor(root+'/config.json');spec=s.add(serial='pty');app=ModemApp(s)
+            async with app.run_test(size=(120,55)) as pilot:
+                app.push_screen(InstanceDialog(spec,lambda changes:None));await pilot.pause()
+                self.assertIn('device',serial_backend_choices())
+                if sys.platform=='darwin':self.assertNotIn('driver',serial_backend_choices())
+                if sys.platform.startswith('linux'):self.assertIn('driver',serial_backend_choices())
+            s.close()
+    async def test_dashboard_dialog_and_settings_screen(self):
+        from modem_tui import ModemApp,SettingsScreen
+        from textual.widgets import Select,DataTable
+        with tempfile.TemporaryDirectory() as root:
+            s=Supervisor(root+'/config.json');s.add(serial='pty');app=ModemApp(s)
+            async with app.run_test(size=(120,45)) as pilot:
+                await pilot.pause();app.configure_selected();await pilot.pause()
                 await pilot.click('#cancel');await pilot.pause()
+                self.assertIn('[1/1] Modem 1',app.dashboard.query_one('#modems').renderable)
                 app.push_screen(SettingsScreen('modem-1'));await pilot.pause()
                 app.screen.load_rows(snapshot(AtDce()));await pilot.pause()
-                await pilot.click('#back');await pilot.pause()
+                app.screen.query_one('#category',Select).value='routing';await pilot.pause()
+                self.assertEqual(app.screen.query_one(DataTable).row_count,1)
+                self.assertEqual(app.screen.query_one(DataTable).get_row_at(0)[0],'network.trunk')
+                app.screen.action_back();await pilot.pause()
             s.close()
     def test_ascii_controls_and_bounds(self):
         from modem_tui import AsciiBuffer
@@ -140,7 +231,12 @@ class TerminalUITests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(120,40)) as pilot:
                 app.action_terminal();await pilot.pause(.2)
                 self.assertIsInstance(app.screen,TerminalScreen)
-                await pilot.press('a','t','q','enter','ctrl+c');await pilot.pause(.2)
+                await pilot.press('a','t','q');await pilot.pause(.1)
+                self.assertEqual(app.screen.query_one('#term-input').value,'atq')
+                self.assertEqual(str(app.screen.query_one('#term-label').renderable),'DTE >')
+                app.screen.data(b'REMOTE TEXT\r\n');await pilot.pause()
+                self.assertIn('REMOTE TEXT',str(app.screen.query_one('#terminal-output').renderable))
+                await pilot.press('enter','ctrl+c');await pilot.pause(.2)
                 data=b''.join(bytes.fromhex(fields['hex']) for action,fields in sent if action=='terminal.write')
                 self.assertEqual(data,b'atq\r\x03')
                 self.assertIsInstance(app.screen,TerminalScreen)

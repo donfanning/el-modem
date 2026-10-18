@@ -31,11 +31,11 @@
 | S102 | SIP user | | S112 | IAX user |
 | S103 | SIP password | | S113 | IAX password |
 | S104 | SIP registrar `host[:port]`, empty = none | | S114 | IAX caller number |
-| S105 | caller number | | S115 | IAX register 0/1 |
+| S105 | caller number | | S115 | IAX registration (automatic when configured) |
 | S106 | contact host for incoming calls | | S120 | trunk for ATD: 0 = SIP, 1 = IAX |
 
 Changing S102/S103/S104/S106 restarts the SIP registration at once; S100-S103/S105 are read at each dial.
-**IAX2 is not implemented yet**: its registers are stored and shown, and `ATD` with `S120=1` answers `NO DIALTONE`.
+IAX2 calling uses the configured IAX host, port, username and password, with G.711 µ-law media; the modem registers automatically when an IAX endpoint is configured. `S115` is retained for compatibility but does not currently disable that automatic registration. Select it for dialing with `ATS120=1`; SIP remains the default.
 
 ## Other
 `ATX0-4` (X2/X4 report NO DIALTONE, X3/X4 BUSY), `AT&V`, `AT&Wn`, `ATZn`, `AT&Zn=number` (slots 0-3), `ATDSn`, `ATDL`,

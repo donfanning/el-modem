@@ -28,8 +28,10 @@ Configuration defaults to `$XDG_CONFIG_HOME/el-modem/config.json` (or
 `~/.config/el-modem/config.json`). `--config /path/config.json` selects a separate
 installation. One supervisor owns a configuration at a time. Modems have
 independent process IDs, profiles, SIP/RTP ports, serial devices, logs, and
-capture directories. No CPU-based modem limit is imposed. Monitor DSP timing
-and sender lateness when adding simultaneous calls; available serial devices,
+capture directories. Each modem's saved Hayes profile is stored at
+`<config-directory>/instances/<modem-id>/profiles.json`. The config and profile
+directories are private to the local user. No CPU-based modem limit is imposed.
+Monitor DSP timing and sender lateness when adding simultaneous calls; available serial devices,
 ports, memory, and CPU are finite.
 
 New modem instances use automatic V.34 up to 33600, LAPM requested, and
@@ -42,15 +44,21 @@ single-DCE CLI. It retains its original factory defaults.
 
 Each modem has live status and lights, settings, instance configuration, and
 terminal access. Stop an instance before changing its listening endpoints or
-serial adapter. Per-modem modem/SIP/IAX/advanced settings use the same validators
-as the Hayes configuration interface. IAX settings are stored only: this release
-has no native IAX calling client.
+serial adapter. Choose the serial backend per modem: PTY/TCP, Linux driver,
+Windows COM/pipe, or a real Linux/macOS tty device. See [SERIAL.md](SERIAL.md).
+Per-modem modem/SIP/IAX/routing/advanced settings use the same validators as
+the Hayes configuration interface. IAX credentials and endpoints are stored,
+and S120 selects the IAX2 call transport. IAX2 uses UDP, automatic endpoint
+registration and G.711 µ-law; the modem DSP remains the same as for SIP. SIP
+remains the default transport.
 
 SIP listens on loopback initially. Set the SIP/media bind addresses to reachable
 local IPv4 addresses for a remote PBX/provider, and configure SIP server,
 registrar, credentials and advertised contact as appropriate for the network.
 There is no bundled PBX or trunk account.
 
+The Settings screen's Routing filter exposes `network.trunk` (S120): `0` selects
+SIP and `1` selects IAX. The IAX fields are separately visible under IAX.
 Settings identify immediate/idle/restart application. Mutations during an active
 call are rejected. Save profile persists settings; DSP/runtime changes require
 Save profile followed by restart. Active and pending values are shown separately.
@@ -101,7 +109,9 @@ enabling are configurable named settings applied after restart.
 
 See the README for the source preview qualification limits. An
 implemented feature is not a claim of qualification on every modem, kernel, or
-host. Windows/macOS native serial qualification and native IAX remain future work.
+host. Physical Linux/macOS adapters need platform and hardware qualification.
+IAX has passed local Asterisk modem-to-modem calls in both caller and answerer
+roles; provider and other PBX interoperability remain unqualified.
 
 `packaging/build.sh docker-bookworm-lto` builds with a PGO+LTO shared Python
 library from the matching patched Debian source, including Debian's built-in
