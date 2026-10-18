@@ -19,7 +19,7 @@ protocol = udp
 bind = 0.0.0.0:5060
 external_signaling_address = <public/external Asterisk address>
 external_media_address    = <public/external Asterisk address>
-local_net                = <Asterisk-side subnet, e.g. 172.29.103.0/24>
+local_net                = <Asterisk-side subnet, e.g. 192.0.2.0/24; documentation-only>
 ```
 
 Place the `external_*` settings on the **PJSIP transport** (`pjsip.conf`),
@@ -37,4 +37,4 @@ sudo tcpdump -i any -n 'udp and host <windows-host-ip> and port 10000'
 ```
 
 A correct flow shows bidirectional UDP on 192.168.x.x ports (not the
-Asterisk-internal 172.29.x.x range in the SDP).
+private container address in the SDP).

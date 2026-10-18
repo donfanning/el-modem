@@ -1011,7 +1011,7 @@ class V32Modem(V42Layer):
         if loc == "wait":
             return
         if loc is None or loc[0] < 0.5:
-            # Not every answerer trains a second time. NIST ACTS (303) 494-4774 resumes with a
+            # Not every answerer trains a second time. NIST ACTS resumes with a
             # *repeated rate word*: measured 0.976 correlation at a one-bit lag and a
             # training-sequence score no better than the noise after a TRN (7.6 against 14.3).
             # That word is R3, which is the only thing this leg has to deliver, so read it the

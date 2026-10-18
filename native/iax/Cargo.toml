@@ -1,0 +1,14 @@
+[package]
+name = "el-modem-iax"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+
+[lib]
+name = "el_modem_iax"
+crate-type = ["cdylib"]
+
+[dependencies]
+iax2 = "=0.2.2"
+pyo3 = { version = "0.27", features = ["extension-module"] }

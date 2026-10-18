@@ -36,7 +36,24 @@ jobs:
         env:
           PYTHONPATH: lab/asterisk:lab/asterisk/audio-peer:packaging
           OPENBLAS_NUM_THREADS: '1'
-        run: python -m unittest test_modem_desktop test_modem_com test_modem_pipe test_modem_symmetric_rtp test_modem_dce test_modem_portability test_serial_port test_sip_auth test_sip_uac test_sip_uas
+        run: python -m unittest test_modem_desktop test_modem_com test_modem_pipe test_modem_symmetric_rtp test_modem_dce test_modem_portability test_serial_port test_iax_transport test_sip_auth test_sip_uac test_sip_uas
+  driver-overlay:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Reconstruct pinned MS-PL Windows driver sources under Git for Windows CRLF defaults
+        shell: bash
+        run: |
+          git config --global core.autocrlf true
+          python packaging/windows-driver/prepare_source.py "$RUNNER_TEMP/el-modem-driver-source"
   native-candidates:
     if: github.event_name == 'workflow_dispatch' && inputs.native_builds
     strategy:
@@ -57,14 +74,31 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install numpy==1.26.4 numba==0.61.2 pyinstaller==6.16.0 setuptools==70.3.0 textual==0.89.1
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python -m pip install numpy==1.26.4 numba==0.61.2 pyinstaller==6.16.0 setuptools==70.3.0 textual==0.89.1 maturin==1.9.4
+      - name: Set the macOS deployment floor for the IAX extension
+        if: startsWith(matrix.target, 'macos-')
+        shell: bash
+        run: |
+          if [ "${{ matrix.target }}" = "macos-x86_64" ]; then
+            printf '%s\n' 'MACOSX_DEPLOYMENT_TARGET=10.15' 'RUSTFLAGS=-C link-arg=-mmacosx-version-min=10.15' >> "$GITHUB_ENV"
+          else
+            printf '%s\n' 'MACOSX_DEPLOYMENT_TARGET=11.0' 'RUSTFLAGS=-C link-arg=-mmacosx-version-min=11.0' >> "$GITHUB_ENV"
+          fi
+      - name: Build native IAX2 extension
+        shell: bash
+        run: |
+          cargo test --locked --manifest-path native/iax/Cargo.toml
+          maturin build --release --locked --manifest-path native/iax/Cargo.toml --interpreter python --out build/iax-wheel
+          python -m pip install --no-deps build/iax-wheel/*.whl
       - name: Source desktop and portable worker checks
         shell: bash
         env:
           PYTHONPATH: lab/asterisk:lab/asterisk/audio-peer:packaging
         run: |
-          export PYTHONPATH="$(python -c 'import os; print(os.pathsep.join(["lab/asterisk", "lab/asterisk/audio-peer", "packaging"]))')"
-          python -m unittest test_modem_desktop test_modem_com test_modem_pipe test_modem_symmetric_rtp test_modem_dce test_modem_portability test_sip_auth test_sip_uac test_sip_uas
+          PYTHONPATH="$(python -c 'import os; print(os.pathsep.join(["lab/asterisk", "lab/asterisk/audio-peer", "packaging"]))')"
+          export PYTHONPATH
+          python -m unittest test_modem_desktop test_modem_com test_modem_pipe test_modem_symmetric_rtp test_modem_dce test_modem_portability test_serial_port test_iax_transport test_sip_auth test_sip_uac test_sip_uas
       - name: Build native single-file candidate
         run: python packaging/build_with_lineage.py --journal build/native-processing.jsonl --noconfirm --distpath dist --workpath build/el-modem packaging/el_modem.spec
       - name: Compile driver and no-driver installer layouts
@@ -87,6 +121,24 @@ jobs:
           python packaging/smoke_desktop.py "$exe" --report candidate-reports/desktop.json
           V34_NATIVE_TRELLIS=1 python packaging/smoke.py "$exe" --report candidate-reports/native.json
           python -m pip freeze > candidate-reports/build-dependencies.txt
+      - name: Packaged TUI and POSIX-device checks on macOS
+        if: startsWith(matrix.target, 'macos-')
+        run: python packaging/qualify_tui.py dist/el-modem candidate-reports/tui
+      - name: Install minicom for macOS PTY qualification
+        if: startsWith(matrix.target, 'macos-')
+        run: brew install minicom
+      - name: Install terminal emulator used by the packaged TUI harness
+        if: startsWith(matrix.target, 'macos-')
+        run: python -m pip install pyte==0.8.2
+      - name: Qualify the current macOS candidate through minicom and its PTY
+        if: startsWith(matrix.target, 'macos-')
+        shell: bash
+        run: |
+          digest="$(shasum -a 256 dist/el-modem | awk '{print $1}')"
+          python packaging/qualify_pty_terminal.py dist/el-modem \
+            --target "${{ matrix.target }}" \
+            --expected-sha256 "$digest" \
+            --reports "candidate-reports/pty-${{ matrix.target }}"
       - name: Retain qualification reports only
         if: always()
         uses: actions/upload-artifact@v4

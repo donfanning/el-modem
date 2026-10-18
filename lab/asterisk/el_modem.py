@@ -59,6 +59,9 @@ def worker(path,fd=None):
         elif spec['serial']=='pipe':
             from modem_serial_pipe import PipeSerial
             serial=PipeSerial(device=spec['serial_device'],baud=spec['serial_baud'])
+        elif spec['serial']=='device':
+            from modem_serial_device import DeviceSerial
+            serial=DeviceSerial(device=spec['serial_device'],baud=spec['serial_baud'])
         else:
             serial=(DriverSerial(link) if spec['serial']=='driver' else
                     LegacySerial(spec['serial'],link=link,address=f'127.0.0.1:{spec["serial_port"]}'))
@@ -96,9 +99,10 @@ def main():
     ui=p.add_mutually_exclusive_group();ui.add_argument('--tui',action='store_true');ui.add_argument('--headless',action='store_true')
     p.add_argument('--config',default=str(Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'el-modem'/'config.json'))
     from modem_serial import default_backend
-    p.add_argument('--modems',type=int);p.add_argument('--serial-backend',choices=('driver','pty','tcp','com','pipe'),default=default_backend())
-    p.add_argument('--serial-device',default='',help='COM port for --serial-backend com (e.g. COM3), or pipe name for --serial-backend pipe')
-    p.add_argument('--serial-baud',type=int,default=115200,help='baud rate for --serial-backend com')
+    serial_choices=('tcp','pipe','com') if sys.platform=='win32' else ('driver','pty','tcp','device') if sys.platform.startswith('linux') else ('pty','tcp','device')
+    p.add_argument('--modems',type=int);p.add_argument('--serial-backend',choices=serial_choices,default=default_backend())
+    p.add_argument('--serial-device',default='',help='COM port, Windows pipe name, or POSIX tty path (e.g. /dev/ttyUSB0 or /dev/cu.usbserial-*)')
+    p.add_argument('--serial-baud',type=int,default=115200,help='DTE serial baud rate for COM, pipe, or device backends')
     a=p.parse_args()
     if a.modems is not None and a.modems<1: p.error('--modems must be positive')
     if not a.headless and not sys.stdin.isatty(): p.error('interactive terminal required; use --headless')

@@ -50,8 +50,9 @@ def assemble(executable,root,reports,notices,output,target,version,revision):
         'com0com pair, or a virtual COM/TCP bridge for COM applications.\n'
         'No virtual COM driver is bundled.\n'
         'Configure SIP in the dashboard/Hayes settings; no accounts supplied.\n'
-        'LAPM is enabled, compression/echo cancellation disabled. IAX calling\n'
-        'is not implemented. Windows/macOS binaries are not developer-signed\n'
+        'LAPM is enabled, compression/echo cancellation disabled. IAX2 calling\n'
+        'uses UDP and G.711 u-law; local Asterisk is qualified, but external\n'
+        'provider/PBX interoperability is not. Windows/macOS binaries are not developer-signed\n'
         'or notarized. Tests cover offline engines and local worker startup,\n'
         'not native-OS PSTN interoperability or sustained real-time limits.\n'
         'Read docs/ and third-party/inventory.json for scope and review gaps.\n').encode()

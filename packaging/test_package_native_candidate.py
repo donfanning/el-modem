@@ -32,6 +32,9 @@ class CandidatePackageTests(unittest.TestCase):
                 self.assertEqual(result['status'],'REVIEW_REQUIRED')
                 with zipfile.ZipFile(archive) as data:
                     self.assertEqual(data.getinfo('el-modem-0.1.0-rc1-linux-x86_64/el-modem').external_attr>>16,0o100755)
+                    readme=data.read('el-modem-0.1.0-rc1-linux-x86_64/README.txt').decode()
+                    self.assertIn('IAX2 calling',readme)
+                    self.assertNotIn('IAX calling\nis not implemented',readme)
                 with self.assertRaises(ValueError):pack(archive)
                 with self.assertRaises(ValueError):pack(root/'wrong.zip','windows-x86_64')
                 exe.write_bytes(b'different executable')

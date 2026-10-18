@@ -2,6 +2,7 @@
 import ast
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 import hashlib
+import importlib.util
 import json
 import os
 import sys
@@ -45,6 +46,9 @@ if library_override:
         raise RuntimeError('optimized library override needs its build provenance')
     library_metadata = json.loads(metadata.read_text())
     library_metadata['sha256'] = hashlib.sha256(library_override.read_bytes()).hexdigest()
+iax_extension = importlib.util.find_spec('el_modem_iax')
+if iax_extension is None or not iax_extension.origin:
+    raise RuntimeError('the native IAX2 extension is required; build/install native/iax before packaging')
 manifest.write_text(json.dumps(dict(schema=1, local_modules={
     str(modules[name].relative_to(root)): hashlib.sha256(modules[name].read_bytes()).hexdigest()
     for name in sorted(reachable)}, specification_sha256=hashlib.sha256(
@@ -52,9 +56,9 @@ manifest.write_text(json.dumps(dict(schema=1, local_modules={
     python_library=library_metadata), sort_keys=True), encoding='utf-8')
 
 a = Analysis([str(source / 'el_modem.py')], pathex=[str(source), str(source / 'audio-peer'), str(root / 'packaging')],
-             binaries=[], datas=[(str(manifest), '.')] + collect_data_files('textual') +
+             binaries=[(iax_extension.origin, '.')], datas=[(str(manifest), '.')] + collect_data_files('textual') +
                  ([(str(library_override.parent / 'LICENSE.python'), 'licenses')] if library_override else []),
-             hiddenimports=sorted(reachable - {'el_modem'}) + collect_submodules('textual'),
+             hiddenimports=sorted(reachable - {'el_modem'}) + ['el_modem_iax'] + collect_submodules('textual'),
              hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[], noarchive=False)
 if library_override:
     matches = [entry for entry in a.binaries if entry[0] == library_override.name]

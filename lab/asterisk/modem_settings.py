@@ -69,7 +69,7 @@ ENV = {
  'recording.enabled':('EL_MODEM_RECORDING','1',('0','1')),
  'recording.seconds':('EL_MODEM_RECORDING_SECONDS','600',()),
  'instance.name':('EL_MODEM_NAME','Modem',()),
- 'serial.backend':('EL_MODEM_SERIAL_BACKEND','driver',('driver','pty','tcp','com','pipe')),
+ 'serial.backend':('EL_MODEM_SERIAL_BACKEND','driver',('driver','pty','tcp','com','pipe','device')),
  'serial.tcp_port':('EL_MODEM_SERIAL_PORT','9100',()),
  'serial.device':('EL_MODEM_SERIAL_DEVICE','',()),
  'serial.baud':('EL_MODEM_SERIAL_BAUD','115200',()),
@@ -85,6 +85,7 @@ LIMITS = {'modem.echo':1,'modem.quiet':1,'modem.verbose':1,'modem.dtr':3,
 def registry(dce):
     result = {name:Setting(name,'int',maximum=LIMITS[name]) for name in FIELDS}
     result.update({name:Setting(name,'text','idle',f'S{reg}',reg in (103,113)) for name,reg in NETWORK.items()})
+    result['network.trunk']=Setting('network.trunk','text','idle','S120',choices=('0','1'))
     result.update({f's{reg}':Setting(f's{reg}','int',command=f'S{reg}',maximum=255)
                    for reg in dce.registers if reg != 1})
     result.update({f'modem.{name}':Setting(f'modem.{name}','text','idle',command='+MS')
@@ -95,6 +96,11 @@ def registry(dce):
         result[name] = Setting(name,'int','restart',minimum=1,maximum=128)
     for name in ('serial.tcp_port','sip.bind_port','sip.media_port'):
         result[name]=Setting(name,'int','restart',minimum=1,maximum=65535)
+    import sys
+    serial_backends=(('tcp','pipe','com') if sys.platform=='win32' else
+                     ('driver','pty','tcp','device') if sys.platform.startswith('linux') else
+                     ('pty','tcp','device'))
+    result['serial.backend']=Setting('serial.backend','text','restart',choices=serial_backends)
     result['serial.baud']=Setting('serial.baud','int','restart',minimum=300,maximum=921600)
     result['recording.seconds'] = Setting('recording.seconds','int','restart',minimum=1,maximum=86400)
     return result

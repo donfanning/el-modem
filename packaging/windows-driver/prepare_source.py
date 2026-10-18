@@ -41,8 +41,14 @@ def prepare(destination, upstream=None):
         target=destination/name;target.parent.mkdir(parents=True,exist_ok=True)
         target.write_bytes(content)
     patch=here/'overlay.patch'
-    subprocess.run(['git','apply','--check',str(patch)],cwd=destination,check=True)
-    subprocess.run(['git','apply',str(patch)],cwd=destination,check=True)
+    # Pin line endings for the patch application. The manifest hashes are
+    # LF-normalized, but git apply honours core.autocrlf: anywhere it is set to
+    # true (the Git for Windows default) the result is CRLF and the check below
+    # fails on any platform. Override it here rather than depend on the
+    # operator's Git configuration.
+    git=['git','-c','core.autocrlf=false','apply']
+    subprocess.run(git+['--check',str(patch)],cwd=destination,check=True)
+    subprocess.run(git+[str(patch)],cwd=destination,check=True)
     for name,expected in manifest['result_files'].items():
         if hashlib.sha256((destination/name).read_bytes()).hexdigest()!=expected:
             raise ValueError('Overlay result mismatch: '+name)

@@ -17,6 +17,33 @@ on the same PTY and clean teardown on both Intel and ARM macOS15.7.9. See
 hardware/software flow control for this PTY. This does not qualify physical
 modem-control signals or connected-call hangup behavior.
 
+## Linux and macOS: real serial device
+
+Choose the `device` backend for a physical or USB serial adapter. The modem
+process opens and exclusively owns the tty while it runs; the dashboard
+terminal is multiplexed through the worker, so it does not compete for the
+device. Set the backend, absolute device path, and DTE baud in the per-modem
+instance dialog, or at launch:
+
+```sh
+el-modem --modems 1 --serial-backend device \
+  --serial-device /dev/ttyUSB0 --serial-baud 115200
+```
+
+Typical paths are `/dev/ttyUSB0` or `/dev/ttyACM0` on Linux and
+`/dev/cu.usbserial-*` or `/dev/cu.usbmodem*` on macOS. Select `pty` instead for
+the built-in virtual port. The backend is switchable per modem; stop the modem
+before changing the selection or device path. Device paths must be absolute,
+baud rates must be supported by the host OS, and one physical port can belong
+to only one modem instance. The backend configures raw 8-bit serial and
+supports DTR/DCD/RTS/CTS signals when the adapter and driver expose them. Some
+USB adapters omit modem-control lines; those signals then remain unknown.
+
+The native implementation is POSIX-based and has unit coverage using a PTY.
+That verifies its byte path and ownership behavior; it is not a qualification
+of every physical adapter or platform-specific control-line behavior. Ensure
+the user running El-Modem has permission to open the selected device.
+
 ## Windows: optional virtual-COM driver and pipe backend
 
 `--serial-backend pipe` requires a separately supplied compatible driver.
@@ -25,17 +52,20 @@ The [MS-PL source overlay](../packaging/windows-driver/README.md) reconstructs
 the modified project from pinned Microsoft sources. A fresh driver build and
 installation remain unqualified. TCP and the com0com route below remain available.
 Ownership is inverted
-relative to the `com` backend: the driver *is* the COM port, so terminal
-programs (PuTTY, ZOC, SyncTerm, TTerm, Terminate) open the presented COM port
-directly and El-Modem never opens it. The driver brokers between that port and
-a named pipe, creating the pipe is El-Modem's job:
+relative to the `com` backend: the driver *is* the COM port, so the program that
+wants the port opens the presented COM port directly and El-Modem never opens it.
+The driver brokers between that port and a named pipe, creating the pipe is
+El-Modem's job:
 
 ```text
 el-modem --serial-backend pipe --modems 1
 ```
 
 Terminals then connect to `COM3` (or whichever port the driver presents). No
-`--serial-device` is needed; the default pipe is `\\.\pipe\ElModemSerial`.
+`--serial-device` is needed; the default pipe is `\\.\pipe\ElModemSerial`. A
+second port names its own pipe in the registry and is then passed to El-Modem as
+`--serial-device <name>`; see
+[running more than one port](WINDOWS_DRIVER.md#running-more-than-one-port).
 
 Once the compatible driver is installed, this backend needs no TCP redirector
 or peer COM port. See

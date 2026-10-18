@@ -1,4 +1,4 @@
-name: macOS PTY legacy terminal qualification
+name: Published rc1 macOS PTY regression (legacy artifact)
 on:
   workflow_dispatch:
 permissions:

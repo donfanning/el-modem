@@ -30,7 +30,14 @@ class ModemSpec:
         import re
         if not re.fullmatch(r'modem-[1-9][0-9]*',self.id): raise ValueError('invalid modem ID')
         if not self.name or len(self.name)>80 or any(ord(c)<32 for c in self.name): raise ValueError('invalid modem name')
-        if self.serial not in ('driver','pty','tcp','com','pipe'): raise ValueError('unknown serial backend')
+        if self.serial not in ('driver','pty','tcp','com','pipe','device'): raise ValueError('unknown serial backend')
+        if self.serial=='device':
+            if os.name!='posix': raise ValueError('native serial-device backend requires Linux or macOS')
+            from modem_serial_device import normalize_device, SUPPORTED_BAUDS
+            try:self.serial_device=normalize_device(self.serial_device)
+            except ValueError:raise
+            if isinstance(self.serial_baud,bool) or self.serial_baud not in SUPPORTED_BAUDS:
+                raise ValueError('unsupported native serial-device baud rate')
         if self.serial=='com':
             from modem_serial_com import normalize_com_device, BAUD_MINIMUM, BAUD_MAXIMUM
             try: normalize_com_device(self.serial_device)
@@ -109,6 +116,10 @@ class Supervisor:
                 key=('com',spec.serial_device.strip().upper())
                 if key in ports: raise ValueError('colliding serial devices')
                 ports.add(key)
+            if spec.serial=='device':
+                key=('device',os.path.realpath(spec.serial_device))
+                if key in ports:raise ValueError('colliding serial devices')
+                ports.add(key)
             if spec.serial=='pipe':
                 from modem_serial_pipe import normalize_pipe_name
                 key=('pipe',normalize_pipe_name(spec.serial_device).casefold())
@@ -177,6 +188,15 @@ class Supervisor:
                 probe_pipe(spec.serial_device)
             except (OSError, ValueError) as exc:
                 raise ValueError('pipe unavailable: %s' % exc)
+        if spec.serial=='device':
+            import stat
+            try:
+                st=os.stat(spec.serial_device)
+                if not stat.S_ISCHR(st.st_mode):raise ValueError('not a character device')
+                fd=os.open(spec.serial_device,os.O_RDWR|os.O_NOCTTY|os.O_NONBLOCK)
+                os.close(fd)
+            except (OSError,ValueError) as exc:
+                raise ValueError('serial device unavailable: %s' % exc)
         document=dict(spec=asdict(spec),directory=str(directory.resolve()))
         argv=([sys.executable] if getattr(sys,'frozen',False) else
               [sys.executable,str(Path(__file__).with_name('el_modem.py'))])

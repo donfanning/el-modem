@@ -47,16 +47,23 @@ class PtySerial:
         dropped = False
         data = b""
         if self.master in readable:
+            peer_closed = False
             try:
                 data = os.read(self.master, 4096)
+                peer_closed = not data
             except BlockingIOError:
                 data = b""
             except OSError:
                 data = b""
-                dropped = self._open            # EIO: no terminal has the port open
+                peer_closed = True               # Linux reports a closed PTY as EIO
+            if peer_closed:
+                dropped = self._open
                 self._open = False
                 self._pending.clear()
                 self._next_probe = time.monotonic() + 0.1
+                # Darwin reports a closed PTY slave as a readable master whose
+                # read returns b""; Linux reports EIO. Both mean the terminal
+                # dropped DTR.
             if data:
                 self._open = True
         return data, dropped
