@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "53e6578a696b8d25841cd8cdc73ae238af4b9b69",
+  "public_base_revision": "dd7c5ff17f3033dd0c88cf7a61c1eac4b870ea6c",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -9,7 +9,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "1d97e9030bc9423fb23ee35ba6d94dfab424629840cbbe4e2a7c80f89def7cbd",
+      "sha256": "14f4247a9f130203707f45c3826e9abcfc3cf48e9bffa6321af4abb561156fd1",
       "mode": "100644"
     },
     ".github/workflows/macos-pty.yml": {
@@ -1269,7 +1269,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
-      "sha256": "c2266f2f55f0e06be468bb28fac66b7eee65b49f30e9d8af85d610adddab2db0",
+      "sha256": "6d2bc72ca6298a0d3495f3e256e2a940342c213c1a34c7d4fdd255dd03ac13da",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_instances.py": {
@@ -1325,7 +1325,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_serial_port.py": {
-      "sha256": "457b515922c63cb96a580904ac56ffb9bbe70562d0ebcfddc2e8f0f17e90eea5",
+      "sha256": "f4ebc55e590386c32986a164feb8c10a56613c0dda6966487e98cb283db4a8e8",
       "mode": "100644"
     },
     "lab/asterisk/test_sip_auth.py": {

@@ -56,12 +56,14 @@ class TcpSerialTests(unittest.TestCase):
         try:
             pump(self.ser, 0.05)
             self.ser._conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
-            payload = bytes(range(256)) * 4096
+            # Exceed even Windows' socket-buffer minimum so at least one
+            # writable continuation remains queued before the peer reads.
+            payload = bytes(range(256)) * 65536
             self.ser.write(payload)
             self.assertTrue(self.ser.write_fds(), 'test must exercise queued output')
             c.setblocking(False)
             received = bytearray()
-            end = time.monotonic() + 5
+            end = time.monotonic() + 15
             while len(received) < len(payload) and time.monotonic() < end:
                 r, w, _ = select.select([c], self.ser.write_fds(), [], .01)
                 self.ser.service([], w)

@@ -125,15 +125,15 @@ jobs:
           python packaging/smoke_desktop.py "$exe" --report candidate-reports/desktop.json
           V34_NATIVE_TRELLIS=1 python packaging/smoke.py "$exe" --report candidate-reports/native.json
           python -m pip freeze > candidate-reports/build-dependencies.txt
+      - name: Install terminal emulator used by the packaged TUI harness
+        if: startsWith(matrix.target, 'macos-')
+        run: python -m pip install pyte==0.8.2
       - name: Packaged TUI and POSIX-device checks on macOS
         if: startsWith(matrix.target, 'macos-')
         run: python packaging/qualify_tui.py dist/el-modem candidate-reports/tui
       - name: Install minicom for macOS PTY qualification
         if: startsWith(matrix.target, 'macos-')
         run: brew install minicom
-      - name: Install terminal emulator used by the packaged TUI harness
-        if: startsWith(matrix.target, 'macos-')
-        run: python -m pip install pyte==0.8.2
       - name: Qualify the current macOS candidate through minicom and its PTY
         if: startsWith(matrix.target, 'macos-')
         shell: bash

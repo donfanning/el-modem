@@ -173,15 +173,16 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             s.close()
 
     async def test_instance_dialog_mounts_and_saves(self):
-        from modem_tui import ModemApp
+        from modem_tui import ModemApp,serial_backend_choices
         with tempfile.TemporaryDirectory() as root:
-            s=Supervisor(root+'/config.json');s.add(serial='pty');app=ModemApp(s)
+            backend=serial_backend_choices()[0]
+            s=Supervisor(root+'/config.json');s.add(serial=backend);app=ModemApp(s)
             async with app.run_test(size=(120,55)) as pilot:
                 await pilot.pause();app.configure_selected();await pilot.pause()
                 from textual.widgets import Select
-                self.assertEqual(app.screen.query_one('#serial',Select).value,'pty')
+                self.assertEqual(app.screen.query_one('#serial',Select).value,backend)
                 await pilot.click('#save');await pilot.pause()
-                self.assertEqual(s.specs[0].serial,'pty')
+                self.assertEqual(s.specs[0].serial,backend)
             s.close()
 
     async def test_instance_dialog_offers_native_serial_device_on_posix(self):
