@@ -52,23 +52,47 @@ class TcpSerialTests(unittest.TestCase):
         b.close()
 
     def test_backpressure_preserves_binary_output(self):
-        c = socket.create_connection(("127.0.0.1", self.port))
+        c = socket.socket()
+        c.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        c.connect(("127.0.0.1", self.port))
         try:
             pump(self.ser, 0.05)
             self.ser._conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
-            # Exceed even Windows' socket-buffer minimum so at least one
-            # writable continuation remains queued before the peer reads.
-            payload = bytes(range(256)) * 65536
+            # Fill the nonblocking TCP send queue before asking the modem
+            # backend to write. This reliably creates pending output across
+            # OSes with different loopback autotuning and buffer minima.
+            filler = b'F' * 65536
+            filler_bytes = 0
+            blocked = False
+            for _ in range(1024):
+                try:
+                    sent = self.ser._conn.send(filler)
+                except BlockingIOError:
+                    blocked = True
+                    break
+                filler_bytes += sent
+                if sent == 0:
+                    break
+            self.assertGreater(filler_bytes, 0, 'test must fill the socket send queue')
+            self.assertTrue(blocked, 'socket send queue did not reach backpressure')
+            payload = bytes(range(256)) * 4096
             self.ser.write(payload)
             self.assertTrue(self.ser.write_fds(), 'test must exercise queued output')
             c.setblocking(False)
             received = bytearray()
+            filler_remaining = filler_bytes
             end = time.monotonic() + 15
             while len(received) < len(payload) and time.monotonic() < end:
                 r, w, _ = select.select([c], self.ser.write_fds(), [], .01)
                 self.ser.service([], w)
                 if r:
-                    received.extend(c.recv(65536))
+                    data = c.recv(65536)
+                    if filler_remaining:
+                        skipped = min(filler_remaining, len(data))
+                        filler_remaining -= skipped
+                        data = data[skipped:]
+                    received.extend(data)
+            self.assertEqual(filler_remaining, 0)
             self.assertEqual(received, payload)
             self.assertEqual(self.ser.write_fds(), [])
         finally:

@@ -140,6 +140,43 @@ class Supervisor:
         except OSError:
             self.lock.close();self.lock=None; raise ValueError('configuration is already owned by another supervisor')
     def save(self): self.validate(); atomic_json(self.path,dict(schema=1,modems=[asdict(s) for s in self.specs]))
+    def _bindable(self, port, stream):
+        """True when the OS will actually let us bind this TCP/UDP port.
+
+        Windows reserves whole ranges (Hyper-V/WSL NAT, virtual adapters,
+        exclusive-address holders) and refuses those binds with WSAEACCES
+        (10013) rather than address-in-use. That error is invisible to a
+        collision check, so the choice has to be probed.
+        """
+        for addr in ('127.0.0.1','0.0.0.0'):
+            probe=socket.socket(socket.AF_INET,socket.SOCK_STREAM if stream else socket.SOCK_DGRAM)
+            try:
+                probe.bind((addr,port)); return True
+            except OSError:
+                continue
+            finally:
+                probe.close()
+        return False
+    def _pick_port(self, base, step, number, stream, kind):
+        """Walk the documented ladder from its default until the OS allows a bind.
+
+        Keeps the published defaults wherever they are free, and only moves on
+        when a port is refused. The documented ladder is tried in full before
+        falling back to an ephemeral port, so a crowded low range cannot walk
+        this into another modem's ports, and a host that reserves the whole
+        range still gets a usable port instead of a hard failure.
+        """
+        ceiling=base+step*64
+        for port in range(base+number*step,ceiling,step):
+            if self._bindable(port,stream): return port
+        # Whole ladder refused. Let the OS hand out a free high port rather
+        # than refusing to start; the chosen port is recorded in the config.
+        probe=socket.socket(socket.AF_INET,socket.SOCK_STREAM if stream else socket.SOCK_DGRAM)
+        try:
+            probe.bind(('',0))
+            return probe.getsockname()[1]
+        finally:
+            probe.close()
     def add(self, name=None, serial=None, device='', baud=115200):
         serial=serial or default_backend()
         if serial=='com' and not str(device or '').strip():
@@ -150,8 +187,12 @@ class Supervisor:
             normalize_pipe_name(device)
         taken={s.id for s in self.specs}; number=1
         while f'modem-{number}' in taken or (self.root/f'modem-{number}').exists(): number+=1
+        # Probe each port so a host with reserved ranges still starts. Only the
+        # serial and media ports need this: SIP uses 5060+2n, which stays clear.
+        media_port=self._pick_port(15996,4,number,False,'media')
+        serial_port=self._pick_port(9099,1,number,True,'serial') if serial=='tcp' else 9099+number
         spec=ModemSpec(f'modem-{number}',name or f'Modem {number}',sip_port=5060+number*2,
-                       media_port=15996+number*4,serial_port=9099+number,serial=serial,
+                       media_port=media_port,serial_port=serial_port,serial=serial,
                        serial_device=str(device or '').strip(),serial_baud=baud).validate()
         self.specs.append(spec)
         try: self.save()
