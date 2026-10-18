@@ -5,7 +5,7 @@
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
-      "sha256": "850c4027e84b8d623f88e12f1b39e79d67565f9654fcd050e4032cb9bb4fed07",
+      "sha256": "e7045ccf8575d414ba156ebab8e9d1925501e97ccf1f89d231203dfbf1ccf072",
       "mode": "100644"
     },
     ".github/workflows/build.yml": {

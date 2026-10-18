@@ -5,5 +5,5 @@ packaging/serial/*.patch -whitespace
 packaging/third-party/*.LICENSE -text whitespace=-blank-at-eof
 
 # Reviewed UMDF2 patch context and exact source-manifest license bytes.
-packaging/windows-driver/*.patch -whitespace
+packaging/windows-driver/*.patch text eol=lf -whitespace
 packaging/windows-driver/LICENSE -text whitespace=-blank-at-eof
