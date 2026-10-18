@@ -41,7 +41,9 @@ def assemble(executable,root,reports,notices,output,target,version,revision):
     windows_note=('REQUIRES the free Microsoft Visual C++ Redistributable 2015-2022 (x64); Microsoft\n'
         'runtime DLLs are deliberately not bundled.\n') if target.startswith('windows') else ''
     files['README.txt']=(f'El-Modem {version} for {target}\n\n'+windows_note+
-        'Local review candidate; not cleared for public binary redistribution.\n'
+        'Experimental pre-release build; not a stable release.\n'
+        'Source provenance and redistribution limits remain documented in\n'
+        'docs/REDISTRIBUTION.md; no stable or commercial clearance is implied.\n'
         'Run el-modem (el-modem.exe on Windows) in a terminal for the dashboard.\n'
         'Linux defaults to the separately installed serialsim driver; use\n'
         '--serial-backend pty or tcp if that driver is unavailable. macOS\n'
