@@ -59,7 +59,7 @@ class Supervisor:
     def __init__(self, path):
         self.path=Path(path)
         self.root=self.path.parent/'instances'
-        self.specs=[]; self.workers={}; self.states={}; self.responses={}; self.events=[]; self.sequence=0
+        self.specs=[]; self.workers={}; self.states={}; self.responses={}; self.events=[]; self.sequence=0; self.started=set()
         self.lock=None
         if self.path.exists():
             data=json.loads(self.path.read_text())
@@ -157,7 +157,25 @@ class Supervisor:
             finally:
                 probe.close()
         return False
-    def _pick_port(self, base, step, number, stream, kind):
+    def _configured_ports(self, stream, skip_ident=None):
+        """Return configured local ports that must not be reused.
+
+        TCP serial listeners use a separate namespace from UDP SIP/RTP sockets;
+        for UDP, reserve all configured SIP and media ports, including this
+        modem's SIP port when selecting a replacement media port.
+        """
+        reserved=set()
+        for row in self.specs:
+            try: spec=self.effective(row)
+            except (ValueError,TypeError,OSError): spec=row
+            if stream:
+                if row.id!=skip_ident and spec.serial=='tcp': reserved.add(spec.serial_port)
+            elif row.id==skip_ident:
+                reserved.add(spec.sip_port)
+            else:
+                reserved.update((spec.sip_port,spec.media_port))
+        return reserved
+    def _pick_port(self, base, step, number, stream, kind, exclude=()):
         """Walk the documented ladder from its default until the OS allows a bind.
 
         Keeps the published defaults wherever they are free, and only moves on
@@ -167,16 +185,19 @@ class Supervisor:
         range still gets a usable port instead of a hard failure.
         """
         ceiling=base+step*64
+        excluded=set(exclude)
         for port in range(base+number*step,ceiling,step):
-            if self._bindable(port,stream): return port
+            if port not in excluded and self._bindable(port,stream): return port
         # Whole ladder refused. Let the OS hand out a free high port rather
         # than refusing to start; the chosen port is recorded in the config.
-        probe=socket.socket(socket.AF_INET,socket.SOCK_STREAM if stream else socket.SOCK_DGRAM)
-        try:
-            probe.bind(('',0))
-            return probe.getsockname()[1]
-        finally:
-            probe.close()
+        for _ in range(128):
+            probe=socket.socket(socket.AF_INET,socket.SOCK_STREAM if stream else socket.SOCK_DGRAM)
+            try:
+                probe.bind(('',0)); port=probe.getsockname()[1]
+                if port not in excluded: return port
+            finally:
+                probe.close()
+        raise OSError('could not find an available unreserved %s port' % kind)
     def add(self, name=None, serial=None, device='', baud=115200):
         serial=serial or default_backend()
         if serial=='com' and not str(device or '').strip():
@@ -189,8 +210,8 @@ class Supervisor:
         while f'modem-{number}' in taken or (self.root/f'modem-{number}').exists(): number+=1
         # Probe each port so a host with reserved ranges still starts. Only the
         # serial and media ports need this: SIP uses 5060+2n, which stays clear.
-        media_port=self._pick_port(15996,4,number,False,'media')
-        serial_port=self._pick_port(9099,1,number,True,'serial') if serial=='tcp' else 9099+number
+        media_port=self._pick_port(15996,4,number,False,'media',self._configured_ports(False))
+        serial_port=self._pick_port(9099,1,number,True,'serial',self._configured_ports(True)) if serial=='tcp' else 9099+number
         spec=ModemSpec(f'modem-{number}',name or f'Modem {number}',sip_port=5060+number*2,
                        media_port=media_port,serial_port=serial_port,serial=serial,
                        serial_device=str(device or '').strip(),serial_baud=baud).validate()
@@ -198,18 +219,51 @@ class Supervisor:
         try: self.save()
         except BaseException: self.specs.remove(spec); raise
         return spec
+    def _refresh_ports_for_start(self, ident):
+        """Re-pick transiently reserved ports and persist the effective choice."""
+        self.validate()
+        stored=next(s for s in self.specs if s.id==ident)
+        spec=self.effective(stored)
+        digits=''.join(c for c in spec.id if c.isdigit())
+        if not digits: return spec
+        number=int(digits); changes={}
+        if spec.serial=='tcp' and not self._bindable(spec.serial_port,True):
+            changes['serial_port']=self._pick_port(9099,1,number,True,'serial',
+                self._configured_ports(True,skip_ident=ident))
+        if not self._bindable(spec.media_port,False):
+            changes['media_port']=self._pick_port(15996,4,number,False,'media',
+                self._configured_ports(False,skip_ident=ident))
+        if changes:
+            # configure() persists both config.json and any boot settings that
+            # override it in profiles.json. Otherwise a restart would retry the
+            # same unavailable port.
+            self.configure(stored,changes)
+            spec=self.effective(next(s for s in self.specs if s.id==ident))
+        return spec
     def start(self, ident):
         if ident in self.workers: raise ValueError('modem is already running')
-        spec=self.effective(next(s for s in self.specs if s.id==ident))
-        self.validate()
+        # Readiness belongs to one child lifetime, not the modem ID forever.
+        self.started.discard(ident)
+        spec=self._refresh_ports_for_start(ident)
         directory=self.root/ident
         directory.mkdir(parents=True,exist_ok=True,mode=0o700)
         if (directory/'serial').exists() or (directory/'serial').is_symlink():
             raise ValueError('serial path already exists; refusing to replace it')
         # Check binding before spawning; worker still handles a subsequent race.
-        for kind,host,port in ((socket.SOCK_DGRAM,spec.sip_host,spec.sip_port),
-                               (socket.SOCK_DGRAM,spec.media_host,spec.media_port)):
-            with socket.socket(socket.AF_INET,kind) as probe: probe.bind((host,port))
+        # Name the offending field: these are local listen addresses, so putting a
+        # remote peer address here fails as WinError 10049. Left unhandled, that
+        # OSError escapes the dashboard and takes the whole UI down.
+        for field,host,port in (('sip_host',spec.sip_host,spec.sip_port),
+                                ('media_host',spec.media_host,spec.media_port)):
+            probe=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+            try:
+                probe.bind((host,port))
+            except OSError as exc:
+                raise ValueError('%s %s:%d is not a local address this machine can bind (%s). '
+                                 'These are local listen addresses; set the peer under '
+                                 'sip.server instead.'%(field,host,port,exc)) from exc
+            finally:
+                probe.close()
         if spec.serial=='driver' and not os.access('/dev/ttyPipe',os.R_OK|os.W_OK):
             raise ValueError('serial driver unavailable: install the documented serialsim prerequisite and device permissions, or explicitly choose PTY/TCP')
         if spec.serial=='com':
@@ -289,21 +343,39 @@ class Supervisor:
         if self.states.get(ident,{}).get('state')=='starting': raise ValueError('modem is warming up; wait until ready')
         self.sequence+=1; request=self.sequence
         self.workers[ident][1].send(dict(id=request,action=action,**fields)); return request
+    def _exit_status(self, ident, proc):
+        """Describe a worker exit without hiding crashes as normal stops."""
+        returncode=proc.poll()
+        ran=ident in self.started
+        log=self.root/ident/'worker.log'
+        if ran and returncode==0:
+            return dict(state='stopped',error='',note=f'worker exited cleanly; see {log}',lights={})
+        if returncode is None:
+            reason='control channel closed while worker was still running'
+        else:
+            reason=f'worker exited with status {returncode}'
+        when='after reaching ready state' if ran else 'before reaching ready state'
+        return dict(state='failed',error=f'{reason} {when}; see {log}',lights={})
     def poll(self):
         for ident,(proc,channel) in list(self.workers.items()):
             try:
                 channel.flush()
                 for message in channel.receive():
-                    if message.get('event')=='status': self.states[ident]=message['value']
+                    if message.get('event')=='status':
+                        self.states[ident]=message['value']
+                        if message['value'].get('state') in ('idle','dialing','ringing','connected'):
+                            self.started.add(ident)
                     elif message.get('event')=='terminal': self.events.append((ident,message['hex']))
                     else: self.responses[message['id']]=message
                 if len(self.events)>256: raise BufferError('terminal consumer is too slow')
                 if proc.poll() is not None or channel.closed:
-                    self.states[ident]=dict(state='failed',error=f'worker exited ({proc.poll()}); see {self.root/ident/"worker.log"}',lights={})
+                    self.states[ident]=self._exit_status(ident,proc)
+                    self.started.discard(ident)
                     self.stop(ident,preserve_state=True)
             except (OSError,ValueError,BufferError) as exc:
                 self.states[ident]=dict(state='failed',error=str(exc),lights={}); self.stop(ident,preserve_state=True)
     def stop(self,ident,preserve_state=False):
+        self.started.discard(ident)
         item=self.workers.pop(ident,None)
         if item:
             proc,channel=item

@@ -52,9 +52,16 @@ class InstanceDialog(ModalScreen):
             yield Static('+-- INSTANCE / CONNECTION SETUP -------------------------------------+')
             yield Static('The modem must be stopped before changing these values.')
             for name in ('name','sip_host','sip_port','media_host','media_port','serial_port','serial_device','serial_baud'):
-                yield Label(name);yield Input(str(getattr(self.spec,name,'')),id=name)
+                # Label and field share a row: stacked at height 3 each, the
+                # eight fields pushed Save below the dialog's own bottom edge
+                # and the button could not be clicked at all.
+                with Horizontal(classes='field'):
+                    yield Label(name)
+                    yield Input(str(getattr(self.spec,name,'')),id=name)
             current=self.spec.serial if self.spec.serial in serial_options else serial_options[0]
-            yield Select([(x,x) for x in serial_options],value=current,id='serial',allow_blank=False)
+            with Horizontal(classes='field'):
+                yield Label('serial')
+                yield Select([(x,x) for x in serial_options],value=current,id='serial',allow_blank=False)
             yield Static('',id='error')
             with Horizontal():yield Button('Save',id='save');yield Button('Cancel',id='cancel')
             yield Static('+-----------------------------------------------------------------------+')
@@ -87,7 +94,14 @@ class SettingsScreen(ModalScreen):
     def refresh_settings(self):self.app.command(self.ident,'settings',self.load_rows)
     def load_rows(self,rows):self.rows={x['name']:x for x in rows};self.render_rows()
     def render_rows(self):
-        table=self.query_one(DataTable);table.clear()
+        # The settings response can arrive after the dialog has been closed. The
+        # callback then runs against a screen that no longer has its table, and
+        # the resulting NoMatches escapes the tick loop and takes the dashboard
+        # down. A closed screen simply has nothing left to draw.
+        from textual.css.query import NoMatches
+        try: table=self.query_one(DataTable)
+        except NoMatches: return
+        table.clear()
         category=self.query_one('#category',Select).value
         for name,row in self.rows.items():
             if category=='modem' and not (name.startswith('modem.') or name.startswith('s') and name[1:].isdigit()):continue
@@ -190,7 +204,16 @@ class ModemApp(App):
     ModalScreen { align: center middle; background: #000000 75%; }
     #settings-window, #instance-window, #confirm-window { width: 90%; max-width: 110; max-height: 90%; padding: 1 2; border: ascii $warning; background: #101810; }
     #settings-window DataTable { height: 1fr; }
+    # Textual's Input draws a tall border. At height 1 both rows are border and
+    # the text has nowhere to render, so the field looked empty and untypable.
+    # Keep the normal height and put the label beside the field instead, which
+    # is what brings the dialog back inside its own window.
     #settings-window Input, #instance-window Input { height: 3; }
+    #instance-window .field { height: 3; }
+    #instance-window .field Label { width: 16; content-align: left middle; }
+    #instance-window .field Input, #instance-window .field Select { width: 1fr; }
+    #instance-window .field Select { height: 3; }
+    #instance-window { overflow-y: auto; }
     #settings-window Button, #instance-window Button, #confirm-window Button { margin: 0 1; }
     #settings-window Select { width: 1fr; }
     '''
@@ -206,19 +229,28 @@ class ModemApp(App):
                 yield Static(' SYSTEM ACTIONS',id='context-title')
                 yield Static('',id='menu')
         yield Static('',id='details')
-        yield Static('[←/→ Tab] pane  [↑/↓] modem/menu  [1-7] modem action  [Enter] system action  [N] add  [Q] quit',id='help')
+        yield Static('[Enter] act on >  [Esc] up a level  [↑/↓] move >  [Tab] switch pane  [N] add  [Q] quit',id='help')
         yield Footer()
     def on_mount(self):
         self.dashboard=self.screen
         self.dashboard_widgets={w.id:w for w in self.dashboard.query('*') if w.id}
         self.dashboard_table=self.dashboard_widgets['modems']
         self.details=self.dashboard_widgets['details']
-        self.focus_pane='left';self.modem_row=0;self.menu_row=0
+        # The action menu has two levels. The system menu is the default because a
+        # modem is not being acted on until you choose one; Enter enters the
+        # modem's own actions, Escape steps back out to the system menu.
+        self.menu_level='system';self.focus_pane='right';self.modem_row=0;self.menu_row=0
         self.set_interval(.1,self.tick);self.set_interval(1,self.clock_tick);self.tick();self.clock_tick()
     def clock_tick(self):
         from datetime import datetime
         masthead=self.dashboard_widgets.get('masthead')
-        if masthead and masthead.is_mounted:masthead.update('EL-MODEM  |  DSP MODEM POOL'+datetime.now().strftime('%d-%b-%Y %H:%M:%S').rjust(55))
+        if not (masthead and masthead.is_mounted):return
+        # Pad between the two halves so the clock sits flush at the right edge
+        # of the current terminal width, instead of a fixed column that drifts.
+        left='EL-MODEM  |  DSP MODEM POOL'
+        right=datetime.now().strftime('%d-%b-%Y %H:%M:%S')
+        gap=max(1,self.size.width-2-len(left)-len(right))
+        masthead.update(left+' '*gap+right)
     def check_action(self, action, parameters):
         if isinstance(self.screen,TerminalScreen) and action in ('quit_checked','create','settings','terminal','hangup'):
             return False
@@ -244,23 +276,66 @@ class ModemApp(App):
         self.supervisor.events.clear()
         if not self.dashboard_table.is_mounted:return
         cards=[]; self.visible_ids=[]
+        # One bordered box per modem so several modems stay visually separate.
+        # At narrow terminal widths, split the 12 lamps into two rows of six;
+        # otherwise the fixed 60-column row overflows the two-thirds stack pane.
+        # The card's rules and side borders must fit inside the widget's border
+        # and padding, hence the six-column allowance below.
+        inner=max(37,self.dashboard_widgets['stack'].size.width-6)
+        rule='+'+'-'*inner+'+'
         for spec in self.supervisor.specs:
             state=self.supervisor.states.get(spec.id,{})
             lights=state.get('lights',{})
             names=('HS','AA','CD','OH','RD','SD','TR','MR','RS','CS','SYN','ARQ')
             mapped={'HS':None,'AA':lights.get('AA'),'CD':lights.get('CD'),'OH':lights.get('OH'),'RD':lights.get('RD'),'SD':lights.get('SD'),'TR':None,'MR':lights.get('MR'),'RS':lights.get('RTS'),'CS':lights.get('CTS'),'SYN':None,'ARQ':None}
-            lamps=' '.join(f"{'(*)' if mapped[n] is True else '( )' if mapped[n] is False else '(?)'}{n}" for n in names)
+            # Three states: (*) on, ( ) off, (.) not reported. The third state
+            # matters: a modem that failed to start must not look identical
+            # to a healthy idle one.
+            lamp=lambda n:'(*)' if mapped[n] is True else '( )' if mapped[n] is False else '(.)'
+            if inner>=62:
+                # Wide layout: fixed 5-column slots, 12 indicators per row.
+                lamps=''.join(f' {lamp(n)} ' for n in names)
+                labels=''.join(f' {n}  ' for n in names)
+                indicator_rows=[lamps,labels]
+            else:
+                # Compact layout: labelled indicators in two rows of six.
+                # Six columns need at most 37 characters (SYN and ARQ are
+                # three characters); this fits the left pane at 80 columns.
+                indicator_rows=[' '.join(f'{lamp(n)}{n}' for n in names[start:start+6])
+                                for start in (0,6)]
             try: name=self.supervisor.effective(spec).name
             except (ValueError,OSError,TypeError): name=spec.name
             self.visible_ids.append(spec.id)
             idx=len(self.visible_ids);focus='>' if self.focus_pane=='left' and idx-1==self.modem_row else ' '
             call=state.get('call') or {}
-            cards.append(f"{focus} [{idx}/{len(self.supervisor.specs)}] {name} | {state.get('serial','')} | SIP {state.get('registration','unknown')} | {state.get('state','stopped')} | {call.get('speed','')}\n  {lamps}\n  DSP {state.get('health',{}).get('mean_dsp_ms','—')} ms   Owner {state.get('owner','—')}\n")
+            running=spec.id in self.supervisor.workers
+            rows=[f"{focus} [{idx}/{len(self.supervisor.specs)}] {name} | {state.get('serial','')} | "
+                  f"Ext {state.get('extension','—')} | {state.get('registration','unknown').upper()} | "
+                  f"{'ONLINE' if running else 'OFFLINE'}",
+                  *indicator_rows,
+                  f"DSP {state.get('health',{}).get('mean_dsp_ms','—')} ms   Owner {state.get('owner','—')}   "
+                  f"{call.get('speed','')}"]
+            if inner<62:
+                rows[0:1]=[f"{focus} [{idx}/{len(self.supervisor.specs)}] {name}",
+                           f"{state.get('serial','')} Ext {state.get('extension','—')} | "
+                           f"{state.get('registration','unknown').upper()} | {'ON' if running else 'OFF'}"]
+            rows=[r[:inner-2] for r in rows]
+            self.card_stride=len(rows)+3 # top/bottom rules plus separator before next card
+            cards.append(rule+''.join('\n| '+r.ljust(inner-2)+' |' for r in rows)+'\n'+rule)
         self.dashboard_table.update('\n'.join(cards) if cards else '  No modem instances. Press N to add one.')
-        actions=(['Settings','Terminal','Statistics','Configure','Start / Stop','Hang up','Remove'],['Add modem','Save config','Load config','Background','Quit'])
-        labels=actions[0] if self.focus_pane=='left' else actions[1]
-        self.dashboard_widgets['context-title'].update(' MODEM ACTIONS' if self.focus_pane=='left' else ' SYSTEM ACTIONS')
-        self.dashboard_widgets['menu'].update('\n'.join(('>' if i==self.menu_row else ' ')+f' {i+1}. {item}' for i,item in enumerate(labels)))
+        # 'Settings' edits live modem values; 'Instance' edits name/port/baud and
+        # needs the modem stopped. Distinct labels so they are not confusable.
+        selected=self.visible_ids[min(self.modem_row,len(self.visible_ids)-1)] if self.visible_ids else None
+        start_label='Stop' if selected in self.supervisor.workers else 'Start'
+        actions=(['Settings','Terminal','Statistics','Instance','Start / Stop','Hang up','Remove'],['Add modem','Save config','Load config','Background','Quit'])
+        actions=(['Settings','Terminal','Statistics','Instance',f'{start_label} modem','Hang up','Remove'],actions[1])
+        labels=actions[0] if self.in_modem_menu() else actions[1]
+        self.dashboard_widgets['context-title'].update(' MODEM ACTIONS' if self.in_modem_menu() else ' SYSTEM ACTIONS')
+        # Only mark the pane that actually has the keyboard. Up/Down moves modem_row
+        # while the left pane is focused and menu_row while the right pane is,
+        # so a marker on the unfocused menu just sat frozen on one entry.
+        marker='>' if self.focus_pane=='right' else ' '
+        self.dashboard_widgets['menu'].update('\n'.join((marker if i==self.menu_row else ' ')+f' {i+1}. {item}' for i,item in enumerate(labels)))
         self.dashboard_widgets['stack'].border_title='FOCUS' if self.focus_pane=='left' else 'MODEMS'
         self.dashboard_widgets['context'].border_title='FOCUS' if self.focus_pane=='right' else 'ACTIONS'
         self.modem_row=min(self.modem_row,max(0,len(self.visible_ids)-1))
@@ -269,21 +344,44 @@ class ModemApp(App):
             self.details.update(self.supervisor.states.get(ident,{}).get('error',''))
     def on_key(self,event):
         if isinstance(self.screen,TerminalScreen):return
-        if event.key in ('left','right','tab'):
+        if event.key=='tab':
+            # Tab is the only pane switch. Up/Down always moves the marker in
+            # whichever pane holds focus, so the arrow keys mean the same thing
+            # in both panes instead of only when an "actions" menu is showing.
             event.stop();event.prevent_default();self.focus_pane='right' if self.focus_pane=='left' else 'left';self.tick()
         elif event.key in ('up','down'):
             event.stop();event.prevent_default()
             if self.focus_pane=='left':self.modem_row=max(0,min(len(self.supervisor.specs)-1,self.modem_row+(-1 if event.key=='up' else 1)))
-            else:self.menu_row=max(0,min((4 if self.focus_pane=='right' else 6),self.menu_row+(-1 if event.key=='up' else 1)))
+            else:self.menu_row=max(0,min(self.menu_count()-1,self.menu_row+(-1 if event.key=='up' else 1)))
             self.tick()
-            if self.focus_pane=='left':self.dashboard_widgets['stack'].scroll_to(y=self.modem_row*4,animate=False)
-        elif event.key=='enter':
+            if self.focus_pane=='left':self.dashboard_widgets['stack'].scroll_to(y=self.modem_row*getattr(self,'card_stride',7),animate=False)
+        elif event.key=='escape':
+            # Climb one level: out of the modem's actions, back to the system
+            # menu at the top. Escape is already at the top and does nothing,
+            # and it never stops a running modem.
             event.stop();event.prevent_default()
-            if self.focus_pane=='right':self.activate_menu()
+            if self.menu_level=='modem':
+                self.menu_level='system';self.focus_pane='right';self.menu_row=0
+            self.tick()
+        elif event.key=='enter':
+            # Enter acts on whatever the marker is on: a modem in the stack
+            # opens its actions, an entry in the menu runs that action.
+            event.stop();event.prevent_default()
+            if self.focus_pane=='left':
+                self.menu_level='modem';self.focus_pane='right';self.menu_row=0
+            else:
+                self.activate_menu()
+            self.tick()
         elif self.focus_pane=='left' and event.character and event.character in '1234567':
             self.menu_row=int(event.character)-1;self.activate_menu()
+    def menu_count(self):
+        """How many entries the action menu currently offers."""
+        return 7 if self.in_modem_menu() else 5
+    def in_modem_menu(self):
+        """True once Enter has moved from the system menu into the modem's actions."""
+        return self.menu_level=='modem' and bool(self.visible_ids)
     def activate_menu(self):
-        if self.focus_pane=='right':
+        if not self.in_modem_menu():
             (self.action_create,self.save_config,self.load_config,self.background,self.action_quit_checked)[self.menu_row]()
         else:
             actions=(self.action_settings,self.action_terminal,self.show_statistics,self.configure_selected,self.toggle_selected,self.action_hangup,self.remove_selected)

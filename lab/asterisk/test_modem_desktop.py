@@ -134,6 +134,38 @@ class SupervisorTests(unittest.TestCase):
             (s.root/one.id).mkdir(parents=True)
             s.remove(one.id);three=s.add(serial='pty');self.assertNotEqual(three.id,one.id)
             self.assertEqual(len(Supervisor(root+'/config.json').specs),2)
+    def test_runtime_port_repick_is_persisted_over_profile_override(self):
+        with tempfile.TemporaryDirectory() as root:
+            path=Path(root)/'config.json';s=Supervisor(path)
+            spec=s.add(serial='tcp');other=s.add(serial='tcp')
+            profile=s.root/spec.id/'profiles.json';profile.parent.mkdir(parents=True)
+            profile.write_text(json.dumps({'profiles':{'0':{'extended_settings':{
+                'serial.tcp_port':str(spec.serial_port)}}}}))
+            old_port=spec.serial_port
+            # The configured port became unavailable after add(). The first
+            # alternative is reserved by another, not-yet-started modem; skip it.
+            with patch.object(s,'_bindable',side_effect=[False,False,True,True]):
+                chosen=s._refresh_ports_for_start(spec.id)
+            self.assertNotEqual(chosen.serial_port,old_port)
+            self.assertNotEqual(chosen.serial_port,other.serial_port)
+            self.assertEqual(s.specs[0].serial_port,chosen.serial_port)
+            saved=json.loads(path.read_text())['modems'][0]
+            self.assertEqual(saved['serial_port'],chosen.serial_port)
+            reloaded=Supervisor(path)
+            self.assertEqual(reloaded.effective(reloaded.specs[0]).serial_port,chosen.serial_port)
+    def test_worker_nonzero_exit_after_ready_is_still_failure(self):
+        with tempfile.TemporaryDirectory() as root:
+            s=Supervisor(root+'/config.json');spec=s.add(serial='pty');s.started.add(spec.id)
+            class Process:
+                def poll(self): return 1
+            state=s._exit_status(spec.id,Process())
+            self.assertEqual(state['state'],'failed')
+            self.assertIn('status 1',state['error'])
+            class CleanProcess:
+                def poll(self): return 0
+            self.assertEqual(s._exit_status(spec.id,CleanProcess())['state'],'stopped')
+            s.started.clear()
+            self.assertEqual(s._exit_status(spec.id,CleanProcess())['state'],'failed')
     def test_duplicate_and_lock(self):
         with tempfile.TemporaryDirectory() as root:
             s=Supervisor(root+'/config.json');s.acquire();m=s.add(serial='pty')
@@ -163,13 +195,72 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             s=Supervisor(root+'/config.json');s.add(serial='pty');app=ModemApp(s)
             async with app.run_test(size=(120,45)) as pilot:
                 await pilot.pause()
-                self.assertIn('[1/1] Modem 1',str(app.query_one('#modems',Static).renderable))
-                self.assertIn('(?)HS',str(app.query_one('#modems',Static).renderable))
-                await pilot.press('right')
+                panel=str(app.query_one('#modems',Static).renderable)
+                self.assertIn('[1/1] Modem 1',panel)
+                rows=panel.splitlines()
+                # One bordered box per modem keeps several modems separate.
+                rules=[r.strip() for r in rows if r.strip().startswith('+') and r.strip().endswith('+')]
+                self.assertGreaterEqual(len(rules),2,'each modem needs a box above and below')
+                self.assertGreaterEqual(len(rules[0])-2,62,'box must fit the 60-column lamp row')
+                # All twelve labels share one row; the lamps sit directly above
+                # it, in five-column slots, so the pair cannot wrap.
+                names=('HS','AA','CD','OH','RD','SD','TR','MR','RS','CS','SYN','ARQ')
+                labels=[r for r in rows if all(n in r for n in names)]
+                self.assertEqual(len(labels),1,'labels must occupy exactly one row')
+                # The card draws '| ' + content + ' |'; take the content and the
+                # first 60 columns, which is exactly the lamp/label block.
+                bare=lambda r:r[2:-2][:60]
+                label_row=bare(labels[0])
+                lamp_row=bare(rows[rows.index(labels[0])-1])
+                self.assertEqual(len(label_row),60,'label row must be 60 columns')
+                self.assertEqual(len(lamp_row),60,'lamp row must be 60 columns')
+                for i,name in enumerate(names):
+                    self.assertEqual(label_row[i*5:(i+1)*5].strip(),name,
+                                     f'label {name} not in its own slot')
+                    self.assertRegex(lamp_row[i*5:(i+1)*5],r'^\s\(.\)\s$',
+                                     f'lamp for {name} not centred in its slot')
+                # Three states: on, off, and not-reported.
+                self.assertTrue({'(*)','( )','(.)'}&set(lamp_row.split()))
+                # Tab is the only pane switch; the arrow keys belong to the focused pane.
+                # Default level is the system menu; Enter enters modem actions.
                 self.assertEqual(app.focus_pane,'right')
                 self.assertIn('Add modem',str(app.query_one('#menu',Static).renderable))
-                await pilot.press('left')
-                self.assertEqual(app.focus_pane,'left')
+                # Enter acts on whatever the > marks; Escape climbs back to the top and
+                # is inert once there.
+                await pilot.press('tab')
+                self.assertEqual(app.focus_pane,'left','Tab reaches the modem stack')
+                await pilot.press('enter')
+                self.assertEqual(app.menu_level,'modem')
+                self.assertIn('Settings',str(app.query_one('#menu',Static).renderable))
+                await pilot.press('escape')
+                self.assertEqual(app.menu_level,'system')
+                self.assertIn('Add modem',str(app.query_one('#menu',Static).renderable))
+                before=(app.focus_pane,app.menu_level)
+                await pilot.press('escape')
+                self.assertEqual((app.focus_pane,app.menu_level),before,'Escape at the top is inert')
+                for key in ('left','right'):
+                    await pilot.press(key)
+                    self.assertEqual(app.focus_pane,'right',f'{key} must not switch panes')
+            s.close()
+
+    async def test_dashboard_indicator_cards_fit_80_columns(self):
+        from modem_tui import ModemApp
+        from textual.widgets import Static
+        names=('HS','AA','CD','OH','RD','SD','TR','MR','RS','CS','SYN','ARQ')
+        with tempfile.TemporaryDirectory() as root:
+            s=Supervisor(root+'/config.json');s.add(serial='pty');app=ModemApp(s)
+            async with app.run_test(size=(80,45)) as pilot:
+                await pilot.pause()
+                panel=app.query_one('#modems',Static)
+                rendered=str(panel.renderable)
+                rows=rendered.splitlines()
+                stack=app.dashboard_widgets['stack']
+                self.assertLess(stack.size.width,70,'80-column terminal should select compact layout')
+                self.assertLessEqual(max(map(len,rows)),stack.size.width-4,
+                                     f'modem cards must remain inside the left pane: {stack.size.width=} {rows!r}')
+                lamp_rows=[row for row in rows if '(.)' in row]
+                self.assertEqual(len(lamp_rows),2,'compact layout should use two rows of six')
+                self.assertEqual([name for row in lamp_rows for name in names if name in row],list(names))
             s.close()
 
     async def test_instance_dialog_mounts_and_saves(self):
