@@ -166,6 +166,7 @@ jobs:
           exe=dist/el-modem
           if [ "$RUNNER_OS" = Windows ]; then exe=dist/el-modem.exe; fi
           python packaging/inventory_portable.py "$exe" candidate-notices --lineage build/native-processing.jsonl
+          python packaging/inventory_rust.py native/iax/Cargo.toml candidate-notices/rust
           python packaging/package_native_candidate.py "$exe" "build/el-modem-${CANDIDATE_VERSION}-${CANDIDATE_TARGET}.zip" --target "$CANDIDATE_TARGET" --version "$CANDIDATE_VERSION" --revision "$CANDIDATE_REVISION"
           python packaging/candidate_transport.py "build/el-modem-${CANDIDATE_VERSION}-${CANDIDATE_TARGET}.zip" "encrypted-candidates/el-modem-${CANDIDATE_VERSION}-${CANDIDATE_TARGET}.zip.age"
       - name: Windows installer (downloads the Microsoft runtime at install time)

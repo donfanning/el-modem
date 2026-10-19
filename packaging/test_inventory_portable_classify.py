@@ -1,5 +1,7 @@
 import unittest
-from inventory_portable import is_native, is_notice
+from inventory_portable import is_native, is_notice, project_license_notice
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 class Classify(unittest.TestCase):
@@ -21,6 +23,18 @@ class Classify(unittest.TestCase):
                            ('base_library.zip', b'PK\x03\x04'), ('el-modem-build.json', b'{"a":1}'),
                            ('textual-0.89.1.dist-info\\LICENSE', b'MIT'), ('', b'')):
             self.assertFalse(is_native(name, data))
+
+    def test_project_extension_uses_repository_gpl_notice(self):
+        with TemporaryDirectory() as temp:
+            root=Path(temp)
+            license_file=root/'LICENSE'
+            license_file.write_text('GPL text')
+            self.assertEqual(project_license_notice('el-modem-iax', 'GPL-3.0-or-later', root),
+                             license_file)
+            self.assertIsNone(project_license_notice('other', 'GPL-3.0-or-later', root))
+            self.assertIsNone(project_license_notice('el-modem-iax', 'MIT', root))
+            license_file.unlink()
+            self.assertIsNone(project_license_notice('el-modem-iax', 'GPL-3.0-or-later', root))
 
 
 if __name__ == '__main__':

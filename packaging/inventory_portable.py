@@ -15,7 +15,6 @@ import shutil
 import subprocess
 import sys
 import sysconfig
-from PyInstaller.archive.readers import CArchiveReader
 from python_component_notices import retain as retain_python_notice
 
 
@@ -36,7 +35,18 @@ def is_native(name,data):
     return data[:4].startswith(NATIVE_MAGIC)
 
 
+def project_license_notice(name, license_expression, project_root):
+    """Locate the repository license for the packaged project-owned extension."""
+    if name.lower() == 'el-modem-iax' and license_expression == 'GPL-3.0-or-later':
+        path = project_root / 'LICENSE'
+        if path.is_file():
+            return path
+    return None
+
+
 def inventory(executable,output,lineage=None):
+    from PyInstaller.archive.readers import CArchiveReader
+
     output.mkdir(parents=True,exist_ok=False)
     archive=CArchiveReader(str(executable));pyz=archive.open_embedded_archive('PYZ.pyz')
     manifest=json.loads(archive.extract('el-modem-build.json'))
@@ -64,6 +74,7 @@ def inventory(executable,output,lineage=None):
         destination.parent.mkdir(parents=True,exist_ok=True);data=path.read_bytes()
         if destination.exists() and destination.read_bytes()!=data:raise ValueError('conflicting notice destination')
         destination.write_bytes(data);notices.append(dict(component=component,path=str(destination.relative_to(output)),sha256=sha(data)))
+
     for dist in distributions:
         name=dist.metadata['Name']
         if name not in selected and name.lower()!='pyinstaller':continue
@@ -77,6 +88,18 @@ def inventory(executable,output,lineage=None):
             if is_notice(str(file)) and path.suffix not in ('.py','.pyc'):
                 relative=Path(component)/Path(*[re.sub(r'[^A-Za-z0-9._-]','_',part) for part in Path(file).parts if part not in ('..','.')])
                 notice(path,name,relative);paths.append(str(Path('licenses')/relative))
+        # maturin's wheel metadata currently contains the SPDX expression but
+        # not a license file. The extension is this repository's own GPL
+        # component, so retain the exact project license alongside the
+        # installed distribution record rather than report a false missing
+        # notice (or silently treating the metadata string as the notice).
+        if not paths:
+            project_license = project_license_notice(
+                name, dist.metadata.get('License-Expression'), Path(__file__).resolve().parents[1])
+            if project_license is not None:
+                relative = Path('el-modem-iax') / 'GPL-3.0.txt'
+                notice(project_license, name, relative)
+                paths.append(str(Path('licenses') / relative))
         records.append(dict(name=name,version=dist.version,license_expression=dist.metadata.get('License-Expression'),declared_license=dist.metadata.get('License'),notices=paths))
     # Interpreter extension provenance is separate from statically linked
     # OpenSSL/libffi/zlib etc. Finding a CPython file does not clear its internals.

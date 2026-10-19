@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "46f98507736475490a2f030d1a0daf2e8e07a745",
+  "public_base_revision": "31e5e0c9017115f07b6e746fa95f1ef3ed68cc23",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -9,7 +9,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "14f4247a9f130203707f45c3826e9abcfc3cf48e9bffa6321af4abb561156fd1",
+      "sha256": "7bd9e25d64297534040043d5a33198954f6d27fd022aa4e65a13ab836ba9bfc7",
       "mode": "100644"
     },
     ".github/workflows/macos-pty.yml": {
@@ -1449,7 +1449,11 @@
       "mode": "100644"
     },
     "packaging/inventory_portable.py": {
-      "sha256": "c1099a11dce68d21b397b5384ccd6a46060b64108382a419d9ed8b94605cf79a",
+      "sha256": "d8652484a72eeffd1134e71192bd13e1225f4924a90bb1637a88a3c66bd57e81",
+      "mode": "100644"
+    },
+    "packaging/inventory_rust.py": {
+      "sha256": "b23b5213bcdfbd4b311c346eeec3ae10be1194fa89051868e100da7ffe30c910",
       "mode": "100644"
     },
     "packaging/native_runtime.py": {
@@ -1525,7 +1529,11 @@
       "mode": "100644"
     },
     "packaging/test_inventory_portable_classify.py": {
-      "sha256": "f465b69d368a3f603a087a7f058640b6832603d52be3c735953345b6696d0ec2",
+      "sha256": "9a68c0e51e366ce8dc0d9c26e74620d5b3badb7aee036edb5680024395f1bab5",
+      "mode": "100644"
+    },
+    "packaging/test_inventory_rust.py": {
+      "sha256": "b28f1cc74a8bbec069efae9500854cf8ff9709d70bcd3adbf1a5de1e5c38fec1",
       "mode": "100644"
     },
     "packaging/test_native_runtime.py": {
