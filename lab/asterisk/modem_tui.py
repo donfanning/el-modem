@@ -309,16 +309,19 @@ class ModemApp(App):
             idx=len(self.visible_ids);focus='>' if self.focus_pane=='left' and idx-1==self.modem_row else ' '
             call=state.get('call') or {}
             running=spec.id in self.supervisor.workers
+            availability=('STARTING' if running and state.get('state')=='starting' else
+                          'ONLINE' if running else 'OFFLINE')
             rows=[f"{focus} [{idx}/{len(self.supervisor.specs)}] {name} | {state.get('serial','')} | "
                   f"Ext {state.get('extension','—')} | {state.get('registration','unknown').upper()} | "
-                  f"{'ONLINE' if running else 'OFFLINE'}",
+                  f"{availability}",
                   *indicator_rows,
                   f"DSP {state.get('health',{}).get('mean_dsp_ms','—')} ms   Owner {state.get('owner','—')}   "
                   f"{call.get('speed','')}"]
             if inner<62:
                 rows[0:1]=[f"{focus} [{idx}/{len(self.supervisor.specs)}] {name}",
                            f"{state.get('serial','')} Ext {state.get('extension','—')} | "
-                           f"{state.get('registration','unknown').upper()} | {'ON' if running else 'OFF'}"]
+                           f"{state.get('registration','unknown').upper()} | "
+                           f"{'START' if availability=='STARTING' else 'ON' if running else 'OFF'}"]
             rows=[r[:inner-2] for r in rows]
             self.card_stride=len(rows)+3 # top/bottom rules plus separator before next card
             cards.append(rule+''.join('\n| '+r.ljust(inner-2)+' |' for r in rows)+'\n'+rule)

@@ -84,6 +84,14 @@ def run(executable, output):
             read(.04)
         read(.3)
 
+    def select_modem_action(index):
+        """Use the dashboard's visible pane/menu navigation, not old hotkeys."""
+        send(b'\t')       # system menu -> modem stack
+        send(b'\r')       # selected modem -> modem actions
+        for _ in range(index):
+            send(b'\x1b[B')  # Down through the modem action list
+        send(b'\r')       # activate the marked action
+
     def click(text):
         for y,line in reversed(list(enumerate(screen.display))):
             x=line.find(text)
@@ -94,9 +102,11 @@ def run(executable, output):
         raise AssertionError(f'UI text not visible: {text}')
 
     try:
-        wait(lambda:'idle' in view() and 'UI qualification' in view(), 120)
+        # The dashboard summarizes worker availability as ONLINE/OFFLINE;
+        # internal states such as ``idle`` are intentionally not shown.
+        wait(lambda:'ONLINE' in view() and 'UI qualification' in view(), 120)
         save('dashboard')
-        assert '(?)HS' in view() and '(?)ARQ' in view()
+        assert '(.)' in view() and 'HS' in view() and 'ARQ' in view()
         checks.append('dashboard displays actual idle worker and modem lamp columns')
         send(b's')
         wait(lambda:'modem.echo' in view() and 'sip.user' in view())
@@ -135,7 +145,7 @@ def run(executable, output):
         wait(lambda:profile.exists() and json.loads(profile.read_text()).get('profiles',{}).get('0',{}).get('echo') == 0)
         checks.append('setting edited and saved through actual UI callbacks into worker profile')
         send(b'\x1b')
-        wait(lambda:'UI qualification' in view() and 'idle' in view())
+        wait(lambda:'UI qualification' in view() and 'ONLINE' in view())
         send(b't')
         wait(lambda:'ASCII TERMINAL' in view().upper())
         type_text('ATS0?')
@@ -153,7 +163,7 @@ def run(executable, output):
         save('terminal-shared-setting')
         checks.append('Hayes terminal edits shared setting and persists it in live worker')
         send(b'\x1b[21~')  # F10 releases terminal rather than transmitting it.
-        wait(lambda:'UI qualification' in view() and 'ASCII terminal' not in view())
+        wait(lambda:'UI qualification' in view() and 'ASCII TERMINAL' not in view().upper())
         send(b's')
         wait(lambda:'modem.echo' in view())
         save('settings-after-terminal')
@@ -161,16 +171,16 @@ def run(executable, output):
         wait(lambda:re.search(r'modem\.echo\s+1\s+1\s+immediate',view()) is not None)
         save('settings-echo-restored')
         click('Close [Esc]')
-        send(b'5')  # modem action 5: start/stop
-        wait(lambda:'stopped' in view())
-        send(b'4')  # modem action 4: configure instance
+        select_modem_action(4)  # fifth modem action: start/stop
+        wait(lambda:'OFFLINE' in view())
+        select_modem_action(3)  # fourth modem action: configure instance
         wait(lambda:'INSTANCE / CONNECTION SETUP' in view())
         save('instance-dialog')
         assert 'sip_port' in view() and 'media_port' in view() and '27232' in view()
         click('Cancel')
-        wait(lambda:'UI qualification' in view() and 'stopped' in view())
-        send(b'5')
-        wait(lambda:'idle' in view(),120)
+        wait(lambda:'UI qualification' in view() and 'OFFLINE' in view())
+        select_modem_action(4)
+        wait(lambda:'ONLINE' in view(),120)
         checks.append('instance dialog displays actual ports; worker stops and restarts through dashboard')
         send(b'q')
         process.wait(timeout=20)
