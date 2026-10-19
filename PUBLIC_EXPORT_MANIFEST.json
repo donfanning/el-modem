@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "31e5e0c9017115f07b6e746fa95f1ef3ed68cc23",
+  "public_base_revision": "b8449b6c5a700ed47f2264919c40e44577b57fd4",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -1217,7 +1217,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_tui.py": {
-      "sha256": "18a971bc7fe1bbc16c9cc8b22922fa329f16a5db6afcbd4c27d8d2281a0e70c6",
+      "sha256": "3ffa250a50a913b5b04330d30385dabc78fc4eaf18c4f5f8e78a67b4fa2abb49",
       "mode": "100644"
     },
     "lab/asterisk/pcm_capture.py": {
@@ -1269,7 +1269,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
-      "sha256": "37de54cc9b87a7c05f7eaa989bf34385332e02492b62379c886da4aee0145548",
+      "sha256": "40d95aae10f10cbb2e1de9b99814c7ff5acf433252df4dae69008a0832388054",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_instances.py": {
@@ -1485,7 +1485,7 @@
       "mode": "100644"
     },
     "packaging/qualify_tui.py": {
-      "sha256": "ae221120669d4df02bac323a3abf640dda44de2a6df004d1b108e93824082ccb",
+      "sha256": "44ec70b47d6aca4b607dd14b4a1f6f1dcddff7fea5c48f403817c13f6cc43968",
       "mode": "100644"
     },
     "packaging/runtime_requirements.py": {

@@ -277,7 +277,7 @@ class ModemApp(App):
         if not self.dashboard_table.is_mounted:return
         cards=[]; self.visible_ids=[]
         # One bordered box per modem so several modems stay visually separate.
-        # At narrow terminal widths, split the 12 lamps into two rows of six;
+        # At narrow terminal widths, split the 12 lamps into rows that fit;
         # otherwise the fixed 60-column row overflows the two-thirds stack pane.
         # The card's rules and side borders must fit inside the widget's border
         # and padding, hence the six-column allowance below.

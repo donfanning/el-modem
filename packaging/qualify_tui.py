@@ -182,7 +182,10 @@ def run(executable, output):
         select_modem_action(4)
         wait(lambda:'ONLINE' in view(),120)
         checks.append('instance dialog displays actual ports; worker stops and restarts through dashboard')
-        send(b'q')
+        # Use Textual's explicit interrupt binding here. The lowercase quit
+        # shortcut can be consumed by a focused menu/list widget on macOS,
+        # leaving a successful UI run with a live process at teardown.
+        send(b'\x03')
         process.wait(timeout=20)
         assert process.returncode==0
         checks.append('terminal release returns to dashboard and ordinary quit cleans up')

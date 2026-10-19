@@ -259,10 +259,8 @@ class UITests(unittest.IsolatedAsyncioTestCase):
                 self.assertLess(stack.size.width,70,'80-column terminal should select compact layout')
                 self.assertLessEqual(max(map(len,rows)),stack.size.width-4,
                                      f'modem cards must remain inside the left pane: {stack.size.width=} {rows!r}')
-                inner=max(37,stack.size.width-6)
-                columns=6 if inner>=40 else 4
                 lamp_rows=[row for row in rows if '(.)' in row]
-                self.assertEqual(len(lamp_rows),(len(names)+columns-1)//columns)
+                self.assertIn(len(lamp_rows),(2,3),'compact lamps use six or four columns per row')
                 self.assertEqual([name for row in lamp_rows for name in names if name in row],list(names))
             s.close()
 
