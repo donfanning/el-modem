@@ -144,7 +144,7 @@ def run(executable, output):
         profile=output/'instances/modem-1/profiles.json'
         wait(lambda:profile.exists() and json.loads(profile.read_text()).get('profiles',{}).get('0',{}).get('echo') == 0)
         checks.append('setting edited and saved through actual UI callbacks into worker profile')
-        send(b'\x1b')
+        click('Close [Esc]')
         wait(lambda:'UI qualification' in view() and 'ONLINE' in view())
         send(b't')
         wait(lambda:'ASCII TERMINAL' in view().upper())

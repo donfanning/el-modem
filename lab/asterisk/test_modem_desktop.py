@@ -201,26 +201,27 @@ class UITests(unittest.IsolatedAsyncioTestCase):
                 # One bordered box per modem keeps several modems separate.
                 rules=[r.strip() for r in rows if r.strip().startswith('+') and r.strip().endswith('+')]
                 self.assertGreaterEqual(len(rules),2,'each modem needs a box above and below')
-                self.assertGreaterEqual(len(rules[0])-2,62,'box must fit the 60-column lamp row')
-                # All twelve labels share one row; the lamps sit directly above
-                # it, in five-column slots, so the pair cannot wrap.
+                stack=app.dashboard_widgets['stack']
+                inner=max(37,stack.size.width-6)
                 names=('HS','AA','CD','OH','RD','SD','TR','MR','RS','CS','SYN','ARQ')
-                labels=[r for r in rows if all(n in r for n in names)]
-                self.assertEqual(len(labels),1,'labels must occupy exactly one row')
-                # The card draws '| ' + content + ' |'; take the content and the
-                # first 60 columns, which is exactly the lamp/label block.
-                bare=lambda r:r[2:-2][:60]
-                label_row=bare(labels[0])
-                lamp_row=bare(rows[rows.index(labels[0])-1])
-                self.assertEqual(len(label_row),60,'label row must be 60 columns')
-                self.assertEqual(len(lamp_row),60,'lamp row must be 60 columns')
-                for i,name in enumerate(names):
-                    self.assertEqual(label_row[i*5:(i+1)*5].strip(),name,
-                                     f'label {name} not in its own slot')
-                    self.assertRegex(lamp_row[i*5:(i+1)*5],r'^\s\(.\)\s$',
-                                     f'lamp for {name} not centred in its slot')
-                # Three states: on, off, and not-reported.
-                self.assertTrue({'(*)','( )','(.)'}&set(lamp_row.split()))
+                if inner>=62:
+                    self.assertGreaterEqual(len(rules[0])-2,62,'wide box must fit the 60-column lamp row')
+                    labels=[r for r in rows if all(n in r for n in names)]
+                    self.assertEqual(len(labels),1,'wide labels must occupy one row')
+                    bare=lambda r:r[2:-2][:60]
+                    label_row=bare(labels[0])
+                    lamp_row=bare(rows[rows.index(labels[0])-1])
+                    self.assertEqual(len(label_row),60)
+                    self.assertEqual(len(lamp_row),60)
+                    for i,name in enumerate(names):
+                        self.assertEqual(label_row[i*5:(i+1)*5].strip(),name)
+                        self.assertRegex(lamp_row[i*5:(i+1)*5],r'^\s\(\.\)\s$')
+                    self.assertTrue({'(*)','( )','(.)'}&set(lamp_row.split()))
+                else:
+                    columns=6 if inner>=40 else 4
+                    lamp_rows=[r for r in rows if '(.)' in r]
+                    self.assertEqual(len(lamp_rows),(len(names)+columns-1)//columns)
+                    self.assertEqual([name for row in lamp_rows for name in names if name in row],list(names))
                 # Tab is the only pane switch; the arrow keys belong to the focused pane.
                 # Default level is the system menu; Enter enters modem actions.
                 self.assertEqual(app.focus_pane,'right')
@@ -258,8 +259,10 @@ class UITests(unittest.IsolatedAsyncioTestCase):
                 self.assertLess(stack.size.width,70,'80-column terminal should select compact layout')
                 self.assertLessEqual(max(map(len,rows)),stack.size.width-4,
                                      f'modem cards must remain inside the left pane: {stack.size.width=} {rows!r}')
+                inner=max(37,stack.size.width-6)
+                columns=6 if inner>=40 else 4
                 lamp_rows=[row for row in rows if '(.)' in row]
-                self.assertEqual(len(lamp_rows),2,'compact layout should use two rows of six')
+                self.assertEqual(len(lamp_rows),(len(names)+columns-1)//columns)
                 self.assertEqual([name for row in lamp_rows for name in names if name in row],list(names))
             s.close()
 

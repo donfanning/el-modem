@@ -298,11 +298,12 @@ class ModemApp(App):
                 labels=''.join(f' {n}  ' for n in names)
                 indicator_rows=[lamps,labels]
             else:
-                # Compact layout: labelled indicators in two rows of six.
-                # Six columns need at most 37 characters (SYN and ARQ are
-                # three characters); this fits the left pane at 80 columns.
-                indicator_rows=[' '.join(f'{lamp(n)}{n}' for n in names[start:start+6])
-                                for start in (0,6)]
+                # Compact layout: use six columns when they fit, otherwise
+                # three rows of four. ARQ takes one extra column, so the
+                # narrowest card must not truncate the final indicator.
+                columns=6 if inner>=40 else 4
+                indicator_rows=[' '.join(f'{lamp(n)}{n}' for n in names[start:start+columns])
+                                for start in range(0,len(names),columns)]
             try: name=self.supervisor.effective(spec).name
             except (ValueError,OSError,TypeError): name=spec.name
             self.visible_ids.append(spec.id)
