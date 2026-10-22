@@ -9,7 +9,17 @@ import time
 _PACKAGING=Path(__file__).resolve().parents[2]/'packaging'
 if _PACKAGING.is_dir(): sys.path.insert(0,str(_PACKAGING))
 
-EXPERIMENT_ENV=('V34_GAP_FEEDBACK','V34_EQUALIZER_BACKEND')   # off unless set; observe|hold of the concealed-sample feedback guard (lab experiment)
+WORKER_PASSTHROUGH_ENV=(
+    'V34_GAP_FEEDBACK', 'V34_EQUALIZER_BACKEND',
+    'V32_NUMPY_METRICS',
+    'EL_MODEM_WINDOWS_TIMER_RESOLUTION_MS',
+    'EL_MODEM_TIMING_TRACE',
+)  # explicitly opted-in experiments/diagnostics; all other modem env is scrubbed
+
+
+def worker_passthrough_environment(environ):
+    """Return the small, explicit set of parent settings workers may inherit."""
+    return {key: environ[key] for key in WORKER_PASSTHROUGH_ENV if key in environ}
 
 def worker(path,fd=None):
     import signal
@@ -17,7 +27,7 @@ def worker(path,fd=None):
     from native_runtime import NATIVE_ENV
     from modem_settings import ENV
     document=json.loads(Path(path).read_text()); spec=document['spec']; directory=Path(document['directory'])
-    experiment={key:os.environ[key] for key in EXPERIMENT_ENV if key in os.environ}   # deliberate opt-in research switches survive the scrub
+    experiment=worker_passthrough_environment(os.environ)  # deliberate opt-ins survive the scrub
     for key in list(os.environ):
         if key.startswith(('V34_','MODEM_','EL_MODEM_')): del os.environ[key]
     os.environ.update(NATIVE_ENV)

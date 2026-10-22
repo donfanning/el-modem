@@ -6,9 +6,39 @@ import threading
 from unittest.mock import patch
 from runtime_timing import TimingTrace
 from modem_dce import OnlineAudioSession
+from el_modem import worker_passthrough_environment
 
 
 class TimingTraceTests(unittest.TestCase):
+    def test_opt_in_timer_setting_survives_supervisor_worker_scrub(self):
+        settings = worker_passthrough_environment({
+            'EL_MODEM_WINDOWS_TIMER_RESOLUTION_MS': '1',
+            'EL_MODEM_TIMING_TRACE': '1',
+            'EL_MODEM_UNRELATED_SETTING': 'must-not-leak',
+            'V34_EQUALIZER_BACKEND': 'python',
+            'V32_NUMPY_METRICS': '1',
+        })
+        self.assertEqual(settings, {
+            'EL_MODEM_WINDOWS_TIMER_RESOLUTION_MS': '1',
+            'EL_MODEM_TIMING_TRACE': '1',
+            'V34_EQUALIZER_BACKEND': 'python',
+            'V32_NUMPY_METRICS': '1',
+        })
+
+    def test_scoped_windows_timer_request_is_visible_and_released_on_stop(self):
+        sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        self.addCleanup(sock.close)
+        with patch.dict('os.environ', {'EL_MODEM_WINDOWS_TIMER_RESOLUTION_MS':'1'}):
+            session=OnlineAudioSession(sock,('127.0.0.1',9),'originate','answer')
+        session.start()
+        try:
+            self.assertIn(session._timer_resolution_request.report()['status'],
+                          ('active','unsupported_platform'))
+        finally:
+            session.stop()
+        self.assertIn(session.link_stats()['windows_timer_resolution']['status'],
+                      ('released','unsupported_platform'))
+
     def test_watchdog_captures_live_blocked_stage_and_preserves_packet(self):
         sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         sink=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)

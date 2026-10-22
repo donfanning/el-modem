@@ -294,6 +294,10 @@ class V32Modem(V42Layer):
         from v34_retrain_budget import RetrainBudget
         self._retrain_budget = RetrainBudget()
         self._retrain_untrusted_samples = 0
+        # A single contiguous concealed-media gap is a concrete indication of
+        # an unsatisfactory receive signal.  Keep the policy configurable so
+        # deployments can disable it (0) or tune it to their media path.
+        self._auto_loss_retrain_ms = max(0, int(os.environ.get("V32_AUTO_LOSS_RETRAIN_MS", "160")))
         self._retrain_history = deque(maxlen=8)
         self._retrain_rx_hold = []
         self._event_offset = 0.0
@@ -666,7 +670,15 @@ class V32Modem(V42Layer):
         return out
 
     def note_concealed_rx(self, n):
+        n = max(0, int(n))
         self.note_transport_discontinuity_rx(n)
+        threshold = self._auto_loss_retrain_ms * self.fs // 1000
+        if (threshold and n >= threshold and self.connected and self.state == 'data'
+                and self.v42_mode == 'lapm' and not self._retraining
+                and not (self._rrp and self._rrp.active)):
+            duration_ms = 1000 * n / self.fs
+            with self._line_lock:
+                self._restart_line(f'concealed media gap {duration_ms:.0f} ms')
 
     def note_transport_discontinuity_rx(self, n=0):
         """Invalidate delivery proof on concealed, duplicate, late or reset RTP."""

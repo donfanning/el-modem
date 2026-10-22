@@ -8,6 +8,8 @@ the normative rounding rules; trellis detection is implemented in v34_viterbi.
 from __future__ import annotations
 
 import math
+import os
+from collections import deque
 
 import numpy as np
 
@@ -15,6 +17,75 @@ import v34_data as vd
 import v34_rx
 
 FS = 8000
+
+# Bounded opt-in trace for diagnosing post-B1 transport gaps. It stores decoder
+# coordinates/states and error deltas, never payload bits or audio samples.
+DATA_STATE_TRACE_ENABLED = os.environ.get('V34_DATA_STATE_TRACE') == '1'
+
+
+class _DataStateTrace:
+    PRE_FRAMES = 32
+    POST_FRAMES = 256
+    MAX_GAPS = 8
+
+    def __init__(self):
+        self.recent = deque(maxlen=self.PRE_FRAMES)
+        self.gaps = []
+        self.active = None
+
+    def mark_gap(self, start, count, core):
+        event = dict(receive_sample=int(start), concealed_samples=int(count),
+                     rx_sample_at_mark=int(getattr(core, 'rx_t', 0)),
+                     pre_frames=list(self.recent), post_frames=[])
+        if len(self.gaps) >= self.MAX_GAPS:
+            self.gaps.pop(0)
+        self.gaps.append(event)
+        self.active = event
+
+    def record(self, row):
+        self.recent.append(row)
+        if self.active is not None:
+            self.active['post_frames'].append(row)
+            if len(self.active['post_frames']) >= self.POST_FRAMES:
+                self.active = None
+
+    def report(self):
+        return dict(enabled=True, coordinate='V.34 receive symbol / core PCM sample',
+                    payload_or_audio_captured=False, pre_frames=self.PRE_FRAMES,
+                    post_frames=self.POST_FRAMES, gaps=self.gaps)
+
+
+def mark_data_state_gap(core, start, count):
+    if DATA_STATE_TRACE_ENABLED:
+        trace = getattr(core, '_data_state_trace', None)
+        if trace is None:
+            trace = core._data_state_trace = _DataStateTrace()
+        trace.mark_gap(start, count, core)
+
+
+def begin_data_state_frame(core, eq, drx, states, trellis_quality=None):
+    if not DATA_STATE_TRACE_ENABLED:
+        return None
+    if getattr(core, '_data_state_trace', None) is None:
+        core._data_state_trace = _DataStateTrace()
+    eq_state = eq.timing_snapshot() if hasattr(eq, 'timing_snapshot') else None
+    return dict(rx_sample=int(getattr(core, 'rx_t', 0)), symbol=int(eq.k),
+                equalizer_state=eq_state,
+                mapping_frame=int(drx.frame_pos),
+                mapper_m4=int(drx.m4), mapper_rotation=int(drx.z),
+                precoder_history=[[float(complex(x).real), float(complex(x).imag)] for x in drx.x_hist],
+                viterbi_emission_quality=trellis_quality,
+                mapper_state_before=list(drx.conv.d), mapper_errors_before=int(drx.errors),
+                survivor_states=None if states is None else [int(s) for s in states])
+
+
+def end_data_state_frame(core, token, drx):
+    if token is None:
+        return
+    token.update(mapper_state_after=list(drx.conv.d), mapper_errors_after=int(drx.errors),
+                 mapper_m4_after=int(drx.m4), mapper_rotation_after=int(drx.z),
+                 precoder_history_after=[[float(complex(x).real), float(complex(x).imag)] for x in drx.x_hist])
+    core._data_state_trace.record(token)
 
 
 def inverse_shell(sm: vd.ShellMapper, rings: list[int]) -> int:

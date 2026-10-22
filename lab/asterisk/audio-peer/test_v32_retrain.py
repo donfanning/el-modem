@@ -2,6 +2,7 @@
 import struct
 import random
 import unittest
+from unittest.mock import patch
 from collections import deque
 from v32_stream import V32Modem
 from v32_answer import V32Answerer
@@ -34,6 +35,30 @@ class Pair:
 
 
 class RetrainTests(unittest.TestCase):
+    def test_concealed_media_uses_160ms_single_gap_threshold_only_in_lapm(self):
+        with patch.dict('os.environ', {'V32_AUTO_LOSS_RETRAIN_MS': '160'}):
+            m=V32Modem(use_v8=False,echo=False)
+        m.connected=True;m.state='data';m.v42_mode='lapm'
+        with patch.object(m, '_restart_line') as restart:
+            m.note_concealed_rx(1279)
+            restart.assert_not_called()
+            m.note_concealed_rx(1280)
+            restart.assert_called_once()
+            self.assertIn('concealed media gap 160 ms', restart.call_args.args[0])
+
+        with patch.object(m, '_restart_line') as restart:
+            m.v42_mode='none'
+            m.note_concealed_rx(1600)
+            restart.assert_not_called()
+
+    def test_concealed_media_retrain_can_be_disabled(self):
+        with patch.dict('os.environ', {'V32_AUTO_LOSS_RETRAIN_MS': '0'}):
+            m=V32Modem(use_v8=False,echo=False)
+        m.connected=True;m.state='data';m.v42_mode='lapm'
+        with patch.object(m, '_restart_line') as restart:
+            m.note_concealed_rx(1600)
+            restart.assert_not_called()
+
     def test_same_initiator_retrains_three_times_with_verified_lapm_and_budget_renewal(self):
         for role in ('call', 'answer'):
             with self.subTest(role=role):

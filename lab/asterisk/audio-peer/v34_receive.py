@@ -224,6 +224,7 @@ class Receiver:
             start_state=tuple(d.conv.d) if start else self.initial_state,
             m4_start=d.m4 if start else 0,precoder=self.h,w=self.tx.w,
             nonlinear=self.profile.nonlinear,energy=self.energy,
+            erasure_hold=os.environ.get('V34_GAP_TRELLIS_HOLD')=='1',
             x_hist=d.x_hist if start else None,trace=trace)
         # Qualification diagnostics retain every interval. Ordinary native
         # streaming uses only bounded traceback; opt-in tracing still records.
@@ -231,6 +232,7 @@ class Receiver:
             detector.record_snapshots=False
         if start:
             detector.emit_states = os.environ.get('V34_SURVIVOR_STATE_SYNC') == '1'
+            detector.emit_metrics = os.environ.get('V34_DATA_STATE_TRACE') == '1'
         return detector
 
     def qualify(self, observed, *, trace=False):
@@ -399,6 +401,13 @@ def initialize(engine, eq, remote_role, baud, policy=None):
     # Every allowed rate gets the same state/boundary search, ranked only on
     # calibration samples. Expected held-out bits never select a candidate.
     score,selected_profile,state,shift,observed=min(candidates,key=lambda q:q[0])
+    if (os.environ.get('V34_GAP_TRELLIS_ERASURE')=='1'
+            and any(selected_profile.precoder)):
+        reason='V34 gap trellis erasure experiment requires a zero precoder'
+        engine.rx_qualification={'profile':asdict(selected_profile),'qualified':False,
+            'reason':reason,'search_evidence':search_evidence}
+        engine.failed_reason=reason
+        return False
     receiver=Receiver(selected_profile,remote_role,state)
     receiver.diagnostics.update(search_evidence)
     receiver.diagnostics.update(differential_convention='continued' if any(state) else 'reset',
@@ -449,7 +458,8 @@ def initialize(engine, eq, remote_role, baud, policy=None):
     eq.adapt=True
     receiver.diagnostics['timing_at_data_start']=eq.timing_snapshot()
     engine._rx_state={'drx':receiver.drx,'receiver':receiver,'vit':receiver.vit,
-        'hist':receiver.bits[-23:],'bits':[],'ys':[],'pend':[],'frames':0,'ones':[0,0]}
+        'hist':receiver.bits[-23:],'bits':[],'ys':[],'ys_tainted':[],
+        'pend':[],'frames':0,'ones':[0,0]}
     if os.environ.get('V34_QUALITY_MONITOR') == '1' or os.environ.get('V34_AUTO_RATE') == '1':
         from v34_transport import held_symbols
         engine._rx_state['quality'] = DataQuality(receiver.vit, receiver.profile, baud,

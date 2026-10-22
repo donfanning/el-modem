@@ -13,6 +13,24 @@ from v34_streaming import update_data_baseband
 
 
 class TransportFeedbackTests(unittest.TestCase):
+    def test_trellis_erasure_opt_in_enables_observation_and_marks_tainted_windows(self):
+        R=Phase3Rx(3200,1800);R.lag=0.;R.delay=0.;R._span=12
+        R.taps=np.zeros(24,complex);R.taps[12]=1.;R._z=np.ones(2000,complex)
+        R._pcm_source_offset=10000
+        with patch.dict('os.environ',{'V34_GAP_FEEDBACK':'0','V34_GAP_TRELLIS_ERASURE':'1',
+                                      'V34_INPUT_POWER_GUARD':'0'}):
+            eq=SymbolEq(R,150)
+        self.assertEqual(eq._transport_guard.mode,'observe')
+        center=eq.R._pcm_source_offset+eq.R.lag+(eq.R.LEAD+eq.k+eq.R.delay)*eq.R.spl+eq.dt
+        eq._transport_guard.add(int(center),160)
+        self.assertTrue(eq.last_transport_tainted is False)
+        eq.step(decide=lambda y:1+0j)
+        self.assertTrue(eq.last_transport_tainted)
+        eq._transport_guard.record_trellis_erasure(0)
+        report=eq._transport_guard.report()
+        self.assertEqual(report['trellis_erasure_intervals'],1)
+        self.assertEqual(report['first_trellis_erasure'],0)
+
     def eq(self, mode='hold', timing='centroid'):
         R=Phase3Rx(3200,1800);R.lag=0.;R.delay=0.;R._span=12
         R.taps=np.zeros(24,complex);R.taps[12]=1.;R._z=np.ones(2000,complex)

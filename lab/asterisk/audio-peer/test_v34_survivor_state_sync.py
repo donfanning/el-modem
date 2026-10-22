@@ -22,10 +22,15 @@ class SurvivorStateTests(unittest.TestCase):
         symbols = [s for bits in frames for s in tx.data_frame(bits)]
         det = TrellisDetector(4*tx.M*2**tx.q, tx.J, tx.P, backend=backend)
         det.emit_states = True
+        det.emit_metrics = True
         for a, b in zip(symbols[::2], symbols[1::2]):
             det.feed(a, b)
         det.flush()
         self.assertEqual(len(det.decided_states), len(det.decided))
+        self.assertEqual(len(det.decided_metrics), len(det.decided))
+        self.assertEqual([m['decision_interval'] for m in det.decided_metrics],
+                         sorted(m['decision_interval'] for m in det.decided_metrics))
+        self.assertTrue(all(m['survivor_gap'] >= 0 for m in det.decided_metrics))
         self.assertEqual(det.decided_states, [s['state_before'] for s in det.snapshots])
         plain, corrected = DataRx(33600, 3429), DataRx(33600, 3429)
         plain.conv.d = corrected.conv.d = [1, 1, 1, 1]

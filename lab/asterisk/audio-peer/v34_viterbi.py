@@ -15,7 +15,7 @@ import v34_data as vd
 
 
 class TrellisDetector:
-    def __init__(self, L: int, J: int, P: int, depth: int = 24, start_state=(0, 0, 0, 0), m4_start: int = 0, precoder=None, w=1, nonlinear=False, energy=1.0, x_hist=None, trace=False, backend=None):
+    def __init__(self, L: int, J: int, P: int, depth: int = 24, start_state=(0, 0, 0, 0), m4_start: int = 0, precoder=None, w=1, nonlinear=False, energy=1.0, x_hist=None, trace=False, backend=None, erasure_hold=False):
         self.backend=backend or ('numba' if os.environ.get('V34_NATIVE_TRELLIS')=='1' else 'python')
         if self.backend not in ('python','numba'):raise ValueError('unknown trellis backend')
         self.pts, self.lab, self.par = [], [], []
@@ -68,13 +68,23 @@ class TrellisDetector:
         self.metric = np.full(16, 1e18)
         self.metric[s0] = 0.0
         self.hist: list[dict] = []
+        self.erasure_hold = bool(erasure_hold)
+        self._gap_hold_active = False
+        self._gap_hold_base_depth = depth
+        self._gap_erased_intervals = 0
+        self._gap_clean_intervals = 0
+        self._gap_hold_capacity = 512
+        self._gap_hold_limited = False
         self.decided: list[tuple[complex, complex]] = []
         self.emit_states = False
         self.decided_states: list[int] = []
+        self.emit_metrics = False
+        self.decided_metrics: list[dict] = []
         self.snapshots: list[dict] = []     # per decided interval: surviving state + metric, for offline reachability checks
         self.record_snapshots=True
         self.trace = [] if trace else None  # opt-in; retained even after flush
         self.metric_offset = 0.0
+        self.erased_intervals=0
         self.h = list(precoder) if precoder is not None else [0j]*3
         self.x_hist = list(x_hist) if x_hist is not None else [0j]*3
         self.w, self.nonlinear, self.energy = w, nonlinear, energy
@@ -95,7 +105,8 @@ class TrellisDetector:
                 raise ValueError('native trellis cannot honour overridden detector methods: '
                                  +', '.join(overridden)+'; use backend=\'python\'')
             self._native_labels=layouts(self.pts)
-            self._native_previous=np.empty((self.depth+1,16),np.int64)
+            capacity = self._gap_hold_capacity if self.erasure_hold else self.depth + 1
+            self._native_previous=np.empty((max(self.depth+1,capacity),16),np.int64)
 
     def _layout(self, c):
         # Figure 9 repeats every eight coordinate units.
@@ -143,29 +154,42 @@ class TrellisDetector:
         self.x_hist = [u+c-p] + self.x_hist[:2]
         return x+p-c, c, c-p
 
-    def feed(self, y0: complex, y1: complex) -> None:
+    def feed(self, y0: complex, y1: complex, *, erasure: bool = False) -> None:
+        if self.erasure_hold:
+            self._update_erasure_hold(bool(erasure))
         interval = self.m4
         metric_before = self.metric.copy()
         history_before = list(self.x_hist)
+        if erasure and any(self.h):
+            raise ValueError('trellis erasure experiment requires a zero precoder')
         v0 = 0
         P2 = 2 * self.P
         if self.m4 % P2 == 0:
             v0 = self._inv[(self.m4 // P2 + self.inv_offset) % len(self._inv)]
         self.m4 += 1
         if self.backend=='numba':
-            return self._native_feed(y0,y1,interval,v0,metric_before,history_before)
+            return self._native_feed(y0,y1,interval,v0,metric_before,history_before,erasure)
         wave0,wave1=y0,y1
         y0, c0, delta0 = self._unprecode(y0)
         y1, c1, delta1 = self._unprecode(y1)
         b0 = self._best(y0, c0, wave0, delta0)
         b1 = self._best(y1, c1, wave1, delta1)
         cost = np.zeros((2, 8, 8))
+        reachable = np.zeros((2, 8, 8),dtype=bool) if erasure else None
         par0 = np.zeros((2, 8, 8), dtype=int)
         for U in (0, 1):
             a = b0[:, 0][:, None] + b1[:, 0 ^ U][None, :]
             b = b0[:, 1][:, None] + b1[:, 1 ^ U][None, :]
             par0[U] = (b < a)
             cost[U] = np.minimum(a, b)
+            # Keep constellation-impossible subset/parity transitions out of
+            # an erasure. A neutral observation metric is zero only where at
+            # least one symbol-pair parity has actual constellation points.
+            if erasure:reachable[U]=(a<1e18)|(b<1e18)
+        observation_cost=cost.copy() if erasure else None
+        if erasure:
+            cost=np.where(reachable,0.0,cost)
+            self.erased_intervals+=1
         Us = self.y0 ^ v0 ^ vd.modulo_bit(c0, c1)                                   # U0 for each state
         flat = (self.metric[:, None, None] + cost[Us]).reshape(-1)
         cand_cost = flat[self._cand]                        # (16, 64)
@@ -181,24 +205,28 @@ class TrellisDetector:
         self.metric_offset += normalization
         self.metric = new
         h = {"prev": prev, "s0": bs0, "s1": bs1, "p0": bp0, "y0": y0, "y1": y1, "U": Us, "c0": c0, "c1": c1, "wave0":wave0,"wave1":wave1,"delta0":delta0,"delta1":delta1,
+             "erasure":bool(erasure),
              "interval": interval, "metric_before": metric_before, "metric_after": new.copy()}
         self.hist.append(h)
         if self.trace is not None:
-            self.trace.append(dict(h, branch_cost=cost.copy(), parity_choice=par0.copy(),
+            self.trace.append(dict(h, branch_cost=cost.copy(), observation_branch_cost=observation_cost,
+                parity_choice=par0.copy(),
                 best0=b0.copy(), best1=b1.copy(), inversion_bit=v0,
                 x_hist_before=history_before, metric_normalization=normalization,
                 cumulative_metric_offset=self.metric_offset))
         if len(self.hist) > self.depth:
             self._decide()
 
-    def _native_feed(self,wave0,wave1,interval,v0,metric_before,history_before):
+    def _native_feed(self,wave0,wave1,interval,v0,metric_before,history_before,erasure=False):
         from v34_trellis_native import advance
         ys,cs,delta,history,best,indices,cost,parity,Us,new,prev,s0,s1,p0,normalization=advance(
-            self,wave0,wave1,v0,self._native_labels)
+            self,wave0,wave1,v0,self._native_labels,erasure=erasure)
+        if erasure:self.erased_intervals+=1
         self.x_hist=list(history);self.metric=new;self.metric_offset+=normalization
         h=dict(prev=prev,s0=s0,s1=s1,p0=p0,y0=ys[0],y1=ys[1],U=Us,
             c0=cs[0],c1=cs[1],wave0=wave0,wave1=wave1,delta0=delta[0],delta1=delta[1],
-             interval=interval,metric_before=metric_before,metric_after=new.copy(),native_indices=indices)
+             interval=interval,metric_before=metric_before,metric_after=new.copy(),native_indices=indices,
+             erasure=bool(erasure))
         self.hist.append(h)
         self._native_previous[interval%len(self._native_previous)]=prev
         if self.trace is not None:
@@ -207,6 +235,39 @@ class TrellisDetector:
                 x_hist_before=history_before,metric_normalization=normalization,
                 cumulative_metric_offset=self.metric_offset))
         if len(self.hist)>self.depth:self._decide()
+
+    def _update_erasure_hold(self, erasure: bool) -> None:
+        """Delay traceback commits across an erased span and a clean recovery tail."""
+        if erasure:
+            if not self._gap_hold_active:
+                self._gap_hold_active = True
+                self._gap_hold_base_depth = self.depth
+                self._gap_erased_intervals = 0
+                self._gap_clean_intervals = 0
+            self._gap_erased_intervals += 1
+            self._gap_clean_intervals = 0
+        elif self._gap_hold_active:
+            self._gap_clean_intervals += 1
+
+        if not self._gap_hold_active:
+            return
+        base = self._gap_hold_base_depth
+        if self._gap_clean_intervals >= base:
+            # The enlarged traceback now contains the complete erased span plus
+            # one ordinary depth of post-gap observations. Retain that buffered
+            # history and return the configured depth for subsequent episodes.
+            self.depth = base
+            self._gap_hold_active = False
+            self._gap_erased_intervals = 0
+            self._gap_clean_intervals = 0
+        else:
+            # Keep the full post-gap lookahead while clean observations rebuild
+            # enough evidence to disambiguate the erased path.
+            requested = base + self._gap_erased_intervals + base
+            maximum = self._gap_hold_capacity - 1
+            if requested > maximum:
+                self._gap_hold_limited = True
+            self.depth = min(requested, maximum)
 
     def _chosen_pair(self,h,s0,s1,p0,U0):
         if 'native_indices' in h:
@@ -239,6 +300,12 @@ class TrellisDetector:
         self.decided.append(self._chosen_pair(h,s0,s1,p0,U0))
         if self.emit_states:
             self.decided_states.append(before)
+        if self.emit_metrics:
+            ordered = np.partition(self.metric, 1)
+            self.decided_metrics.append(dict(
+                decision_interval=int(h['interval']), lookahead_interval=int(self.m4 - 1),
+                survivor_gap=float(ordered[1] - ordered[0]),
+                metric_spread=float(ordered[-1] - ordered[0])))
         if self.record_snapshots:
             self.snapshots.append(self._snapshot(h, s0, s1, p0, U0, before, after))
         self.hist.pop(0)
@@ -250,6 +317,12 @@ class TrellisDetector:
             self.decided.append(self._chosen_pair(h,s0,s1,p0,U0))
             if self.emit_states:
                 self.decided_states.append(before)
+            if self.emit_metrics:
+                ordered = np.partition(self.metric, 1)
+                self.decided_metrics.append(dict(
+                    decision_interval=int(h['interval']), lookahead_interval=int(self.m4 - 1),
+                    survivor_gap=float(ordered[1] - ordered[0]),
+                    metric_spread=float(ordered[-1] - ordered[0])))
             if self.record_snapshots:
                 self.snapshots.append(self._snapshot(h, s0, s1, p0, U0, before, after))
             self.hist.pop(0)

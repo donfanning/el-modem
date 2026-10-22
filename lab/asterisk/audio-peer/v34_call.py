@@ -298,6 +298,7 @@ class V34Caller:
         """The receiver replaced ``n`` lost samples starting at ``start`` (this caller's rx_t clock) with concealment audio."""
         from v34_transport import note_concealed
         note_concealed(self,start,n)
+        v34_datarx.mark_data_state_gap(self,start,n)
         self._concealed.append((int(start), int(n)))
         if len(self._concealed) > 256:
             del self._concealed[:-256]
@@ -1199,18 +1200,31 @@ class V34Caller:
         st = self._rx_state
         drx = st["drx"]
         vit = st.get("vit")
+        trellis_erasure=os.environ.get('V34_GAP_TRELLIS_ERASURE')=='1'
         limit = rate_controller.limit(eq.available()) if rate_controller is not None else eq.available()
         while eq.k < limit:
             y = eq.step(decide=self._decide)
             if vit is not None:
                 st["ys"].append(y)
+                if trellis_erasure:
+                    st.setdefault("ys_tainted",[]).append(bool(getattr(eq,"last_transport_tainted",False)))
                 if len(st["ys"]) == 2:
-                    vit.feed(st["ys"][0], st["ys"][1])
+                    if trellis_erasure:
+                        erasure=any(st["ys_tainted"])
+                        interval=vit.m4
+                        vit.feed(st["ys"][0], st["ys"][1],erasure=erasure)
+                        if erasure and getattr(eq,'_transport_guard',None) is not None:
+                            eq._transport_guard.record_trellis_erasure(interval)
+                        st["ys_tainted"] = []
+                    else:
+                        vit.feed(st["ys"][0], st["ys"][1])
                     st["ys"] = []
                 while vit.decided:
                     u0, u1 = vit.decided.pop(0)
                     if vit.emit_states:
                         st.setdefault('pend_states', []).append(vit.decided_states.pop(0))
+                    if vit.emit_metrics:
+                        st.setdefault('pend_metrics', []).append(vit.decided_metrics.pop(0))
                     st["pend"] += [u0, u1]
                     if len(st["pend"]) == 8:
                         self._data_frame(st, st["pend"], drx)
@@ -1226,8 +1240,13 @@ class V34Caller:
 
     def _data_frame(self, st, syms, drx) -> None:
         states = st.pop('pend_states', None)
+        metrics = st.pop('pend_metrics', None)
+        eq=getattr(getattr(self,'_p4rcv',None),'eq',None)
+        vit=st.get('vit')
+        trace_token=v34_datarx.begin_data_state_frame(self,eq,drx,states,metrics) if eq is not None and vit is not None else None
         bits, worst = (drx.decode_frame(syms, trellis_states=states) if states is not None
                        else drx.decode_frame(syms))
+        if trace_token is not None:v34_datarx.end_data_state_frame(self,trace_token,drx)
         st["frames"] += 1
         raw = v34_datarx.descramble_stream(bits, st["hist"][-23:], "answer")
         st["hist"] = (st["hist"] + bits)[-23:]

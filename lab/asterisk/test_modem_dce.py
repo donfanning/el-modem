@@ -1345,6 +1345,69 @@ class V32SessionTests(unittest.TestCase):
             sock.close()
             peer.close()
 
+    def test_v32_session_delivers_exact_data_across_short_rtp_loss_bursts(self) -> None:
+        """Exercise the production V.32 RTP gap filler on known simulator audio.
+
+        A 40 ms reorder window absorbs short reordering; any remaining timestamp
+        gap is filled before the V.32 receiver sees later audio. This proves
+        sample-clock continuity for these controlled bursts, not LAPM or
+        real-network qualification.
+        """
+        import socket
+        import struct as st
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "audio-peer"))
+        import v32_sim_rx as sim
+
+        scenarios = {
+            "clean": set(),
+            "single_at_100": {100},
+            "two_at_100": {100, 101},
+            "five_at_100": set(range(100, 105)),
+            "single_at_200": {200},
+            "two_at_200": {200, 201},
+            "five_at_200": set(range(200, 205)),
+        }
+        for rate in (4800, 7200, 9600, 12000, 14400):
+            audio, expected = sim.make_stream(
+                rate=rate, text=b"V32 controlled RTP loss test payload.\r\n" * 4
+            )
+            for name, dropped in scenarios.items():
+                with self.subTest(rate=rate, name=name):
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.bind(("127.0.0.1", 0))
+                    peer.bind(("127.0.0.1", 0))
+                    session = OnlineAudioSession(
+                        sock, peer.getsockname(), "originate", "answer",
+                        line_mode="v32", v32_rates=(rate,)
+                    )
+                    modem = session._v22
+                    modem.state, modem._tx_started, modem._tx_tm0 = "tx", True, 0
+                    modem._rx_mode, modem._resume_at, modem._echo_state = "locate2", 0.6, "done"
+                    got = bytearray()
+                    seq = timestamp = 0
+                    try:
+                        for i in range(0, len(audio) - 160, 160):
+                            payload = bytes(
+                                linear_to_ulaw(max(-32768, min(32767, int(round(v)))))
+                                for v in audio[i : i + 160]
+                            )
+                            modem._txn += 160
+                            if seq not in dropped:
+                                packet = st.pack("!BBHII", 0x80, 0, seq, timestamp, 1234) + payload
+                                got.extend(session.handle_rtp_packet(packet))
+                            seq += 1
+                            timestamp += 160
+                        self.assertEqual(session.line_speed, rate)
+                        self.assertTrue(session.negotiation_complete)
+                        self.assertFalse(session.failed)
+                        self.assertEqual(bytes(got), expected)
+                        self.assertEqual(session._rtp_counts["concealed_samples"], 160 * len(dropped))
+                    finally:
+                        session.stop()
+                        sock.close()
+                        peer.close()
+
     def test_v32_session_can_answer_and_places_calls_with_the_caller(self) -> None:
         import socket
 

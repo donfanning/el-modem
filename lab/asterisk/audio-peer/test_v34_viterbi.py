@@ -35,6 +35,41 @@ def run(rate, baud, noise, seed=1, frames=6):
 
 @unittest.skipIf(np is None, "numpy not installed")
 class ViterbiTests(unittest.TestCase):
+    def test_gap_erasure_neutralizes_survivor_metric_only_for_marked_pair(self):
+        det=vv.TrellisDetector(16,8,15,backend='python',trace=True)
+        det.feed(1+1j,3-2j)
+        det.feed(4-1j,2+5j,erasure=True)
+        det.feed(2+3j,-3+1j)
+        self.assertEqual(det.erased_intervals,1)
+        self.assertFalse(det.trace[0]['erasure'])
+        self.assertTrue(det.trace[1]['erasure'])
+        erased_cost=det.trace[1]['branch_cost']
+        self.assertTrue(np.isin(erased_cost,(0.,1e18)).all())
+        self.assertTrue(np.any(erased_cost==0.))
+        self.assertTrue(np.any(erased_cost==1e18))  # impossible constellation branches stay impossible
+        self.assertGreater(float(np.max(det.trace[1]['observation_branch_cost'])),0.)
+        self.assertFalse(det.trace[2]['erasure'])
+        self.assertEqual(det.m4,3)  # erasure does not pause trellis time
+
+    def test_gap_erasure_refuses_precoded_feedback_history(self):
+        det=vv.TrellisDetector(16,8,15,precoder=[.125,0j,0j])
+        with self.assertRaisesRegex(ValueError,'zero precoder'):
+            det.feed(1+1j,2+2j,erasure=True)
+
+    def test_erasure_hold_waits_for_a_clean_traceback_tail(self):
+        det=vv.TrellisDetector(16,8,15,depth=3,backend='python',erasure_hold=True)
+        for _ in range(3):det.feed(1+1j,2-1j)
+        committed_before=len(det.decided)
+        for _ in range(4):det.feed(1+1j,2-1j,erasure=True)
+        self.assertEqual(len(det.decided),committed_before)
+        self.assertEqual(det.depth,10)  # base depth + 4 erased + 3 clean lookahead
+        for _ in range(2):det.feed(1+1j,2-1j)
+        self.assertEqual(len(det.decided),committed_before)
+        det.feed(1+1j,2-1j)
+        self.assertEqual(len(det.decided),committed_before+1)
+        self.assertEqual(det.depth,3)
+        self.assertEqual(len(det.hist),9)  # retain delayed history; no gap-time flush
+
     def test_trace_survives_flush_without_changing_decisions(self):
         tx=d.DataTx(9600,3200,True)
         symbols=tx.data_frame([i%2 for i in range(tx.bits_per_data_frame)])

@@ -38,6 +38,7 @@ from pcm_capture import capture_from_env  # noqa: E402
 from sip_uac import SipOriginateCall  # noqa: E402
 from sip_uas import SipIncomingCallServer  # noqa: E402
 from iax_transport import IaxMediaSocket, IaxTransport  # noqa: E402
+from windows_timer import TimerResolutionRequest  # noqa: E402
 
 MAX_COMMAND_BYTES = 256
 PRODUCT = "EL-MODEM"
@@ -434,6 +435,7 @@ class OnlineAudioSession:
         self._timestamp = 0
         self._ssrc = int.from_bytes(os.urandom(4), "big")
         self._stop = threading.Event()
+        self._timer_resolution_request = TimerResolutionRequest.from_environment()
         from v34_realtime import RealtimeStats
         self.realtime=RealtimeStats()
         from runtime_timing import TimingTrace
@@ -505,9 +507,19 @@ class OnlineAudioSession:
         state['end_collect_ms'] = round((time.monotonic() - started) * 1000, 1)
 
     def start(self) -> None:
-        self._gc_pause_begin()
-        self._thread.start()
-        if self._tx_watchdog is not None:self._tx_watchdog.start()
+        if self._timer_resolution_request is not None:
+            self._timer_resolution_request.start()
+        try:
+            self._gc_pause_begin()
+            self._thread.start()
+            if self._tx_watchdog is not None:self._tx_watchdog.start()
+        except BaseException:
+            self._stop.set()
+            if self._thread.is_alive():self._thread.join(timeout=1)
+            self._gc_pause_end()
+            if self._timer_resolution_request is not None:
+                self._timer_resolution_request.close()
+            raise
 
     def _watch_tx(self) -> None:
         """Optional bounded stack metadata during a live stall; never retain locals."""
@@ -637,6 +649,8 @@ class OnlineAudioSession:
         eng = self._v22
         eng = getattr(eng, "engine", None) or eng
         stats: dict = {"error_control": None, "compression": None}
+        if self._timer_resolution_request is not None:
+            stats['windows_timer_resolution']=self._timer_resolution_request.report()
         if eng is None:
             return stats
         stats['realtime']=self.realtime.report()
@@ -698,6 +712,8 @@ class OnlineAudioSession:
                 if state is not None:
                     quality = state.get('quality')
                     if quality is not None:stats['v34_data_quality'] = quality.report()
+                    data_trace=getattr(core,'_data_state_trace',None)
+                    if data_trace is not None:stats['v34_data_state_trace']=data_trace.report()
                     vit=state['vit']
                     stats['receive_backend']=vit.backend
                     stats['v34_survivor_state_streaming']=dict(enabled=vit.emit_states,
@@ -879,6 +895,8 @@ class OnlineAudioSession:
             self._capture_stats=capture.report()
         diagnostic=getattr(self,'_dsp_capture',None)
         if diagnostic is not None:diagnostic.close()
+        if self._timer_resolution_request is not None:
+            self._timer_resolution_request.close()
         metrics_path=os.environ.get('EL_MODEM_METRICS_FILE')
         if metrics_path:
             import json
