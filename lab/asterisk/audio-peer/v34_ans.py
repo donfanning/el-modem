@@ -316,6 +316,7 @@ class V34Answerer:
     def note_concealed(self, start: int, n: int) -> None:
         from v34_transport import note_concealed
         note_concealed(self,start,n)
+        v34_datarx.mark_data_state_gap(self,start,n)
 
     def _freeze_hold(self) -> None:
         """Hold or release equaliser adaptation as the freeze guard asks (the equaliser's own freeze: taps, carrier and timing coast)."""
@@ -894,22 +895,38 @@ class V34Answerer:
                 return
         st = self._rx_state
         drx, vit = st["drx"], st["vit"]
+        trellis_erasure=os.environ.get('V34_GAP_TRELLIS_ERASURE')=='1'
         limit = rate_controller.limit(eq.available()) if rate_controller is not None else eq.available()
         while eq.k < limit:
             y = eq.step(decide=self._decide)
             st["ys"].append(y)
+            if trellis_erasure:
+                st.setdefault("ys_tainted",[]).append(bool(getattr(eq,"last_transport_tainted",False)))
             if len(st["ys"]) == 2:
-                vit.feed(st["ys"][0], st["ys"][1])
+                if trellis_erasure:
+                    erasure=any(st["ys_tainted"])
+                    interval=vit.m4
+                    vit.feed(st["ys"][0], st["ys"][1],erasure=erasure)
+                    if erasure and getattr(eq,'_transport_guard',None) is not None:
+                        eq._transport_guard.record_trellis_erasure(interval)
+                    st["ys_tainted"] = []
+                else:
+                    vit.feed(st["ys"][0], st["ys"][1])
                 st["ys"] = []
             while vit.decided:
                 u0, u1 = vit.decided.pop(0)
                 if vit.emit_states:
                     st.setdefault('pend_states', []).append(vit.decided_states.pop(0))
+                if vit.emit_metrics:
+                    st.setdefault('pend_metrics', []).append(vit.decided_metrics.pop(0))
                 st["pend"] += [u0, u1]
                 if len(st["pend"]) == 8:
                     states = st.pop('pend_states', None)
+                    metrics = st.pop('pend_metrics', None)
+                    trace_token = v34_datarx.begin_data_state_frame(self,eq,drx,states,metrics)
                     bits, _ = (drx.decode_frame(st['pend'], trellis_states=states) if states is not None
                                else drx.decode_frame(st['pend']))
+                    v34_datarx.end_data_state_frame(self,trace_token,drx)
                     st["pend"] = []
                     raw = v34_datarx.descramble_stream(bits, st["hist"][-23:], "call")
                     st["hist"] = (st["hist"] + bits)[-23:]

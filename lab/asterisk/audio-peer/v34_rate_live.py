@@ -131,11 +131,18 @@ class ConnectedRate:
             pair = vit.decided.pop(0)
             if vit.emit_states:
                 st.setdefault('pend_states', []).append(vit.decided_states.pop(0))
+            if vit.emit_metrics:
+                st.setdefault('pend_metrics', []).append(vit.decided_metrics.pop(0))
             st['pend'].extend(pair)
             if len(st['pend']) == 8:
                 states = st.pop('pend_states', None)
+                metrics = st.pop('pend_metrics', None)
+                eq = getattr(getattr(e, '_p4rcv', None), 'eq', None)
+                trace_token = (v34_datarx.begin_data_state_frame(e, eq, st['drx'], states, metrics)
+                               if eq is not None else None)
                 bits, _ = (st['drx'].decode_frame(st['pend'], trellis_states=states) if states is not None
                            else st['drx'].decode_frame(st['pend']))
+                v34_datarx.end_data_state_frame(e, trace_token, st['drx'])
                 raw = v34_datarx.descramble_stream(bits, st['hist'][-23:], 'answer' if self.role == 'call' else 'call')
                 st['hist'] = (st['hist'] + bits)[-23:]
                 if e.bit_sink is not None:

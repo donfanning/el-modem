@@ -49,6 +49,8 @@ class FeedbackValidity:
         self.tap_updates=self.phase_updates=self.velocity_updates=0
         self.tap_delta_squared=0.
         self.first_tainted=self.last_tainted=None
+        self.trellis_erasure_intervals=0
+        self.first_trellis_erasure=self.last_trellis_erasure=None
 
     def add(self,start,count):
         if not isinstance(start,int) or not isinstance(count,int) or start<0 or count<=0:
@@ -88,6 +90,12 @@ class FeedbackValidity:
         self.held_symbols+=int(held)
         self.discard_marks+=int(self.discard_quality)
 
+    def record_trellis_erasure(self,interval):
+        interval=int(interval)
+        self.trellis_erasure_intervals+=1
+        if self.first_trellis_erasure is None:self.first_trellis_erasure=interval
+        self.last_trellis_erasure=interval
+
     def report(self):
         return dict(mode=self.mode,coordinate_domain='receive-core raw PCM samples',
             registered_gaps=self.registered_gaps,registered_samples=self.registered_samples,
@@ -97,6 +105,9 @@ class FeedbackValidity:
             carrier_updates_on_taint=self.phase_updates,timing_velocity_updates_on_taint=self.velocity_updates,
             tap_delta_squared=self.tap_delta_squared,tap_delta_units='sum squared complex tap coefficient changes',
             first_tainted=self.first_tainted,last_tainted=self.last_tainted,
+            trellis_erasure_intervals=self.trellis_erasure_intervals,
+            first_trellis_erasure=self.first_trellis_erasure,
+            last_trellis_erasure=self.last_trellis_erasure,
             decoder_samples_preserved=True,payload_truth_used=False)
 
 

@@ -786,7 +786,17 @@ class SymbolEq:
         self._g_origin = 0
         self._g_zlen = -1
         gap_mode=os.environ.get('V34_GAP_FEEDBACK','0')
+        erasure_mode=os.environ.get('V34_GAP_TRELLIS_ERASURE','0')
+        traceback_hold=os.environ.get('V34_GAP_TRELLIS_HOLD','0')
+        if erasure_mode not in ('0','1'):
+            raise ValueError('V34_GAP_TRELLIS_ERASURE must be 0 or 1')
+        if traceback_hold not in ('0','1'):
+            raise ValueError('V34_GAP_TRELLIS_HOLD must be 0 or 1')
+        if traceback_hold=='1' and erasure_mode!='1':
+            raise ValueError('V34_GAP_TRELLIS_HOLD requires V34_GAP_TRELLIS_ERASURE=1')
+        if erasure_mode=='1' and gap_mode=='0':gap_mode='observe'
         self._transport_guard=FeedbackValidity(gap_mode) if gap_mode!='0' else None
+        self.last_transport_tainted=False
 
     GRID = 128                                            # symbols interpolated per batch
     MARGIN = 6                                            # spare T/2 samples either side for slips
@@ -1000,7 +1010,10 @@ class SymbolEq:
             elif self.adapt and self.k % 16 == 0:
                 self._input_guard.observe_training(power)
         transport=getattr(self,'_transport_guard',None)
-        tainted=transport is not None and transport.tainted(self)
+        tainted=False
+        if transport is not None:
+            tainted=transport.tainted(self)
+            self.last_transport_tainted=bool(tainted)
         before=(self.h.copy(),self.phase,self.freq,self.vel) if tainted else None
         hold_carrier=bool(tainted and transport.hold_carrier)       # taps + carrier loop
         hold_timing=bool(tainted and transport.hold_timing)         # sampling-window recovery

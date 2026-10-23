@@ -8,6 +8,45 @@ from v34_trellis_native import njit
 
 @unittest.skipIf(njit is None,'optional Numba backend unavailable')
 class NativeTrellisTests(unittest.TestCase):
+    def test_dynamic_erasure_hold_traceback_matches_python(self):
+        rng=np.random.default_rng(221023)
+        ref=TrellisDetector(128,8,15,depth=3,backend='python',trace=True,erasure_hold=True)
+        native=TrellisDetector(128,8,15,depth=3,backend='numba',trace=True,erasure_hold=True)
+        samples=rng.normal(0,8,300)+1j*rng.normal(0,8,300)
+        erased=set(range(20,80))
+        for i in range(0,len(samples),2):
+            flag=i//2 in erased
+            ref.feed(*samples[i:i+2],erasure=flag)
+            native.feed(*samples[i:i+2],erasure=flag)
+            self.assertEqual(ref.depth,native.depth)
+            self.assertEqual(ref.decided,native.decided)
+            np.testing.assert_allclose(native.metric,ref.metric,rtol=1e-11,atol=1e-10)
+            np.testing.assert_array_equal(native.trace[-1]['prev'],ref.trace[-1]['prev'])
+        ref.flush();native.flush()
+        self.assertEqual(ref.decided,native.decided)
+        self.assertEqual(2*len(native.decided),len(samples))
+
+    def test_native_and_python_gap_erasure_metrics_match(self):
+        rng=np.random.default_rng(221022)
+        ref=TrellisDetector(128,8,15,depth=5,backend='python',trace=True)
+        native=TrellisDetector(128,8,15,depth=5,backend='numba',trace=True)
+        samples=rng.normal(0,8,80)+1j*rng.normal(0,8,80)
+        erased={3,4,5,19}
+        for i in range(0,len(samples),2):
+            flag=i//2 in erased
+            ref.feed(*samples[i:i+2],erasure=flag)
+            native.feed(*samples[i:i+2],erasure=flag)
+            self.assertEqual(ref.decided,native.decided)
+            self.assertEqual(ref.x_hist,native.x_hist)
+            np.testing.assert_allclose(native.metric,ref.metric,rtol=1e-11,atol=1e-10)
+            np.testing.assert_array_equal(native.trace[-1]['prev'],ref.trace[-1]['prev'])
+            np.testing.assert_allclose(native.trace[-1]['branch_cost'],ref.trace[-1]['branch_cost'],
+                rtol=1e-13,atol=1e-12)
+            self.assertEqual(native.trace[-1]['erasure'],flag)
+        ref.flush();native.flush()
+        self.assertEqual(ref.decided,native.decided)
+        self.assertEqual(native.erased_intervals,len(erased))
+
     def test_linear_zero_displacement_matches_reference_at_ties(self):
         rng=np.random.default_rng(264336)
         for length in (16,128,1664):

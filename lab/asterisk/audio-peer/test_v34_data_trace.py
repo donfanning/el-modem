@@ -16,6 +16,60 @@ from v34_viterbi import TrellisDetector
 
 
 class DataTraceTests(unittest.TestCase):
+    def test_trace_can_start_at_a_selected_trellis_interval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = trace.DataTrace(Path(directory)/'trace.json', start_interval=100)
+            engine = SimpleNamespace(_rx_state={'vit': SimpleNamespace(m4=99, record_snapshots=False)},
+                _bounded_data_trace=recorder)
+            initialized = []
+            def initialize(current):
+                initialized.append(current)
+                recorder.header = {'detector': {}}
+            recorder.initialize = initialize
+            trace._context.engine = engine
+            try:
+                current, active = trace._current()
+                self.assertIs(current, engine)
+                self.assertIsNone(active)
+                self.assertEqual(initialized, [])
+
+                engine._rx_state['vit'].m4 = 100
+                current, active = trace._current()
+                self.assertIs(current, engine)
+                self.assertIs(active, recorder)
+                self.assertEqual(initialized, [engine])
+            finally:
+                trace._context.engine = None
+
+    def test_trace_defaults_to_start_of_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = trace.DataTrace(Path(directory)/'trace.json')
+            self.assertEqual(recorder.start_interval, 0)
+            self.assertFalse(recorder.start_on_erasure)
+
+    def test_trace_can_arm_until_first_erasure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = trace.DataTrace(Path(directory)/'trace.json', start_on_erasure=True)
+            engine = SimpleNamespace(_rx_state={'vit': SimpleNamespace(m4=100, record_snapshots=False)},
+                _bounded_data_trace=recorder)
+            initialized = []
+            def initialize(current):
+                initialized.append(current)
+                recorder.header = {'detector': {}}
+            recorder.initialize = initialize
+            trace._context.engine = engine
+            try:
+                current, active = trace._current()
+                self.assertIs(current, engine)
+                self.assertIsNone(active)
+                self.assertEqual(initialized, [])
+                current, active = trace._current(trigger=True)
+                self.assertIs(current, engine)
+                self.assertIs(active, recorder)
+                self.assertEqual(initialized, [engine])
+            finally:
+                trace._context.engine = None
+
     def test_hook_copies_frames_without_changing_decode_or_windows(self):
         window, grid = SymbolEq.window, SymbolEq._trajectory_window
         trace.install()

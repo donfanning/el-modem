@@ -37,7 +37,7 @@ def _traceback(previous,last_interval,steps,state):
 
 
 def _pair(waves,pts,h,hist,nonlinear,energy,step,labels,par,
-          metric,cprev,cs0,cs1,inversion,grid,min_re,min_im,available):
+          metric,cprev,cs0,cs1,inversion,grid,min_re,min_im,available,erasure):
     ys=np.empty(2,np.complex128);c=np.empty(2,np.complex128)
     delta=np.empty(2,np.complex128);history=hist.copy()
     best=np.full((2,8,2),1e18);indices=np.full((2,8,2),-1,np.int64)
@@ -104,7 +104,8 @@ def _pair(waves,pts,h,hist,nonlinear,energy,step,labels,par,
             for s1 in range(8):
                 a=best[0,s0,0]+best[1,s1,u]
                 b=best[0,s0,1]+best[1,s1,1^u]
-                parity[u,s0,s1]=int(b<a);cost[u,s0,s1]=min(a,b)
+                parity[u,s0,s1]=int(b<a)
+                cost[u,s0,s1]=0.0 if erasure and (a<1e18 or b<1e18) else min(a,b)
     for state in range(16):us[state]=(state&1)^inversion^modulo
     new=np.empty(16);prev=np.empty(16,np.int64)
     s0=np.empty(16,np.int64);s1=np.empty(16,np.int64);p0=np.empty(16,np.int64)
@@ -150,7 +151,7 @@ def traceback(previous,last_interval,steps,state):
     return _traceback(previous,last_interval,steps,state)
 
 
-def advance(detector,y0,y1,inversion,labels):
+def advance(detector,y0,y1,inversion,labels,*,erasure=False):
     if njit is None:raise RuntimeError('native trellis requires Numba')
     if detector.nonlinear and (not math.isfinite(detector.energy) or detector.energy<=0):
         raise ValueError('nonlinear energy must be finite and positive')
@@ -170,4 +171,4 @@ def advance(detector,y0,y1,inversion,labels):
         np.asarray(detector.h,np.complex128),np.asarray(detector.x_hist,np.complex128),
         bool(detector.nonlinear),float(detector.energy),float(2**detector.w),labels,
         detector.par,detector.metric,detector._cand_prev,detector._cand_s0,
-        detector._cand_s1,int(inversion),grid,min_re,min_im,available)
+        detector._cand_s1,int(inversion),grid,min_re,min_im,available,bool(erasure))
