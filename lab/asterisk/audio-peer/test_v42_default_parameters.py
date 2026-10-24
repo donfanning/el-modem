@@ -53,16 +53,22 @@ class DefaultParameterTests(unittest.TestCase):
                     self.assertIsNone(link._enc)
                     self.assertIsNone(link._dec)
 
-    def test_first_ua_loss_retries_sabme_and_recovers_payload(self):
+    def test_first_ua_loss_is_confirmed_by_peer_i_frame(self):
         with patch.dict(os.environ, {'V42_DEFAULT_PARAMETERS': '1'}):
             a, b = RecordingLink(True, detect=False), LoseFirstUa(False, detect=False)
             a.write(b'caller payload' * 30)
             b.write(b'answerer payload' * 30)
             got_a, got_b = pump(a, b, 9600 * 5)
         self.assertEqual((got_a, got_b), (b'answerer payload' * 30, b'caller payload' * 30))
-        self.assertGreaterEqual(b.ua_count, 2)
+        # The responder's first UA was lost, but its first I-frame confirms
+        # that it accepted SABME. V.42 permits the originator to use that I/S
+        # frame as establishment confirmation instead of waiting for T401 and
+        # retransmitting SABME.
+        self.assertEqual(b.ua_count, 1)
+        self.assertTrue(any('I/S frame received after SABME; assuming UA was lost' in event
+                            for event in a.events), a.events)
         self.assertEqual(a.stats['xid_tx'], 0)
-        self.assertGreaterEqual(a.stats['t401_expiries'], 1)
+        self.assertEqual(a.stats['t401_expiries'], 0)
 
     def test_unanswered_sabme_terminates_without_data_or_xid(self):
         with patch.dict(os.environ, {'V42_DEFAULT_PARAMETERS': '1'}):
@@ -94,7 +100,9 @@ class DefaultParameterTests(unittest.TestCase):
         with patch.dict(os.environ, {'V42_DEFAULT_PARAMETERS': '1'}):
             link = RecordingLink(True, detect=False)
             link._on_frame(bytes((link.rsp_addr, XID)) + build_xid(32, 4, (3, 1024, 32)))
-        self.assertEqual((link.n401, link.k), (32, 4))
+        # The responder's policy is to retain V.42 defaults, a legal choice
+        # in the initiator-request/default interval.
+        self.assertEqual((link.n401, link.k), (DEFAULT_N401, DEFAULT_K))
         self.assertEqual(link.frames[0][1], XID)
         self.assertIsNone(link._agreed)
 
@@ -102,7 +110,9 @@ class DefaultParameterTests(unittest.TestCase):
         with patch.dict(os.environ, {'V42_DEFAULT_PARAMETERS': '0'}):
             a, b = RecordingLink(True, detect=False, frame_size=32, window=4), RecordingLink(False, detect=False)
             pump(a, b, 9600 * 2)
-        self.assertEqual((a.n401, a.k), (32, 4))
+        # The default-parameter peer may select the standard default even
+        # when the initiator asks for smaller values.
+        self.assertEqual((a.n401, a.k), (DEFAULT_N401, DEFAULT_K))
         self.assertEqual(a.frames[0][1], XID)
         self.assertEqual(a.stats['default_establishment'], 0)
 

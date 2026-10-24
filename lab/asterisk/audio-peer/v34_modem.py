@@ -26,7 +26,7 @@ class V34Modem(V42Layer):
     is_v34 = True
     capture_detect_bits = False
 
-    def __init__(self, fs: int = FS, data_rate: int | None = None, debug: bool = False, rms: float = 900.0, with_v8: bool = True):
+    def __init__(self, fs: int = FS, data_rate: int | None = None, min_data_rate: int = 2400, debug: bool = False, rms: float = 900.0, with_v8: bool = True):
         if fs != FS:
             raise ValueError("the V.34 engine runs at 8 kHz")
         from v8 import V8_MOD_V34, V8Negotiator
@@ -39,7 +39,7 @@ class V34Modem(V42Layer):
         self.debug = debug
         self.events: list[tuple[float, str]] = []
         self._ev_seen = 0
-        self._caller_args = dict(rms=rms, data_rate=rate,
+        self._caller_args = dict(rms=rms, data_rate=rate, min_data_rate=min_data_rate,
                                  symbol_rates=[int(x) for x in syms.split(",")] if syms else None,
                                  info0=dict(rate2743=1, rate2800=1, rate3429=1, lo3000=1, hi3000=1, lo3200=1,
                                             hi3200=1, allow3429=1, power_reduction=1, pts1664=1))
@@ -57,6 +57,9 @@ class V34Modem(V42Layer):
         self.rx_bit_rate = 0
         self._t = 0
         self._rx_power = 0.0
+        self._rtp_media_timing = os.environ.get("V34_RTP_MEDIA_TIMING", "0") == "1"
+        self._rx_media_deadline: float | None = None
+        self._tx_media_deadline: float | None = None
         self._plain_bits: deque[int] = deque()
         self._deframe = _Framer()
         self._rx_plain = bytearray()
@@ -200,11 +203,25 @@ class V34Modem(V42Layer):
     def tx_samples(self, count: int) -> list[int]:
         self._t += count
         if self._phase == "v8":
+            # V.8 has its own sample origin. Never carry a V.8 packet's RTP
+            # anchor into the reset V.34 caller counters at phase 2.
+            self._tx_media_deadline = None
             return self._v8.tx(count)
         if self._phase != "p2":
             return [0] * count
+        if self._tx_media_deadline is not None:
+            self.caller.set_tx_media_deadline(self._tx_media_deadline)
+            self._tx_media_deadline = None
         out = np.clip(np.round(self.caller.tx(count)), -32768, 32767).astype(int)
         return out.tolist()
+
+    def set_tx_media_deadline(self, deadline: float) -> None:
+        """Set the scheduled media time of the next transmit block."""
+        self._tx_media_deadline = float(deadline) if self._rtp_media_timing else None
+
+    def set_rx_media_deadline(self, deadline: float) -> None:
+        """Set the first-sample media time of the next received block."""
+        self._rx_media_deadline = float(deadline) if self._rtp_media_timing else None
 
     def note_concealed_rx(self, n: int) -> None:
         """The next ``feed_pcm`` chunk (``n`` samples) is the DCE's concealment of a lost RTP stretch, not received audio."""
@@ -227,10 +244,15 @@ class V34Modem(V42Layer):
                 self.caller.t = 0
             elif self._v8.status in (3, 4) or self._t / self.fs > SETUP_TIMEOUT:
                 self._fail("V.8 failed")
+            # The V.8 block cannot anchor the fresh phase-2 sample counters.
+            self._rx_media_deadline = None
             return b""
         if self._phase == "p2":
             if concealed and concealed == len(x):
                 self.caller.note_concealed(self.caller.rx_t, len(x))
+            if self._rx_media_deadline is not None:
+                self.caller.set_rx_media_deadline(self._rx_media_deadline)
+                self._rx_media_deadline = None
             self.caller.rx(x.astype(float))
             self._sync_events()
             epoch = getattr(self.caller, '_rate_epoch', 0)

@@ -29,6 +29,9 @@ Deliberate limits (option B):
   is unknown; ``open_terminal`` raises instead of guessing.
 * Baud is nominal on a virtual port (bytes move at memory speed, not
   at the configured rate); the setting controls the DCB and reporting.
+* COM BREAK uses CE_BREAK polling and SetCommBreak/ClearCommBreak. TCP, pipe,
+  and PTY byte transports have no equivalent signal and must not encode BREAK
+  as a special data byte.
 
 Interface matches serial_port.py plus the DriverSerial signal methods:
 ``fds()``/``write_fds()`` return selectable objects (a socket-pair wake
@@ -53,6 +56,7 @@ BAUD_MAXIMUM = 921600
 # DriverSerial (modem_serial.py), so &K1/3 behave the same on both.
 COM_CTS_BACKLOG_BITS = 40960
 PENDING_LIMIT = 65536
+CE_BREAK = 0x0010
 
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
@@ -61,6 +65,7 @@ FILE_ATTRIBUTE_NORMAL = 0x80
 FILE_FLAG_OVERLAPPED = 0x40000000
 PURGE_TXCLEAR = 0x4
 PURGE_RXCLEAR = 0x8
+PURGE_TXABORT = 0x1
 SET_RTS = 3
 CLR_RTS = 4
 SET_DTR = 5
@@ -141,6 +146,11 @@ class _DCB(ctypes.Structure):
     ]
 
 
+class _COMSTAT(ctypes.Structure):
+    _fields_ = [("flags", wintypes.DWORD), ("cbInQue", wintypes.DWORD),
+                ("cbOutQue", wintypes.DWORD)]
+
+
 class _COMMTIMEOUTS(ctypes.Structure):
     _fields_ = [
         ("ReadIntervalTimeout", wintypes.DWORD),
@@ -165,6 +175,8 @@ class _RealKernel:
     """Thin ctypes binding over kernel32. Only instantiated on Windows."""
 
     def __init__(self):
+        self._comm_error_lock = threading.Lock()
+        self._pending_breaks = {}
         dll = ctypes.WinDLL("kernel32", use_last_error=True)
         dll.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                                     wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
@@ -188,6 +200,12 @@ class _RealKernel:
         dll.EscapeCommFunction.restype = wintypes.BOOL
         dll.GetCommModemStatus.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
         dll.GetCommModemStatus.restype = wintypes.BOOL
+        dll.SetCommBreak.argtypes = [wintypes.HANDLE]
+        dll.SetCommBreak.restype = wintypes.BOOL
+        dll.ClearCommBreak.argtypes = [wintypes.HANDLE]
+        dll.ClearCommBreak.restype = wintypes.BOOL
+        dll.ClearCommError.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+        dll.ClearCommError.restype = wintypes.BOOL
         dll.ReadFile.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD,
                                  ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(_OVERLAPPED)]
         dll.ReadFile.restype = wintypes.BOOL
@@ -269,6 +287,35 @@ class _RealKernel:
         self._check(self._dll.GetCommModemStatus(handle, ctypes.byref(status)), "GetCommModemStatus")
         return status.value
 
+    def take_break(self, handle):
+        with self._comm_error_lock:
+            queued = self._pending_breaks.get(handle, 0)
+            if queued:
+                self._pending_breaks[handle] = queued - 1
+                return True
+            errors = wintypes.DWORD()
+            self._check(self._dll.ClearCommError(handle, ctypes.byref(errors), None), "ClearCommError")
+            return bool(errors.value & CE_BREAK)
+
+    def output_pending(self, handle):
+        with self._comm_error_lock:
+            errors = wintypes.DWORD()
+            status = _COMSTAT()
+            self._check(self._dll.ClearCommError(handle, ctypes.byref(errors), ctypes.byref(status)),
+                        "ClearCommError")
+            if errors.value & CE_BREAK:
+                self._pending_breaks[handle] = self._pending_breaks.get(handle, 0) + 1
+            return int(status.cbOutQue)
+
+    def discard_output(self, handle):
+        self._check(self._dll.PurgeComm(handle, PURGE_TXABORT | PURGE_TXCLEAR), "PurgeComm(TX)")
+
+    def send_break(self, handle):
+        self._check(self._dll.SetCommBreak(handle), "SetCommBreak")
+
+    def clear_break(self, handle):
+        self._check(self._dll.ClearCommBreak(handle), "ClearCommBreak")
+
     def _event(self):
         event = self._dll.CreateEventW(None, True, False, None)
         if event == self._invalid or not event:
@@ -348,6 +395,7 @@ def probe_device(device):
 class ComSerial:
     """DCE side of a virtual COM pair on Windows. See module docstring."""
 
+    supports_modem_control = True
     is_com = True
 
     def __init__(self, device, baud=115200, _kernel=None):
@@ -376,11 +424,21 @@ class ComSerial:
         self.baud = baud
         self.pending = bytearray()
         self.hardware = False
+        self.hardware_rts = False
+        self.hardware_cts = False
         self._rts_asserted = False
         self._ring = False
         self._prev_dsr = bool(status & MS_DSR_ON)
         self._dead = False
         self._rx = queue.Queue()
+        self._breaks = queue.Queue()
+        self._break_lock = threading.Lock()
+        self._break_timer = None
+        self._break_generation = 0
+        self._break_active = False
+        self._output_shadow = bytearray()
+        self._can_reorder_break = (callable(getattr(kernel, "output_pending", None))
+                                   and callable(getattr(kernel, "discard_output", None)))
         self._wake_r, self._wake_w = socket.socketpair()
         self._wake_r.setblocking(False)
         self._wake_w.setblocking(False)
@@ -412,7 +470,7 @@ class ComSerial:
                     RTS=bool(status & MS_CTS_ON),
                     CTS=self._rts_asserted)
 
-    def update_lines(self, carrier, ring, ready, hardware, backlog=0):
+    def update_lines(self, carrier, ring, ready, hardware, backlog=0, *, rts_flow=None, cts_flow=None):
         """Drive DTR=carrier (peer DCD) and RTS=flow state (peer CTS).
 
         ``ring`` is recorded for a future DCE-capable presenting driver;
@@ -420,9 +478,11 @@ class ComSerial:
         pin action today (option B). Ringing still reaches terminals as
         the Hayes RING result code.
         """
-        self.hardware = bool(hardware)
+        self.hardware_rts = bool(hardware if rts_flow is None else (hardware or rts_flow))
+        self.hardware_cts = bool(hardware if cts_flow is None else (hardware or cts_flow))
+        self.hardware = self.hardware_rts or self.hardware_cts
         self._ring = bool(ring)
-        cts_out = bool(ready) and (not hardware or backlog < COM_CTS_BACKLOG_BITS)
+        cts_out = bool(ready) and (not self.hardware_cts or backlog < COM_CTS_BACKLOG_BITS)
         try:
             self._kernel.set_dtr(self._handle, bool(carrier))
             self._kernel.set_rts(self._handle, cts_out)
@@ -443,12 +503,17 @@ class ComSerial:
         while not self._stop.is_set():
             try:
                 data = self._kernel.read(self._handle, 4096, 0.15)
+                take_break = getattr(self._kernel, "take_break", None)
+                got_break = bool(take_break(self._handle)) if take_break is not None else False
             except OSError:
                 self._dead = True
                 self._signal_wakeup()
                 return
             if data:
                 self._rx.put(data)
+            if got_break:
+                self._breaks.put(1)
+            if data or got_break:
                 self._signal_wakeup()
 
     def _drain_wakeup(self):
@@ -461,14 +526,14 @@ class ComSerial:
     def _may_send(self):
         if self._dead:
             return False
-        if not self.hardware:
+        if not self.hardware_rts:
             return True
         return bool(self._poll() & MS_CTS_ON)
 
     def _flush(self):
-        if not self.pending or self._dead:
+        if not self.pending or self._dead or self._break_active:
             return
-        if self.hardware and not bool(self._poll() & MS_CTS_ON):
+        if self.hardware_rts and not bool(self._poll() & MS_CTS_ON):
             return
         try:
             sent = self._kernel.write(self._handle, bytes(self.pending), 0.25)
@@ -483,7 +548,7 @@ class ComSerial:
         return [self._wake_r]
 
     def write_fds(self):
-        return [self._wake_r] if self.pending and self._may_send() else []
+        return [self._wake_r] if self.pending and not self._break_active and self._may_send() else []
 
     def service(self, readable, writable=()):
         if self._wake_r in writable:
@@ -505,24 +570,121 @@ class ComSerial:
                     break
         return data, dropped
 
+    def take_break_events(self):
+        count = 0
+        while True:
+            try:
+                count += self._breaks.get_nowait()
+            except queue.Empty:
+                return count
+
+    def send_break(self, duration_ms=250):
+        """Drive the COM line BREAK signal asynchronously for the requested duration."""
+        sender = getattr(self._kernel, "send_break", None)
+        clearer = getattr(self._kernel, "clear_break", None)
+        if sender is None or clearer is None:
+            return False
+        with self._break_lock:
+            if self._break_timer is not None:
+                self._break_timer.cancel()
+            self._break_generation += 1
+            generation = self._break_generation
+            self._break_active = True
+            sender(self._handle)
+            timer = threading.Timer(max(1, int(duration_ms)) / 1000.0,
+                                    self._clear_break, args=(generation,))
+            timer.daemon = True
+            self._break_timer = timer
+            timer.start()
+        return True
+
+    def output_pending(self):
+        """Queued DTE output bytes, or None when the backend cannot report it."""
+        query = getattr(self._kernel, "output_pending", None)
+        if query is None:
+            return None
+        try:
+            total = len(self.pending) + max(0, int(query(self._handle)))
+            if len(self._output_shadow) >= total:
+                del self._output_shadow[:len(self._output_shadow) - total]
+            return total
+        except OSError:
+            return None
+
+    def discard_output(self):
+        """Discard output not yet delivered to the DTE (V.42 destructive break)."""
+        purge = getattr(self._kernel, "discard_output", None)
+        if purge is None:
+            return False
+        try:
+            purge(self._handle)
+            self.pending.clear()
+            self._output_shadow.clear()
+        except OSError:
+            return False
+        return True
+
+    def place_break_before_pending_output(self):
+        """Requeue undelivered bytes after the next BREAK signal."""
+        query = getattr(self._kernel, "output_pending", None)
+        purge = getattr(self._kernel, "discard_output", None)
+        if not self._can_reorder_break or query is None or purge is None:
+            return False
+        try:
+            total = len(self.pending) + max(0, int(query(self._handle)))
+            if len(self._output_shadow) < total:
+                return False
+            del self._output_shadow[:len(self._output_shadow) - total]
+            purge(self._handle)
+            self.pending = bytearray(self._output_shadow)
+        except OSError:
+            return False
+        return True
+
+    def _clear_break(self, generation):
+        with self._break_lock:
+            if generation != self._break_generation:
+                return
+            self._break_timer = None
+            if self._stop.is_set():
+                return
+            try:
+                self._kernel.clear_break(self._handle)
+            except OSError:
+                self._dead = True
+            self._break_active = False
+            self._signal_wakeup()
+
     def write(self, data):
         if self._dead:
             raise OSError("COM port is no longer usable: %s" % self.device)
         if len(self.pending) + len(data) > PENDING_LIMIT:
             raise BufferError("serial receive queue exhausted")
         self.pending.extend(data)
+        if self._can_reorder_break:
+            self._output_shadow.extend(data)
         self._flush()
+        self.output_pending()
 
     def open_terminal(self):
         raise ValueError("COM backend cannot host the dashboard terminal: attach a terminal"
                          " program to the peer port paired with %s" % self.device)
 
     def close(self):
+        self._stop.set()
+        with self._break_lock:
+            self._break_generation += 1
+            if self._break_timer is not None:
+                self._break_timer.cancel()
+                self._break_timer = None
+            try:
+                self._kernel.clear_break(self._handle)
+            except (AttributeError, OSError):
+                pass
         try:
             self.update_lines(False, False, False, False)
         except OSError:
             pass
-        self._stop.set()
         try:
             self._kernel.cancel(self._handle)
         except OSError:

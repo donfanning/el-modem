@@ -34,6 +34,10 @@ class FakeKernel:
         self.opened = []
         self.closed = []
         self.cancelled = 0
+        self.break_events = 0
+        self.break_calls = []
+        self.output_queued = 0
+        self.output_discarded = 0
         self._next_handle = 1
 
     def create_file(self, path):
@@ -58,6 +62,25 @@ class FakeKernel:
         if self.fail_status:
             raise OSError("GetCommModemStatus failed")
         return self.status
+
+    def take_break(self, handle):
+        if self.break_events:
+            self.break_events -= 1
+            return True
+        return False
+
+    def send_break(self, handle):
+        self.break_calls.append("set")
+
+    def clear_break(self, handle):
+        self.break_calls.append("clear")
+
+    def output_pending(self, handle):
+        return self.output_queued
+
+    def discard_output(self, handle):
+        self.output_discarded += 1
+        self.output_queued = 0
 
     def read(self, handle, size, timeout_s):
         if self.fail_read:
@@ -123,6 +146,68 @@ class DeviceValidationTests(unittest.TestCase):
 
 
 class SignalMappingTests(unittest.TestCase):
+    def test_output_queue_and_destructive_discard_are_exposed(self):
+        ser, kernel = make_ser()
+        try:
+            kernel.output_queued = 17
+            self.assertEqual(ser.output_pending(), 17)
+            ser.pending.extend(b"abc")
+            self.assertEqual(ser.output_pending(), 20)
+            self.assertTrue(ser.discard_output())
+            self.assertEqual(kernel.output_discarded, 1)
+            self.assertEqual(ser.pending, bytearray())
+        finally:
+            ser.close()
+
+    def test_break_can_precede_undelivered_bytes_without_losing_them(self):
+        ser, kernel = make_ser()
+        try:
+            ser._output_shadow.extend(b"abcdef")
+            ser.pending.extend(b"ef")
+            kernel.output_queued = 4
+            self.assertTrue(ser.place_break_before_pending_output())
+            self.assertEqual(kernel.output_discarded, 1)
+            self.assertEqual(ser.pending, bytearray(b"abcdef"))
+            self.assertEqual(ser._output_shadow, bytearray(b"abcdef"))
+            self.assertEqual(ser.output_pending(), 6)
+        finally:
+            ser.close()
+
+    def test_queued_output_is_held_while_line_break_is_asserted(self):
+        ser, kernel = make_ser()
+        try:
+            ser._break_active = True
+            ser.write(b"after-break")
+            self.assertEqual(kernel.written, [])
+            self.assertEqual(ser.pending, bytearray(b"after-break"))
+            ser._break_active = False
+            ser._flush()
+            self.assertEqual(kernel.written, [b"after-break"])
+        finally:
+            ser.close()
+
+    def test_break_input_is_reported_as_signal_and_output_is_timed(self):
+        ser, kernel = make_ser()
+        try:
+            kernel.break_events = 1
+            deadline = time.monotonic() + 0.3
+            while time.monotonic() < deadline and not ser._breaks.qsize():
+                time.sleep(0.005)
+            self.assertEqual(ser.take_break_events(), 1)
+            self.assertEqual(ser.take_break_events(), 0)
+            self.assertTrue(ser.send_break(500))
+            self.assertEqual(kernel.break_calls[0], "set")
+            first_generation = ser._break_generation
+            self.assertTrue(ser.send_break(20))
+            ser._clear_break(first_generation)  # stale cancelled timer must not end the newer BREAK
+            self.assertEqual(kernel.break_calls.count("clear"), 0)
+            deadline = time.monotonic() + 0.3
+            while time.monotonic() < deadline and "clear" not in kernel.break_calls:
+                time.sleep(0.005)
+            self.assertIn("clear", kernel.break_calls)
+        finally:
+            ser.close()
+
     def test_initial_lines(self):
         ser, kernel = make_ser()
         try:
@@ -232,6 +317,34 @@ class DataPathTests(unittest.TestCase):
         finally:
             ser.close()
 
+    def test_v250_ifc_rts_and_cts_directions_are_independent(self):
+        kernel = FakeKernel()
+        ser, _ = make_ser(kernel)
+        try:
+            # DTE->DCE RTS gating holds DCE output, but does not lower the
+            # DCE's CTS output based on the unrelated transmitter backlog.
+            ser.update_lines(False, False, True, False, backlog=COM_CTS_BACKLOG_BITS,
+                             rts_flow=True, cts_flow=False)
+            self.assertTrue(ser.hardware_rts)
+            self.assertFalse(ser.hardware_cts)
+            self.assertTrue(ser.signals()["CTS"])
+            kernel.status = 0
+            ser.write(b"held")
+            self.assertFalse(ser.write_fds())
+            kernel.status = MS_CTS_ON
+            self.assertTrue(ser.write_fds())
+
+            # CTS flow control is independent: it may lower the peer CTS
+            # output without gating DCE->DTE bytes on peer RTS.
+            ser.update_lines(False, False, True, False, backlog=COM_CTS_BACKLOG_BITS,
+                             rts_flow=False, cts_flow=True)
+            self.assertFalse(ser.hardware_rts)
+            self.assertTrue(ser.hardware_cts)
+            self.assertFalse(ser.signals()["CTS"])
+            self.assertTrue(ser.write_fds())
+        finally:
+            ser.close()
+
     def test_partial_write_keeps_remainder(self):
         kernel = FakeKernel()
         ser, _ = make_ser(kernel)
@@ -284,6 +397,17 @@ class DataPathTests(unittest.TestCase):
 
 
 class SupervisorValidationTests(unittest.TestCase):
+    def test_linux_native_device_accepts_bell_custom_baud(self):
+        import sys
+        from modem_supervisor import ModemSpec
+        spec = ModemSpec("modem-1", "M1", serial="device",
+                         serial_device="/dev/ttyUSB0", serial_baud=1212)
+        if sys.platform.startswith("linux"):
+            self.assertIs(spec.validate(), spec)
+        else:
+            with self.assertRaises(ValueError):
+                spec.validate()
+
     def test_com_spec_validation(self):
         from modem_supervisor import ModemSpec
         ModemSpec("modem-1", "M1", serial="com", serial_device="COM42").validate()

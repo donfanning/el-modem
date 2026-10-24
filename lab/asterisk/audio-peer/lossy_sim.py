@@ -24,8 +24,8 @@ def trial(loss: float, seed: int, nbytes: int = 800, want_v42: bool = True,
           max_seconds: float = 90.0, rate: int = 2400, v42_kwargs=None,
           conceal: str = "zero") -> dict:
     rng = random.Random(seed)
-    caller = V22bisModem(True, bit_rate=rate, bell212a=False)
-    answerer = V22bisModem(False, bit_rate=rate, bell212a=False)
+    caller = V22bisModem(True, bit_rate=rate, profile="v22bis")
+    answerer = V22bisModem(False, bit_rate=rate, profile="v22bis")
     payload = random.Random(seed ^ 0x5A5A).randbytes(nbytes)
     started = {"c": False, "a": False}
     got = bytearray()

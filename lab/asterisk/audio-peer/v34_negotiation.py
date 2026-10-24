@@ -51,9 +51,11 @@ def directional_offer(original, role, rates):
     return local
 
 
-def offer(cap, receive=None):
+def offer(cap, receive=None, minimum=2400):
     if cap % 2400 or not 2400 <= cap <= 33600:
         raise ValueError('V.34 cap must be 2400..33600 in steps of 2400')
+    if minimum % 2400 or not 2400 <= minimum <= cap:
+        raise ValueError('V.34 minimum must be 2400..cap in steps of 2400')
     if receive is None:
         import os
         receive = dict(nonlinear=int(os.environ.get('V34_RX_NONLINEAR','0')),
@@ -67,7 +69,9 @@ def offer(cap, receive=None):
     if len(coeff)!=6 or any(not isinstance(x,int) or not -32768<=x<=32767 for x in coeff):
         raise ValueError('receive precoder requires six signed 16-bit coefficients')
     n = cap // 2400
-    return dict(max_c2a=n, max_a2c=n, mask=(1 << n) - 1, asym=1,
+    low = minimum // 2400
+    mask = ((1 << n) - 1) ^ ((1 << (low - 1)) - 1)
+    return dict(max_c2a=n, max_a2c=n, mask=mask, asym=1,
                 trellis=0, nonlinear=int(receive.get("nonlinear",0)), shaping=int(receive.get("shaping",0)), precoder=list(coeff))
 
 

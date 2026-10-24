@@ -78,6 +78,22 @@ class AnswerRetrainTests(unittest.TestCase):
             for _ in range(10):modem._watch_for_caller_retrain(self.tone())
             self.assertEqual(modem._retrains,0)
 
+    def test_rtp_media_deadlines_reach_answerer_only_when_opted_in(self):
+        with patch.dict(os.environ, {'V34_RTP_MEDIA_TIMING': '1'}):
+            modem = V34AnswerModem(with_v8=False)
+            modem.set_rx_media_deadline(100.0)
+            modem.feed_pcm(np.zeros(160, dtype='<i2').tobytes())
+            modem.set_tx_media_deadline(200.0)
+            modem.tx_samples(160)
+            self.assertEqual(modem.answerer._rx_media_anchor, (0, 100.0))
+            self.assertEqual(modem.answerer._tx_media_anchor, (0, 200.0))
+
+        with patch.dict(os.environ, {'V34_RTP_MEDIA_TIMING': '0'}):
+            modem = V34AnswerModem(with_v8=False)
+            modem.set_rx_media_deadline(100.0)
+            modem.feed_pcm(np.zeros(160, dtype='<i2').tobytes())
+            self.assertIsNone(modem.answerer._rx_media_anchor)
+
     def test_interrupted_tone_and_request_limit(self):
         with patch.dict(os.environ,{'V34_CALLER_RETRAIN':'1'}):
             modem=V34AnswerModem(with_v8=False);modem.state='data'

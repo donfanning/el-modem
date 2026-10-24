@@ -24,6 +24,16 @@ N5 = N4 + N6                                 # first dictionary entry used for a
 ESC_STEP = 51                                # escape character cycling (§9.2)
 
 
+def _validate_parameters(n2: int, n7: int) -> None:
+    # Annex A encodes P1 (N2) in two octets, so 65535 is the largest value a
+    # peer can negotiate even though the algorithm itself specifies no upper
+    # N2 bound. P2 (N7) is explicitly limited to 6..250 by §5.1.
+    if not isinstance(n2, int) or not 512 <= n2 <= 65535:
+        raise ValueError("P1 (N2) must be 512..65535")
+    if not isinstance(n7, int) or not 6 <= n7 <= 250:
+        raise ValueError("P2 (N7) must be 6..250")
+
+
 class V42bisError(Exception):
     """A C-ERROR condition (§5.8): the decoder lost synchronisation or saw a procedural error."""
 
@@ -126,10 +136,7 @@ class _BitWriter:
 
 class Encoder:
     def __init__(self, n2: int = 1024, n7: int = 8, auto_switch: bool = True):
-        if n2 < 512:
-            raise ValueError("P1 (N2) must be at least 512")
-        if not 6 <= n7 <= 250:
-            raise ValueError("P2 (N7) must be 6..250")
+        _validate_parameters(n2, n7)
         self.n2, self.n7 = n2, n7
         self.n1 = max(1, math.ceil(math.log2(n2)))
         self.d = Dictionary(n2, n7)
@@ -140,6 +147,7 @@ class Encoder:
     def init(self) -> None:
         """C-INIT (§7.2): dictionary reset, C2 = N3 + 1, C3 = N4 x 2, transparent mode, escape character 0."""
         self.d.reset()
+        self.bits = _BitWriter()
         self.c2, self.c3 = N3 + 1, N4 * 2
         self.compressed = False
         self.escape = 0
@@ -149,6 +157,20 @@ class Encoder:
         self.win_chars = 0                      # compressibility bookkeeping (§7.8)
         self.win_bits = 0
         self.out = bytearray()
+
+    def request_reset(self) -> bytes:
+        """Signal §7.8.3 RESET to the peer, then reinitialize this encoder."""
+        if self.compressed:
+            if self.cur is not None:
+                self._codeword(self.cur)
+            self.bits.put(ETM, self.c2)
+            self.bits.align()
+            self._drain_bits()
+            self.compressed = False
+        self._escape_command(RESET)
+        wire = bytes(self.out)
+        self.init()
+        return wire
 
     # -- output helpers ------------------------------------------------------------------------------------
     def _codeword(self, cw: int) -> None:
@@ -275,6 +297,7 @@ class Encoder:
 
 class Decoder:
     def __init__(self, n2: int = 1024, n7: int = 8):
+        _validate_parameters(n2, n7)
         self.n2, self.n7 = n2, n7
         self.n1 = max(1, math.ceil(math.log2(n2)))
         self.d = Dictionary(n2, n7)
@@ -338,6 +361,8 @@ class Decoder:
                 self.d.reset()
                 self.c2, self.c3 = N3 + 1, N4 * 2
                 self.cur_t = self.last_created = self.pending = None
+                self.escape = 0
+                self.acc, self.nbits = 0, 0
             else:
                 raise V42bisError(f"reserved command code {b}")
         elif b == self.escape:

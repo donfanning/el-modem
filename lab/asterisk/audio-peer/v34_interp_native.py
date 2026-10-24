@@ -62,6 +62,21 @@ def _interp(z, positions, half):
 kernel=njit(cache=True)(_interp) if njit else _interp
 
 
+def _trajectory_window(grid, derivative, residual, deviation):
+    """Fuse the trajectory-grid residual multiply/add into one compiled pass."""
+    result=np.empty(grid.shape[0],np.complex128)
+    for i in range(grid.shape[0]):
+        result[i]=grid[i]+(residual[i]+deviation)*derivative[i]
+    return result
+
+
+trajectory_window_kernel=njit(cache=True)(_trajectory_window) if njit else _trajectory_window
+
+
+def trajectory_window(grid, derivative, residual, deviation):
+    return trajectory_window_kernel(grid,derivative,residual,deviation)
+
+
 def _windows(source, positions, rotation, shift):
     result=np.empty(positions.shape,np.complex128)
     for row in range(len(positions)):
@@ -105,4 +120,6 @@ def warmup():
         kernel(np.zeros(32,np.complex128),np.array([12.25,13.]),6)
         window_kernel(np.zeros((1,32),np.complex128),np.array([[12.25]]),
                       np.ones(1,np.complex128),np.zeros(1))
+        trajectory_window_kernel(np.ones(4,np.complex128),np.ones(4,np.complex128),
+                                 np.zeros(4),0.)
     return njit is not None

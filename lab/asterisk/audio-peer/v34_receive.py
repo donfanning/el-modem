@@ -30,8 +30,9 @@ class SearchPolicy:
         if not self.initial_states or any(len(s)!=4 or any(b not in (0,1) for b in s)
                                           for s in self.initial_states):
             raise ValueError('initial states must be four binary delay elements')
-        if not self.boundary_offsets or any(not isinstance(k,int) or abs(k)>8 for k in self.boundary_offsets):
-            raise ValueError('boundary offsets must be integers within eight symbols')
+        max_offset = 128 if self.label.endswith('-diagnostic') else 0
+        if not self.boundary_offsets or any(not isinstance(k,int) or abs(k)>max_offset for k in self.boundary_offsets):
+            raise ValueError(f'boundary offsets exceed the {max_offset}-symbol policy limit')
         if self.label=='standard' and (self.rate_search or self.initial_states!=((0,0,0,0),) or self.boundary_offsets!=(0,)):
             raise ValueError('standard policy fixes negotiated rate, zero resets and E boundary')
 
@@ -51,13 +52,16 @@ class SearchPolicy:
         return cls(DUAL_CONVENTION, False, ((0,0,0,0),(0,1,0,0)), (0,))
 
     @classmethod
-    def diagnostic(cls, axis='combined'):
+    def diagnostic(cls, axis='combined', boundary_radius=8):
         if axis not in ('rate','reset','boundary','combined'):
             raise ValueError('unknown diagnostic axis')
+        if not isinstance(boundary_radius, int) or not 0 <= boundary_radius <= 128:
+            raise ValueError('diagnostic boundary radius must be an integer in 0..128')
         states=tuple(tuple((s>>k)&1 for k in range(4)) for s in range(16))
         return cls(axis+'-diagnostic', axis in ('rate','combined'),
                    states if axis in ('reset','combined') else ((0,0,0,0),),
-                   tuple(range(-8,9)) if axis in ('boundary','combined') else (0,))
+                   tuple(range(-boundary_radius,boundary_radius+1)
+                         ) if axis in ('boundary','combined') else (0,))
 
 
 def projection(x, energy):
@@ -331,7 +335,7 @@ def initialize(engine, eq, remote_role, baud, policy=None):
     # Legacy simulated replay remains compatible; passive observation passes an
     # explicit policy and never uses this switch to select its qualification.
     recorded=getattr(engine,'_recorded_receive',False)
-    policy=policy or (SearchPolicy.diagnostic() if recorded else live_policy())
+    policy=policy or getattr(engine,'_receive_search_policy',None) or (SearchPolicy.diagnostic() if recorded else live_policy())
     profiles=[profile]
     if policy.rate_search:
         mask=engine._local_mp['mask'] & (getattr(engine,'mp_ans',None) or getattr(engine,'mp_call',None))['mask']

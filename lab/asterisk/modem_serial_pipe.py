@@ -369,6 +369,7 @@ def probe_device(device):
 class PipeSerial:
     """Byte-pipe serial endpoint for the virtual-COM driver. See module docstring."""
 
+    supports_modem_control = False
     # Terminals genuinely attach over a COM port, so ATI4 should report COM.
     is_com = True
 
@@ -415,7 +416,7 @@ class PipeSerial:
         report None rather than a fabricated boolean."""
         return dict(TR=self.client_present(), RTS=None, CTS=None)
 
-    def update_lines(self, carrier, ring, ready, hardware, backlog=0):
+    def update_lines(self, carrier, ring, ready, hardware, backlog=0, *, rts_flow=None, cts_flow=None):
         """No modem-control lines exist on a byte pipe.
 
         The ring state is recorded for the dashboard, and ``hardware`` is

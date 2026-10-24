@@ -23,7 +23,7 @@ class NoiseLiveTests(unittest.TestCase):
         baseline=receive.Receiver(profile,'answer');baseline.qualify(observed)
         original=receive.Receiver.qualify
         duplex=SimpleNamespace(finish=lambda receiver:None)
-        probe=LivePredictor(duplex)
+        probe=LivePredictor(duplex,stream_data=True)
         try:
             probe.model=dict(accepted=True)
             probe.coefficients=np.array([.6-.12j,.12+.06j,-.08+.03j])
@@ -38,13 +38,16 @@ class NoiseLiveTests(unittest.TestCase):
             np.testing.assert_array_equal(receiver.drx.x_hist,baseline.drx.x_hist)
             np.testing.assert_array_equal(receiver.slicer_hist,receiver.drx.x_hist)
             np.testing.assert_array_equal(receiver.vit.x_hist,receiver.drx.x_hist)
-            np.testing.assert_array_equal(receiver.vit.metric,baseline.vit.metric)
+            finite=np.flatnonzero(np.isfinite(receiver.vit.metric))
+            self.assertEqual(len(finite),1)
+            self.assertEqual(receiver.vit.metric[finite[0]],0.)
+            self.assertEqual(receiver.vit.m4,baseline.vit.m4)
         finally:probe.close()
         self.assertIs(receive.Receiver.qualify,original)
 
     def test_rejected_training_leaves_production_decisions_unchanged(self):
         profile,observed=self.fixture()
-        probe=LivePredictor(SimpleNamespace(finish=lambda receiver:None))
+        probe=LivePredictor(SimpleNamespace(finish=lambda receiver:None),stream_data=True)
         try:
             probe.model=dict(accepted=False)
             receiver=receive.Receiver(profile,'answer');receiver.qualify(observed)

@@ -4,20 +4,20 @@ import v34_data as data
 import v34_receive as receive
 import v34_b1_reference as independent
 
-def detect(samples, receiver, coefficients, *, backend='auto'):
+def detect(samples, receiver, coefficients, *, backend='auto', return_state=False):
     """Use the optional native lab kernel, retaining an explicit reference path."""
     if backend not in ('auto', 'python', 'numba'):
         raise ValueError('unknown predictive backend')
     if backend != 'python':
         from v34_noise_kernel import available, detect_native
         if available():
-            return detect_native(samples, receiver, coefficients)
+            return detect_native(samples, receiver, coefficients, return_state=return_state)
         if backend == 'numba':
             raise RuntimeError('Numba predictive backend is unavailable')
-    return detect_reference(samples, receiver, coefficients)
+    return detect_reference(samples, receiver, coefficients, return_state=return_state)
 
 
-def detect_reference(samples, receiver, coefficients):
+def detect_reference(samples, receiver, coefficients, *, return_state=False):
     coefficients=np.asarray(coefficients,complex)
     if coefficients.shape != (3,):
         raise ValueError('fixed three-coefficient predictor required')
@@ -86,8 +86,12 @@ def detect_reference(samples, receiver, coefficients):
                     ne[target]=(errors1[row,i1],e0[i0],eh[0])
         if not np.any(np.isfinite(new)):raise ValueError('no surviving candidate path')
         records.append((previous,chosen));metrics,histories,residuals=new,nh,ne
-    state=int(np.argmin(metrics));cost=float(metrics[state]);pairs=[]
+    state=int(np.argmin(metrics));cost=float(metrics[state])
+    final_state=state;final_history=histories[state].copy();final_residual=residuals[state].copy()
+    pairs=[]
     for previous,chosen in reversed(records):
         pairs.append(chosen[state].copy());state=int(previous[state])
     if state != initial:raise ValueError('traceback failed to reach initial state')
-    return np.asarray(list(reversed(pairs))).reshape(-1),cost
+    result=(np.asarray(list(reversed(pairs))).reshape(-1),cost)
+    if return_state:return result+(final_history,final_residual,final_state)
+    return result

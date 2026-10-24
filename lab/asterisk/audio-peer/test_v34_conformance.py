@@ -6,6 +6,7 @@ import numpy as np
 import v34_ans
 import v34_call
 import v34_data as vd
+import v34_mp
 import v34_negotiation as vn
 from v34_preemphasis import PreEmphasis
 from v34_preemphasis_coefficients import COEFFICIENTS
@@ -37,23 +38,52 @@ class DuplexTests(unittest.TestCase):
         self.assertEqual(c.rtd_samples,80)
 
 class NegotiationTests(unittest.TestCase):
+    def test_configured_minimum_excludes_lower_mp_rates(self):
+        local = vn.offer(33600, minimum=9600)
+        negotiated = vn.resolve(local, vn.offer(33600), 'call', SYMBOL_RATES[5], SYMBOL_RATES[5])
+        self.assertGreaterEqual(negotiated.tx.rate, 9600)
+        self.assertGreaterEqual(negotiated.rx.rate, 9600)
+        with self.assertRaisesRegex(ValueError, 'no common V.34 rate'):
+            vn.resolve(local, vn.offer(7200), 'call', SYMBOL_RATES[5], SYMBOL_RATES[5])
+
+    def test_every_min_max_pair_reaches_both_production_mp_offers(self):
+        for minimum_index in range(1, 15):
+            for maximum_index in range(minimum_index, 15):
+                expected_mask = ((1 << maximum_index) - 1) ^ ((1 << (minimum_index - 1)) - 1)
+                for cls in (v34_call.V34Caller, v34_ans.V34Answerer):
+                    modem = cls(data_rate=maximum_index * 2400,
+                                min_data_rate=minimum_index * 2400)
+                    mp = v34_mp.parse_mp(v34_mp.build_mp(1, **modem._local_mp))
+                    self.assertEqual(mp['max_c2a'], maximum_index)
+                    self.assertEqual(mp['max_a2c'], maximum_index)
+                    self.assertEqual(mp['mask'], expected_mask)
+
     def test_asymmetric_waveforms_decode_the_remote_rate(self):
-        caller = v34_call.V34Caller(data_rate=33600)
-        answerer = v34_ans.V34Answerer(data_rate=33600)
-        answerer._local_mp['max_c2a'] = 3
-        sent = False
-        outgoing, incoming = bytes(range(128)), bytes(reversed(range(128)))
-        for _ in range(1000):
-            c, a = caller.tx(160), answerer.tx(160)
-            caller.rx(a); answerer.rx(c)
-            if caller.stage == answerer.stage == 'data' and not sent:
-                caller.feed_bytes(outgoing); answerer.feed_bytes(incoming); sent = True
-            if sent and bytes(caller.rx_bytes) == incoming and bytes(answerer.rx_bytes) == outgoing:
-                break
-        self.assertEqual((caller.data_rate, caller.rx_rate), (7200, 33600))
-        self.assertEqual((answerer.data_rate, answerer.rx_rate), (33600, 7200))
-        self.assertEqual(bytes(caller.rx_bytes), incoming)
-        self.assertEqual(bytes(answerer.rx_bytes), outgoing)
+        outgoing = bytes((i * 73 + 19) & 0xff for i in range(4096))
+        incoming = bytes((i * 151 + 7) & 0xff for i in range(4096))
+        cases = (
+            ('caller-to-answerer limited', 'answer', 'max_c2a', 3, (7200, 33600), (33600, 7200)),
+            ('answerer-to-caller limited', 'call', 'max_a2c', 5, (33600, 12000), (12000, 33600)),
+        )
+        for name, limiter, field, cap, caller_rates, answerer_rates in cases:
+            with self.subTest(name=name):
+                caller = v34_call.V34Caller(data_rate=33600)
+                answerer = v34_ans.V34Answerer(data_rate=33600)
+                owner = answerer if limiter == 'answer' else caller
+                owner._local_mp[field] = cap
+                sent = False
+                for _ in range(1000):
+                    c, a = caller.tx(160), answerer.tx(160)
+                    caller.rx(a); answerer.rx(c)
+                    if caller.stage == answerer.stage == 'data' and not sent:
+                        caller.feed_bytes(outgoing); answerer.feed_bytes(incoming); sent = True
+                    if sent and bytes(caller.rx_bytes) == incoming and bytes(answerer.rx_bytes) == outgoing:
+                        break
+                self.assertEqual((caller.data_rate, caller.rx_rate), caller_rates)
+                self.assertEqual((answerer.data_rate, answerer.rx_rate), answerer_rates)
+                self.assertTrue(sent)
+                self.assertEqual(bytes(caller.rx_bytes), incoming)
+                self.assertEqual(bytes(answerer.rx_bytes), outgoing)
 
     def resolve(self,role='call',**updates):
         return vn.resolve(vn.offer(33600),{**vn.offer(33600),**updates},role,
@@ -75,10 +105,90 @@ class NegotiationTests(unittest.TestCase):
         for baud in SYMBOL_RATES.values():
             self.assertTrue(any(vn.supported(n*2400,baud) for n in range(1,15)))
         self.assertFalse(vn.supported(33600,2400))
+
+    def test_each_mp_rate_bit_resolves_at_each_symbol_rate_and_role(self):
+        # The current mapper supports a contiguous rate range at each baud.
+        # These explicit ceilings make mask-to-rate selection observable rather
+        # than deriving the expected answer through vn.supported().
+        ceilings = (10, 11, 11, 12, 13, 14)
+        minimums = (1, 2, 2, 2, 2, 2)
+        for symbol_index, (baud, ceiling, minimum) in enumerate(
+                zip(SYMBOL_RATES.values(), ceilings, minimums)):
+            for rate_index in range(1, 15):
+                for role in ('call', 'answer'):
+                    local = vn.offer(ceiling * 2400, minimum=minimum * 2400)
+                    peer = vn.offer(ceiling * 2400, minimum=minimum * 2400)
+                    local['mask'] = peer['mask'] = 1 << (rate_index - 1)
+                    if minimum <= rate_index <= ceiling:
+                        result = vn.resolve(local, peer, role, baud, baud)
+                        self.assertEqual((result.tx.rate, result.rx.rate),
+                                         (rate_index * 2400, rate_index * 2400),
+                                         (symbol_index, rate_index, role))
+                    else:
+                        with self.subTest(symbol_index=symbol_index,
+                                          rate_index=rate_index, role=role), \
+                                self.assertRaises(ValueError):
+                            vn.resolve(local, peer, role, baud, baud)
+
+    def test_directional_maxima_map_to_tx_rx_for_both_roles(self):
+        local, peer = vn.offer(33600), vn.offer(33600)
+        local.update(asym=1, max_c2a=3, max_a2c=5)
+        peer.update(asym=1, max_c2a=4, max_a2c=6)
+        for role, expected in (('call', (7200, 12000)),
+                               ('answer', (12000, 7200))):
+            result = vn.resolve(local, peer, role, SYMBOL_RATES[5], SYMBOL_RATES[5])
+            self.assertEqual((result.tx.rate, result.rx.rate), expected)
     def test_peer_fields_command_our_transmitter(self):
         n=self.resolve(trellis=2,shaping=1,nonlinear=1,precoder=[1,2,3,4,5,6])
         self.assertEqual(n.tx.trellis,2); self.assertEqual(n.rx.trellis,0)
         self.assertTrue(n.tx.shaping); self.assertFalse(n.rx.shaping)
+
+    def test_profile_fields_are_directional_for_every_supported_selection(self):
+        own_precoder = [123, -45, 67, -89, 101, -112]
+        peer_precoder = [-321, 54, -76, 98, -109, 210]
+        for role in ('call', 'answer'):
+            for own_shaping, own_nonlinear, peer_trellis, peer_shaping, peer_nonlinear in itertools.product(
+                    (0, 1), (0, 1), (0, 1, 2), (0, 1), (0, 1)):
+                local = vn.offer(33600, receive={
+                    'trellis': 0, 'shaping': own_shaping, 'nonlinear': own_nonlinear,
+                    'precoder': own_precoder})
+                peer = vn.offer(33600)
+                peer.update(trellis=peer_trellis, shaping=peer_shaping,
+                            nonlinear=peer_nonlinear, precoder=peer_precoder)
+                n = vn.resolve(local, peer, role, SYMBOL_RATES[5], SYMBOL_RATES[5])
+                self.assertEqual((n.tx.trellis, n.tx.shaping, n.tx.nonlinear,
+                                  n.tx.precoder),
+                                 (peer_trellis, bool(peer_shaping), bool(peer_nonlinear),
+                                  tuple(peer_precoder)), role)
+                self.assertEqual((n.rx.trellis, n.rx.shaping, n.rx.nonlinear,
+                                  n.rx.precoder),
+                                 (0, bool(own_shaping), bool(own_nonlinear),
+                                  tuple(own_precoder)), role)
+
+    def test_mp_encoder_leaves_reserved_rate_mask_bit_zero(self):
+        for mp_type in (0, 1):
+            bits = v34_mp.build_mp(mp_type, max_c2a=14, max_a2c=14, mask=0x3fff)
+            self.assertEqual(len(bits), 88 if mp_type == 0 else 188)
+            self.assertEqual(bits[49], 0)  # Table 20/21: reserved bit 49.
+            decoded = v34_mp.parse_mp(bits)
+            self.assertEqual(decoded['mask'], 0x3fff)
+        for rate_index in range(14):
+            bits = v34_mp.build_mp(mask=1 << rate_index)
+            self.assertEqual(bits[35 + rate_index], 1)
+            self.assertEqual(sum(bits[35:49]), 1)
+
+    def test_mp_encoder_rejects_invalid_or_reserved_selections(self):
+        cases = (
+            {'mp_type': 2}, {'max_c2a': 0}, {'max_a2c': 15},
+            {'trellis': 3}, {'aux': 2}, {'nonlinear': 2},
+            {'shaping': 2}, {'ack': 2}, {'asym': 2},
+            {'mask': 1 << 14}, {'mask': -1},
+            {'mp_type': 1, 'precoder': [0] * 5},
+            {'mp_type': 1, 'precoder': [0] * 5 + [32768]},
+        )
+        for fields in cases:
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                v34_mp.build_mp(**fields)
     def test_capabilities_stay_stable(self):
         for cls,attr,rxrate in [(v34_call.V34Caller,'mp_ans',33600),(v34_ans.V34Answerer,'mp_call',7200)]:
             m=cls(data_rate=33600); m.call_baud=m.ans_baud=SYMBOL_RATES[5]

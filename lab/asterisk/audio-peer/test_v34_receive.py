@@ -47,8 +47,12 @@ class ReceiveTests(unittest.TestCase):
         self.assertFalse(boundary.rate_search)
         self.assertEqual(boundary.initial_states,((0,0,0,0),))
         self.assertEqual(boundary.boundary_offsets,tuple(range(-8,9)))
+        wide=rx.SearchPolicy.diagnostic('combined',boundary_radius=128)
+        self.assertEqual(wide.boundary_offsets,tuple(range(-128,129)))
         with self.assertRaises(ValueError):rx.SearchPolicy(rate_search=True)
         with self.assertRaises(ValueError):rx.SearchPolicy.diagnostic('unknown')
+        with self.assertRaises(ValueError):rx.SearchPolicy.diagnostic(boundary_radius=129)
+        with self.assertRaises(ValueError):rx.SearchPolicy('standard',False,((0,0,0,0),),(1,))
 
     def test_projection_inverse(self):
         # Independent scalar evaluation of 9-33..35 (not production forward code).

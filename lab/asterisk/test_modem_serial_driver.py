@@ -6,7 +6,30 @@ import select
 import termios
 import time
 import unittest
+from unittest import mock
 from modem_serial import DriverSerial,GET_REMOTE
+
+
+class DriverOutputQueueTests(unittest.TestCase):
+    def test_output_pending_includes_driver_queue_and_tty_queue(self):
+        serial = object.__new__(DriverSerial)
+        serial.fd = 17
+        serial.pending = bytearray(b"queued")
+
+        def ioctl(_fd, _request, queue, _mutate):
+            queue[0] = 5
+            return 0
+
+        with mock.patch("modem_serial.fcntl.ioctl", side_effect=ioctl):
+            self.assertEqual(serial.output_pending(), 11)
+
+    def test_output_pending_reports_unknown_when_tty_query_fails(self):
+        serial = object.__new__(DriverSerial)
+        serial.fd = 17
+        serial.pending = bytearray()
+        with mock.patch("modem_serial.fcntl.ioctl", side_effect=OSError("unsupported")):
+            self.assertIsNone(serial.output_pending())
+
 
 @unittest.skipUnless(os.environ.get('EL_MODEM_TEST_DRIVER')=='1','requires installed patched serialsim driver')
 class DriverTests(unittest.TestCase):

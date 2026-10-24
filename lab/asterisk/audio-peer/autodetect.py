@@ -5,13 +5,13 @@ for the answer tone, ignore it, and then respond to whatever the answerer
 sends next. This module does the same for the lab's two real-modem-capable
 line modes:
 
-* SpanDSP V.22/V.22bis/Bell 212A (answerer sends its 2400 Hz high-band carrier)
+* Project V.22/V.22bis (answerer sends its 2400 Hz high-band carrier)
 * Bell 103 at 300 bps (answerer sends a 2225 Hz mark carrier)
 
 Behaviour, in order:
 
 1. **Answer-tone gate.** A 2100 Hz answer tone (ANS, V.25) lies inside the
-   V.22 answerer's receive band, and SpanDSP's V.22 caller treats any carrier
+   V.22 answerer's receive band, and the V.22 caller treats any carrier
    as the start of the handshake -- it "trains" on the tone and starts
    transmitting too early (seen live against NIST: a false training success
    during the tone, then carrier loss when the tone ended). So audio is fed to

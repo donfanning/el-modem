@@ -1,9 +1,7 @@
 """ctypes binding for SpanDSP's V.22/V.22bis/Bell 212A modem.
 
-This is the first modem in the lab that is built from a standards-based
-implementation (SpanDSP, LGPL-2.1) rather than lab-only DSP, so it has a real
-chance of training against a hardware modem. It replaces ``bell212.py`` for
-anything that must talk to a real peer; ``bell212.py`` stays as a lab fixture.
+This is a test/reference binding to SpanDSP (LGPL-2.1), not the active
+product modem engine. ``bell212.py`` remains a separate lab fixture.
 
 SpanDSP's modem moves a *synchronous* bit stream and performs the V.22 /
 Bell 212A handshake (calling/answering sequences, scrambler, training)
@@ -49,6 +47,9 @@ CARRIER_DOWN = -1
 V22BIS_GUARD_TONE_NONE = 0
 V22BIS_GUARD_TONE_550HZ = 1
 V22BIS_GUARD_TONE_1800HZ = 2
+# This option is declared by the pinned SpanDSP headers but is not consumed by
+# its v22bis_tx.c/v22bis_rx.c implementation. Passing it does not create an
+# independent Bell 212A handshake/reference in this build.
 V22BIS_BELL212A_COMPATIBILITY_MODE = 0x100
 V22BIS_USE_U00 = 0x200
 
@@ -135,7 +136,7 @@ class _AsyncFramer:
 
 
 class V22bisModem:
-    """One end of a V.22/V.22bis (or Bell 212A) connection.
+    """One end of a SpanDSP V.22/V.22bis connection.
 
     ``tx_samples``/``feed_pcm`` work on 8 kHz signed 16-bit linear audio.
     ``events`` collects the modem's status changes as (name, status) pairs.
@@ -145,7 +146,7 @@ class V22bisModem:
         self,
         calling_party: bool,
         bit_rate: int = 1200,
-        bell212a: bool = True,
+        bell212a: bool = False,
         guard_tone: int = V22BIS_GUARD_TONE_NONE,
         tx_power_dbm0: float = -10.0,
     ):
@@ -180,6 +181,7 @@ class V22bisModem:
         # during V.42 detection are also decoded as plain async characters.
         self._adp_framer = _AsyncFramer()
         self._adp_detector = None
+        self._adp_armed = False
         self._v42_direct = False  # peer's ADP accepted by us, not by SpanDSP
         self._v42_calling = False
         self.capture_detect_bits = bool(os.environ.get("MODEM_V42_CAPTURE"))
@@ -191,6 +193,7 @@ class V22bisModem:
             if self.v42_mode in ("detect", "lapm"):
                 bit = self._v42.tx_bit()
                 self._v42_bits += 1
+                self._arm_adp_detector()
                 self._v42_check()
                 return bit
             return self._tx_bits.popleft() if self._tx_bits else 1
@@ -203,7 +206,8 @@ class V22bisModem:
                     if (self.capture_detect_bits and self.v42_mode == "detect"
                             and len(self.detect_rx_bits) < 6000):
                         self.detect_rx_bits.append(bit)
-                    if self.v42_mode == "detect" and self._adp_detector is not None:
+                    if (self.v42_mode == "detect" and self._adp_detector is not None
+                            and self._adp_armed):
                         got = bytes(self._adp_framer.push(bit))
                         if got:
                             self._adp_detector.feed(got)
@@ -276,18 +280,17 @@ class V22bisModem:
         with self._lock:
             self._start_v42(*args, **kwargs)
 
-    def _start_v42(self, calling_party: bool, detect_seconds: float = 0.73,
+    def _start_v42(self, calling_party: bool, detect_seconds: float = 0.75,
                    establish_seconds: float = 10.0, frame_size: int = 0,
                    window: int = 0, compression: tuple[int, int, int] | None = None,
                    protocol: str = "lapm", mnp_level: int = 4) -> None:
         """Run V.42 detection (and LAPM if the peer supports it) on the bit
         stream. User data is held until the outcome is known; on failure the
         modem falls back to raw async data. Deadlines are counted in bits at
-        the current line rate. ``detect_seconds`` is deliberately just under
-        SpanDSP's own 750 ms detection timer (T400, now scaled to the line
-        rate): if that fired first the stream would switch to HDLC flags in the
-        middle of an ODP character and leave the peer a stray byte, so the
-        fallback is taken here first, inside a gap between ODP characters."""
+        the current line rate. ``detect_seconds`` defaults to V.42's 750 ms
+        T400. Fallback is deferred until the next ODP mark gap, so expiry does
+        not switch to HDLC flags in the middle of an ODP character and leave
+        the peer a stray byte."""
         from v42_lapm import V42Link  # noqa: PLC0415
 
         from v42_detect import AdpDetector  # noqa: PLC0415
@@ -299,6 +302,7 @@ class V22bisModem:
         self._adp_framer = _AsyncFramer()
         # Only a caller looks for the peer's ADP; an answerer sends it.
         self._adp_detector = AdpDetector() if calling_party else None
+        self._adp_armed = False
         if protocol == "mnp":
             # V.42 Annex A (MNP 2-4 class, mnp_link.py): no detection phase, the originator just sends its LR
             from mnp_link import MNP_LEVELS, MnpLink  # noqa: PLC0415
@@ -360,7 +364,9 @@ class V22bisModem:
         """
         link = self._v42
         det = self._adp_detector
-        if det is None or self.v42_mode != "detect" or link.adp_seen or self._v42_direct:
+        if (det is None or not self._adp_armed or self.v42_mode != "detect"
+                or link.adp_seen or self._v42_direct
+                or self._v42_bits > self._v42_detect_deadline):
             return False
         verdict = det.result
         if verdict == "no_v42":
@@ -384,6 +390,18 @@ class V22bisModem:
         self._v42_detect_deadline = 10 ** 9
         self._v42_establish_deadline = int(10.0 * rate)
         return True
+
+    def _arm_adp_detector(self) -> None:
+        """Arm the lenient detector only after the minimum valid ODP prefix."""
+        if self._adp_detector is None or self._adp_armed:
+            return
+        from v42_detect import ADP_ARM_BITS, AdpDetector
+
+        if self._v42_bits < ADP_ARM_BITS:
+            return
+        self._adp_framer = _AsyncFramer()
+        self._adp_detector = AdpDetector()
+        self._adp_armed = True
 
     def _odp_in_gap(self) -> bool:
         """True when the ODP being sent is between characters.

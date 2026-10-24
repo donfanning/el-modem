@@ -206,25 +206,48 @@ class ReceiveDsp:
 
     def qualify(self, receiver, observed, gain):
         if not self.predictive or not self.noise_model or not self.noise_model.get('accepted'):return
+        from v34_noise_kernel import available
+        if not available():
+            info=dict(applied=False,baseline_bit_errors=receiver.diagnostics['bit_errors'],
+                      reason='Numba required for bounded real-time predictive detection')
+            receiver.diagnostics['noise_predictive']=info
+            self.calls.append(info)
+            return
         import v34_datarx as datarx
         from v34_noise_predictive import detect
         started=time.monotonic();baseline=receiver.diagnostics['bit_errors']
-        points,cost=detect(np.asarray(observed)/gain,receiver,self.coefficients)
-        receiver.drx=datarx.DataRx(receiver.profile.rate,receiver.profile.baud,
-                                 expanded=receiver.profile.shaping,precoder=receiver.h)
-        receiver.drx.conv.d=list(receiver.initial_state)
-        bits=[]
-        for i in range(0,len(points),8):bits.extend(receiver.drx.decode_frame(points[i:i+8])[0])
+        try:
+            points,cost,_,residual_history,final_state=detect(
+                np.asarray(observed)/gain,receiver,self.coefficients,return_state=True)
+            drx=datarx.DataRx(receiver.profile.rate,receiver.profile.baud,
+                expanded=receiver.profile.shaping,precoder=receiver.h)
+            drx.conv.d=list(receiver.initial_state)
+            bits=[]
+            for i in range(0,len(points),8):bits.extend(drx.decode_frame(points[i:i+8])[0])
+            candidate=copy.copy(receiver);candidate.drx=drx
+            from v34_noise_stream import PredictiveTrellisDetector
+            vit=PredictiveTrellisDetector(candidate,self.coefficients,residual_history,
+                                           final_state=final_state)
+        except Exception as error:
+            info=dict(applied=False,baseline_bit_errors=baseline,
+                      reason=f'{type(error).__name__}: {error}',
+                      seconds=time.monotonic()-started)
+            receiver.diagnostics['noise_predictive']=info
+            self.calls.append(info)
+            return
         errors=sum(a!=b for a,b in zip(bits,receiver.expected))+abs(len(bits)-len(receiver.expected))
         for key in ('first_decoded_point_deltas','first_divergence','point_distance_domain'):
             receiver.diagnostics.pop(key,None)
         info=dict(applied=True,baseline_bit_errors=baseline,innovation_cost=cost,
-                  seconds=time.monotonic()-started,data_detector='ordinary streaming',uses_expected_branch_targets=False)
+                  seconds=time.monotonic()-started,data_detector='TRN-noise predictive streaming',
+                  backend=vit.backend,traceback_depth=vit.depth,
+                  uses_expected_branch_targets=False,terminal_state=int(final_state),
+                  predictor_history_carried=True)
         receiver.diagnostics.update(qualified=errors==0,bit_errors=errors,
             mapper_symbol_errors=int(np.sum(points!=receiver.expected_mapper)),
             error_bit_indices=[i for i,(a,b) in enumerate(zip(bits,receiver.expected)) if a!=b],
             length_mismatch=abs(len(bits)-len(receiver.expected)),noise_predictive=info)
-        receiver.bits=bits;receiver.slicer_hist=list(receiver.drx.x_hist);receiver.vit=receiver.detector(start=True)
+        receiver.drx=drx;receiver.bits=bits;receiver.slicer_hist=list(drx.x_hist);receiver.vit=vit
         self.calls.append(info)
 
     def report(self):

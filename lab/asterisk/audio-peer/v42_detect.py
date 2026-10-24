@@ -24,6 +24,10 @@ ODP_CHARS = (0x11, 0x91)
 ADP_V42 = (0x45, 0x43)
 ADP_NO_V42 = (0x45, 0x00)
 IDLE_ONES = 8  # 8-16 ones between characters; the stop bit is not counted here
+# The answerer must recognize four alternating DC1 characters before it may
+# send an ADP. With the minimum eight mark bits, the caller has emitted two
+# complete 36-bit ODP blocks by then.
+ADP_ARM_BITS = 72
 
 
 def char_bits(value: int) -> list[int]:
@@ -68,16 +72,39 @@ class AdpDetector:
     """Classifies an answerer from the bytes it sends after our ODP."""
 
     def __init__(self) -> None:
-        self._v42 = _PatternDetector(ADP_V42)
-        self._no_v42 = _PatternDetector(ADP_NO_V42)
+        self._buf = bytearray()
+        self._gaps: list[int | None] = []
         self.result: str | None = None  # "v42" | "no_v42" | None
 
-    def feed(self, data: bytes) -> str | None:
+    def feed(self, data: bytes, mark_gaps: list[int | None] | None = None) -> str | None:
+        """Feed decoded bytes and optional mark-bit gaps before each byte.
+
+        The standard ADP uses 8–16 mark bits between characters. Preserve the
+        known back-to-back peer form (zero extra marks) as a compatibility
+        exception, but do not let arbitrary long gaps join unrelated text into
+        a false ADP. Callers without bit timing retain the historical lenient
+        behavior.
+        """
         if self.result is None:
-            if self._v42.feed(data):
-                self.result = "v42"
-            elif self._no_v42.feed(data):
-                self.result = "no_v42"
+            gaps = [None] * len(data) if mark_gaps is None else mark_gaps
+            if len(gaps) != len(data):
+                raise ValueError("one mark-gap value is required for each decoded byte")
+            self._buf.extend(data)
+            self._gaps.extend(gaps)
+            if len(self._buf) > 64:
+                del self._buf[:-64]
+                del self._gaps[:-64]
+            if len(self._buf) >= 4:
+                pattern = bytes(self._buf[-4:])
+                tail_gaps = self._gaps[-3:]
+                valid_gaps = all(
+                    gap is None or gap == 0 or 8 <= gap <= 16
+                    for gap in tail_gaps
+                )
+                if valid_gaps and pattern == bytes(ADP_V42 * 2):
+                    self.result = "v42"
+                elif valid_gaps and pattern == bytes(ADP_NO_V42 * 2):
+                    self.result = "no_v42"
         return self.result
 
 

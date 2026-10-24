@@ -5,7 +5,7 @@ NO CARRIER (hangup on terminal close). Needs the lab up in a mode that connects 
 import os, sys, time, select, subprocess, signal
 here = os.path.dirname(os.path.abspath(__file__))
 link0, link1 = "/tmp/softmodem0", "/tmp/softmodem1"
-procs=[subprocess.Popen([sys.executable,os.path.join(here, "serial_bridge.py"),"client","--connect",f"127.0.0.1:{p}","--link",l]) for p,l in ((9100,link0),(9101,link1))]
+procs=[subprocess.Popen([sys.executable,os.path.join(here, "serial_bridge.py"),"client","--connect",f"127.0.0.1:{p}","--baud-control-port",str(c),"--link",l]) for p,c,l in ((9100,9110,link0),(9101,9111,link1))]
 time.sleep(1.5)
 def op(p): return os.open(p, os.O_RDWR|os.O_NOCTTY)
 def wait(fd,pat,t):

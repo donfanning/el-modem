@@ -169,10 +169,11 @@ def mp_acknowledged(frames) -> bool:
 
 
 class V34Caller:
-    def __init__(self, rms: float = 900.0, info0: dict | None = None, log=None, symbol_rates=None, data_rate: int = 4800):
+    def __init__(self, rms: float = 900.0, info0: dict | None = None, log=None, symbol_rates=None, data_rate: int = 4800, min_data_rate: int = 2400):
         self.data_rate = data_rate
         self._data_rate_initial = data_rate
-        self._local_mp = v34_negotiation.offer(data_rate)
+        self._min_data_rate = min_data_rate
+        self._local_mp = v34_negotiation.offer(data_rate, minimum=min_data_rate)
         self.negotiated = None
         self.rx_rate = 0
         self.call_rate = data_rate                           # initial transmit rate ceiling
@@ -190,6 +191,8 @@ class V34Caller:
         self.amp = rms * math.sqrt(2)                      # peak amplitude of a nominal-power sinusoid
         self.t = 0                                         # samples transmitted so far
         self.rx_t = 0
+        self._rx_media_anchor: tuple[int, float] | None = None
+        self._tx_media_anchor: tuple[int, float] | None = None
         self.events: list[tuple[int, str]] = []
         self.stage = "silence75"
         self._log = log
@@ -292,6 +295,26 @@ class V34Caller:
     def _at(self, tx_sample: int, fn) -> None:
         self._actions.append((tx_sample, fn))
         self._actions.sort(key=lambda a: a[0])
+
+    def set_rx_media_deadline(self, deadline: float) -> None:
+        """Anchor the next RX sample to its monotonic RTP media time."""
+        self._rx_media_anchor = (self.rx_t, float(deadline))
+
+    def set_tx_media_deadline(self, deadline: float) -> None:
+        """Anchor the next generated TX sample to its RTP media deadline."""
+        self._tx_media_anchor = (self.t, float(deadline))
+
+    def _rx_sample_media_time(self, sample: int) -> float | None:
+        if self._rx_media_anchor is None:
+            return None
+        origin, deadline = self._rx_media_anchor
+        return deadline + (int(sample) - origin) / FS
+
+    def _tx_sample_for_media_time(self, media_time: float) -> int | None:
+        if self._tx_media_anchor is None:
+            return None
+        origin, deadline = self._tx_media_anchor
+        return origin + int(round((float(media_time) - deadline) * FS))
 
     # -- receive ----------------------------------------------------------------------------------------------
     def note_concealed(self, start: int, n: int) -> None:
@@ -397,8 +420,6 @@ class V34Caller:
             return
         if (self._w2400[j] * np.conj(self._w2400[j - 2])).real >= 0:
             return
-        if self.a_reversals and (j - 1) * WIN - self.a_reversals[-1] < 400:
-            return
         # locate the transition inside windows j-2..j: fit +-A cos(wt+phi) with a sign change at s, least squares
         i0 = (j - 2) * WIN
         n = 3 * WIN
@@ -428,6 +449,13 @@ class V34Caller:
         if len(self._reversal_candidates) < 128:
             self._reversal_candidates.append(dict(sample=t_rev, nmse=nmse, accepted=nmse<=0.2))
         if nmse > 0.2:
+            return
+        # Enforce the duplicate-reversal spacing against fitted transition
+        # times. Using the end of the preceding analysis window can reject a
+        # valid event exactly 400 samples later by up to 24 samples, depending
+        # on its phase within that window (seen on the paired-DCE +100 ppm
+        # capture r19, where a clean fit at Δ=400 was discarded as Δ=396).
+        if self.a_reversals and t_rev - self.a_reversals[-1] < 400:
             return
         self.a_reversals.append(float(t_rev))
         self._ev(f"tone A phase reversal #{len(self.a_reversals)} at sample {t_rev}")
@@ -648,6 +676,9 @@ class V34Caller:
         self.a_reversals.clear()
         self.b_reversal_t = self._b_reversal_rx = None
         self.probe_start = self.l1_start = None
+        self._toneb2_t0 = None
+        self.b2_reversal_t = None
+        self.l_started = False
         self._probe_retries = 0
         self._actions.clear()
         self._play(ArraySrc(np.zeros(int(0.070 * FS))), [ToneSrc(1200.0, self.amp)])
@@ -692,7 +723,7 @@ class V34Caller:
                  f"attempt {self._phase_retrains}/{self.PHASE_RETRAIN_MAX}")
         # forget phase 3/4 and the MP outcome; the ranging, INFO1c/INFO1a and phase 3 run again
         self.data_rate = self._data_rate_initial
-        self._local_mp = v34_negotiation.offer(self.data_rate)
+        self._local_mp = v34_negotiation.offer(self.data_rate, minimum=self._min_data_rate)
         self.negotiated = None
         self.rx_rate = 0
         self.info1a = None
@@ -1292,9 +1323,12 @@ class V34Caller:
                 self._try_info0a()
                 if self.stage != 'probing':
                     return
-                # Recovery heuristic: if no probe follows the duplex second A
-                # reversal, retry a later detected reversal within a bounded budget.
-                nxt = [r for r in self.a_reversals if r > t0 + int(0.12 * FS)]
+                # Recovery heuristic: if the chosen reversal was an earlier
+                # INFO0-repeat reversal, the actual answering reversal can be
+                # just inside this 120 ms search window.  The complete window
+                # has already been examined above, so any later detected A
+                # reversal is now a valid bounded re-anchor candidate.
+                nxt = [r for r in self.a_reversals if r > t0]
                 if nxt and self._probe_retries < 3 and self.rx_t > t0 + int(0.30 * FS):
                     self._probe_retries += 1
                     self.probe_start = int(nxt[0])
@@ -1313,15 +1347,37 @@ class V34Caller:
             self._ev("sending tone B after L2")
 
     def _toneB2(self) -> None:
-        """B is on the line: wait for the answerer's tone A reversal, answer it 40 ms later, then send L1 and L2."""
+        """After probing, answer Tone A; use V.34's bounded fallback if no reversal arrives."""
         if self._toneb2_t0 is None:
             self._toneb2_t0 = self.rx_t
             self._n_rev0 = len(self.a_reversals)
         if len(self.a_reversals) > self._n_rev0 and self.b2_reversal_t is None:
-            due = self.t + int(self.a_reversals[-1]) - self.rx_t + int(0.040 * FS)
+            detected_at = self._rx_sample_media_time(self.a_reversals[-1])
+            due = None
+            if detected_at is not None and self._tx_media_anchor is not None:
+                due = self._tx_sample_for_media_time(detected_at + 0.040)
+                # RX may deliver the event after a TX packet has already been
+                # prepared. Clamp to the first sample not yet generated.
+                due = max(self.t, due)
+            if due is None:
+                due = self.t + int(self.a_reversals[-1]) - self.rx_t + int(0.040 * FS)
             self.b2_reversal_t = due
             self._at(due, self._do_b2_reversal)
-            self._ev(f"scheduled second B reversal at tx sample {due}")
+            self._ev(f"scheduled second B reversal at tx sample {due}" +
+                     (" from RTP media time" if detected_at is not None and self._tx_media_anchor is not None else ""))
+        elif (self.stage == "toneB2" and self.b2_reversal_t is None
+              and self.probe_start is not None):
+            # V.34 11.2.2.1.4: if no answering Tone A reversal follows the
+            # probing exchange, do not wait forever. The 900 ms timer is
+            # anchored at the second A reversal from 11.2.1.1.4, not when
+            # this state happens to start after receiving L1/L2.
+            deadline = int(self.probe_start) + int(0.900 * FS) + (self.rtd_samples or 0)
+            if self.rx_t >= deadline:
+                due = self.t + int(0.040 * FS)
+                self.b2_reversal_t = due
+                self._at(due, self._do_b2_reversal)
+                self._ev("no Tone A reversal within 900 ms + round-trip delay; "
+                         "using V.34 11.2.2.1.4 B-reversal/L1/L2 recovery")
         if self.stage == "toneB2" and self.l_started and self._a_tone_seen():
             self._finish_l2()
 

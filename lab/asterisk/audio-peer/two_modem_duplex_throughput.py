@@ -70,6 +70,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--expected-rate", type=int)
     parser.add_argument("--error-control", choices=["raw", "lapm", "mnp"])
+    parser.add_argument(
+        "--v23-rate", type=int, choices=[600, 1200],
+        help="select V.23 at this forward-channel rate before dialing/auto-answer",
+    )
     parser.add_argument("--connect-timeout", type=float, default=60)
     parser.add_argument("--transfer-timeout", type=float)
     args = parser.parse_args()
@@ -78,6 +82,11 @@ def main() -> None:
     drain(fd, 0.3)  # discard any boot banner / stray bytes
     send(fd, b"ATE0\r")
     expect(fd, b"OK", 5)
+    if args.v23_rate is not None:
+        if args.error_control not in (None, "raw"):
+            raise ValueError("V.23 uses its 75-baud return channel; LAPM/MNP is not supported")
+        send(fd, f"AT+MS=V23,0,300,{args.v23_rate}\r".encode("ascii"))
+        expect(fd, b"OK", 5)
     if args.error_control:
         code = {"raw": 0, "lapm": 3, "mnp": 2}[args.error_control]
         send(fd, f"AT\\N{code}\r".encode())

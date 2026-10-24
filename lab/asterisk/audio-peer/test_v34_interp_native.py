@@ -9,6 +9,36 @@ from v34_rx import interp
 
 
 class NativeInterpTests(unittest.TestCase):
+    def test_fused_trajectory_window_matches_numpy_expression(self):
+        import v34_interp_native as native
+        if native.njit is None:
+            self.skipTest('Numba is not installed')
+        rng=np.random.default_rng(342901)
+        grid=rng.normal(size=48)+1j*rng.normal(size=48)
+        derivative=rng.normal(size=48)+1j*rng.normal(size=48)
+        residual=rng.normal(size=48)*1e-4
+        for deviation in (-.02,0.,.013):
+            expected=grid+(residual+deviation)*derivative
+            actual=native.trajectory_window(grid,derivative,residual,deviation)
+            np.testing.assert_allclose(actual,expected,atol=2e-15,rtol=0)
+
+    def test_native_trajectory_grid_matches_numpy_grid_window(self):
+        from v34_rx import SymbolEq
+        rng=np.random.default_rng(342902)
+        r=SimpleNamespace(_span=12,spl=7/3,lag=50,LEAD=8,delay=0,
+                          taps=np.ones(24,complex),
+                          _z=rng.normal(size=60000)+1j*rng.normal(size=60000),
+                          baud=3428.57,fc=1959.18)
+        with patch.dict(os.environ,{'V34_TRAJECTORY_GRID':'1','V34_SYMBOL_INTERP_NATIVE':'0'}):
+            reference=SymbolEq(r,40);reference.vel=3.1e-4
+        with patch.dict(os.environ,{'V34_TRAJECTORY_GRID':'1','V34_SYMBOL_INTERP_NATIVE':'1'}):
+            candidate=SymbolEq(r,40);candidate.vel=3.1e-4
+        for _ in range(300):
+            np.testing.assert_allclose(candidate.window(candidate.k),
+                                       reference.window(reference.k),atol=2e-15,rtol=0)
+            candidate.dt+=candidate.vel;candidate.k+=1
+            reference.dt+=reference.vel;reference.k+=1
+
     def test_centered_phase_and_direct_support_limits_at_audio_scale(self):
         rng=np.random.default_rng(3429)
         z=10000*(rng.normal(size=512)+1j*rng.normal(size=512))

@@ -192,11 +192,15 @@ def decide_point_idx(points: list[complex]) -> list[complex]:
     return points
 
 
-def trn_symbols(n: int, role: str, constellation: int = 4) -> tuple[np.ndarray, Scrambler]:
+def trn_symbols(n: int, role: str, constellation: int = 4,
+                scrambler: Scrambler | None = None) -> tuple[np.ndarray, Scrambler]:
     """TRN: scrambled ones mapped to the 4- or 16-point 2D constellation (10.1.3.8).  The scrambler is initialized
     to zero.  16-point: four scrambled bits I1,I2,Q1,Q2 per symbol, point 2*Q2+Q1 of the quarter superconstellation
     rotated clockwise by In*90 deg (absolute, no differential coder)."""
-    sc = Scrambler(role)
+    sc = Scrambler(role) if scrambler is None else scrambler
+    expected_tap = 5 if role == "answer" else 18
+    if sc.tap != expected_tap:
+        raise ValueError(f"{role} TRN requires scrambler tap {expected_tap}, got {sc.tap}")
     if constellation == 4:
         out = []
         for _ in range(n):

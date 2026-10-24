@@ -706,6 +706,8 @@ class SymbolEq:
     def __init__(self, R: Phase3Rx, k_start: int, mu: float | None = None, kp: float | None = None, ki: float | None = None,
                  timing_mode: str | None = None):
         import os
+        kp_explicit = kp is not None or 'V34_KP' in os.environ
+        ki_explicit = ki is not None or 'V34_KI' in os.environ
         mu = float(os.environ.get('V34_MU', 0.2)) if mu is None else mu
         kp = float(os.environ.get('V34_KP', 0.01)) if kp is None else kp
         ki = float(os.environ.get('V34_KI', 5e-6)) if ki is None else ki
@@ -718,7 +720,12 @@ class SymbolEq:
         self.data_timing_mode = requested_mode
         self.timing_mode = 'centroid' if requested_mode == 'data-gradient' else requested_mode
         if self.timing_mode == 'gradient':
-            kp,ki = max(kp,.03),max(ki,5e-5)
+            # Preserve the tested gradient defaults, but let explicit loop-gain
+            # overrides isolate timing recovery from carrier-loop behavior.
+            if not kp_explicit:
+                kp = max(kp, .03)
+            if not ki_explicit:
+                ki = max(ki, 5e-5)
         self.R = R
         self.span = R._span
         self.L = 2 * self.span
@@ -738,9 +745,12 @@ class SymbolEq:
         # Clock correction can require a fresh sinc window every symbol.
         # Preserve the NumPy reference/default; warm this opt-in in the DCE.
         self._native_interp = False
+        self._native_trajectory_window = None
         if os.environ.get('V34_SYMBOL_INTERP_NATIVE') == '1':
-            from v34_interp_native import njit
+            from v34_interp_native import njit, trajectory_window
             self._native_interp = njit is not None
+            if self._native_interp:
+                self._native_trajectory_window = trajectory_window
         guard_mode = os.environ.get('V34_INPUT_POWER_GUARD')
         self._input_guard = (InputPowerGuard('fade' if guard_mode == 'fade' else 'silence')
                              if guard_mode in ('1', 'fade') else None)
@@ -773,6 +783,8 @@ class SymbolEq:
         # Opt-in: keep the batched interpolation grid valid while the timing NCO moves at a learned velocity.
         self._traj = os.environ.get('V34_TRAJECTORY_GRID') == '1'
         self._native_feedback = os.environ.get('V34_NATIVE_FEEDBACK') == '1'
+        self._native_feedback_kernel = None
+        self._native_window_energy = None
         self._g_vel = 0.0
         self._dgrid = None
         self._g_traj = False
@@ -869,6 +881,10 @@ class SymbolEq:
                             self._res_key = (self._g_shift, self._g_vel)
                             self._res = -self._g_vel * (self._g_shift + np.arange(self.L) - self.span) / 2
                         self._tj_k, self._tj_i, self._tj_dev = k, i, deviation
+                        if self._native_trajectory_window is not None:
+                            return self._native_trajectory_window(
+                                self._grid[i:i + self.L], self._dgrid[i:i + self.L],
+                                self._res, deviation)
                         return self._grid[i:i + self.L] + (self._res + deviation) * self._dgrid[i:i + self.L]
         rebuild = (self._grid is None or not self._g_traj or self._g_zlen != len(self.R._z)
                    or getattr(self, '_g_origin', 0) != getattr(self.R, '_bb_origin', 0)
@@ -897,6 +913,8 @@ class SymbolEq:
         grid = self._grid[i:i + self.L]
         derivative = self._dgrid[i:i + self.L]
         self._tj_k, self._tj_i, self._tj_dev = k, i, deviation
+        if self._native_trajectory_window is not None:
+            return self._native_trajectory_window(grid, derivative, self._res, deviation)
         return grid + (self._res + deviation) * derivative
 
     def _interpolate(self, positions):
@@ -1001,7 +1019,13 @@ class SymbolEq:
         power = None
         held = False
         if self._input_guard is not None:
-            power = float(np.vdot(w, w).real)
+            if self._native_feedback:
+                if self._native_window_energy is None:
+                    from v34_feedback_native import window_energy
+                    self._native_window_energy = window_energy
+                power = self._native_window_energy(w)
+            else:
+                power = float(np.vdot(w, w).real)
             if self._input_guard.armed:
                 held = self._input_guard.hold(power)
                 if held:
@@ -1030,8 +1054,12 @@ class SymbolEq:
             if self._rust_feedback is not None:
                 self.phase,self.freq=self._rust_feedback(self.h,w,yr,d,self.mu,self.kp,self.ki,self.phase,self.freq)
             elif self._native_feedback:
-                from v34_feedback_native import feedback
-                self.phase,self.freq=feedback(self.h,w,yr,d,self.mu,self.kp,self.ki,self.phase,self.freq)
+                if self._native_feedback_kernel is None:
+                    from v34_feedback_native import feedback
+                    self._native_feedback_kernel = feedback
+                known_energy=-1.0 if power is None else power
+                self.phase,self.freq=self._native_feedback_kernel(
+                    self.h,w,yr,d,self.mu,self.kp,self.ki,self.phase,self.freq,known_energy)
             else:
                 e = d - yr
                 rot = complex(math.cos(self.phase), math.sin(self.phase))

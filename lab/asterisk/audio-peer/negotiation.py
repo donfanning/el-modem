@@ -43,7 +43,7 @@ MODE_BELL212 = 2
 # mode id -> (name, line speed in bps)
 MODES = {
     MODE_BELL103: ("Bell 103", 300),
-    MODE_BELL212: ("Bell 212A", 1200),
+    MODE_BELL212: ("Lab 1200", 1200),
 }
 
 SYN = 0x16

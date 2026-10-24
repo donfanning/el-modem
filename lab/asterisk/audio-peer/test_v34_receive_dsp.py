@@ -1,6 +1,7 @@
 """Per-call isolation and causal cancellation fallback, independent of labels."""
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 import numpy as np
 import v34_rx as rx
 from v34_receive_dsp import ReceiveDsp
@@ -36,6 +37,16 @@ class ReceiveDspTests(unittest.TestCase):
         for _ in range(200):d.commit_tx(np.zeros(160))
         self.assertGreater(d.source_origin,0)
         self.assertLessEqual(d.length-d.source_origin,20096)
+
+    def test_predictive_detector_falls_back_before_b1_without_numba(self):
+        d=ReceiveDsp(SimpleNamespace(),predictive=True)
+        d.noise_model=dict(accepted=True)
+        receiver=SimpleNamespace(diagnostics={'bit_errors':9})
+        with patch('v34_noise_kernel.available',return_value=False):
+            d.qualify(receiver,np.zeros(2),1.)
+        self.assertEqual(receiver.diagnostics['noise_predictive']['applied'],False)
+        self.assertEqual(receiver.diagnostics['bit_errors'],9)
+        self.assertIn('Numba required',receiver.diagnostics['noise_predictive']['reason'])
 
 
 if __name__=='__main__':unittest.main()
