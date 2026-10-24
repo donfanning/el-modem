@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "6468d66e7a712574b40c4fd8a670407e1bc6f07e",
+  "public_base_revision": "4f3de65c3abc141c31b6cc70eae0328b14a660d8",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -9,7 +9,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "4be2b9cd9952a84790cb4264658343a179d08323e2b2cd9e3e25ed09b7884b42",
+      "sha256": "cf5b387bbb73517e4c9198c5896cf88f614f21d1cf46d6189b59644b715b762e",
       "mode": "100644"
     },
     ".github/workflows/macos-pty.yml": {
@@ -1261,7 +1261,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_tui.py": {
-      "sha256": "4adf9d8d43a4ab14ae67e3be1550a7766cd4ec29b3b985094203aedadf874ff3",
+      "sha256": "69f5af5ad2bdbe5c30498eb5e0f4c292c3d4f51b05cbe89f7590d8c22ade77e5",
       "mode": "100644"
     },
     "lab/asterisk/pcm_capture.py": {

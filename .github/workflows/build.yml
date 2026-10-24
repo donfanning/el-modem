@@ -102,7 +102,12 @@ jobs:
         run: |
           PYTHONPATH="$(python -c 'import os; print(os.pathsep.join(["lab/asterisk", "lab/asterisk/audio-peer", "packaging"]))')"
           export PYTHONPATH
-          python -m unittest test_modem_desktop test_modem_com test_modem_pipe test_modem_symmetric_rtp test_modem_dce test_modem_portability test_serial_port test_iax_transport test_sip_auth test_sip_uac test_sip_uas
+          # The complete DCE/media suite runs in linux-source. Its wall-clock
+          # RTP loops are not a reliable hosted-runner gate on macOS/Windows
+          # (and several tests use AF_UNIX datagram socketpairs unavailable on
+          # Windows). Keep native-matrix checks focused on portable components;
+          # each built executable still runs the frozen payload/AT gates below.
+          python -m unittest test_modem_desktop test_modem_com test_modem_pipe test_modem_symmetric_rtp test_modem_portability test_serial_port test_iax_transport test_sip_auth test_sip_uac test_sip_uas
       - name: Build native single-file candidate
         run: python packaging/build_with_lineage.py --journal build/native-processing.jsonl --noconfirm --distpath dist --workpath build/el-modem packaging/el_modem.spec
       - name: Compile driver and no-driver installer layouts

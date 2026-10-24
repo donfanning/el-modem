@@ -247,7 +247,7 @@ class ModemApp(App):
         # is sized for the actual pane, not the transient mount width.
         table=getattr(self,'dashboard_table',None)
         if table is not None and table.is_mounted:
-            self.tick()
+            self.call_after_refresh(self.tick)
     def clock_tick(self):
         from datetime import datetime
         masthead=self.dashboard_widgets.get('masthead')
