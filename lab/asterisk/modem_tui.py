@@ -241,6 +241,13 @@ class ModemApp(App):
         # modem's own actions, Escape steps back out to the system menu.
         self.menu_level='system';self.focus_pane='right';self.modem_row=0;self.menu_row=0
         self.set_interval(.1,self.tick);self.set_interval(1,self.clock_tick);self.tick();self.clock_tick()
+    def on_resize(self,event):
+        # The initial mount tick can run before Textual has distributed the
+        # horizontal fr widths. Re-render cards after layout so the lamp row
+        # is sized for the actual pane, not the transient mount width.
+        table=getattr(self,'dashboard_table',None)
+        if table is not None and table.is_mounted:
+            self.tick()
     def clock_tick(self):
         from datetime import datetime
         masthead=self.dashboard_widgets.get('masthead')
