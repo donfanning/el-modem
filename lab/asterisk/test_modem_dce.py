@@ -1318,6 +1318,8 @@ class Bell212FallbackSessionTests(unittest.TestCase):
 
         vector_path = (Path(__file__).parent / "audio-peer" / "fixtures" /
                        "reference" / "independent-fsk" / "bell103a2-orig.raw")
+        if not vector_path.is_file():
+            self.skipTest("optional independent audio fixture is not in the public export")
         vector = vector_path.read_bytes()
         caller_payload = b"ELMOD B103 ORIGINATE 0123456789\r"
         answer_payload = b"ANSWER FROM DCE 300\r"
@@ -3097,6 +3099,9 @@ class OnlineAudioSessionTests(unittest.TestCase):
         )
         fixture_dir = (Path(__file__).parent / "audio-peer" / "fixtures" /
                        "reference" / "independent-fsk")
+        if not all((fixture_dir / filename).is_file()
+                   for filename, _, _ in vectors):
+            self.skipTest("optional independent audio fixtures are not in the public export")
 
         for filename, remote_role, expected in vectors:
             with self.subTest(vector=filename):
@@ -5255,6 +5260,8 @@ class V21DceIntegrationTests(unittest.TestCase):
         shared = {"session": None, "output": bytearray(), "peer_errors": []}
         fixture = (Path(__file__).parent / "audio-peer" / "fixtures" /
                    "reference" / "independent-fsk" / "v21-answer.raw")
+        if not fixture.is_file():
+            self.skipTest("optional independent audio fixture is not in the public export")
         independent_data = struct.unpack(
             f"<{fixture.stat().st_size // 2}h", fixture.read_bytes())
         expected = b"ELMOD V21 ANSWER 9876543210\r"
@@ -5412,6 +5419,8 @@ class V21DceIntegrationTests(unittest.TestCase):
         }
         fixture = (Path(__file__).parent / "audio-peer" / "fixtures" /
                    "reference" / "independent-fsk" / "v21-orig.raw")
+        if not fixture.is_file():
+            self.skipTest("optional independent audio fixture is not in the public export")
         reference = struct.unpack(f"<{fixture.stat().st_size // 2}h", fixture.read_bytes())
         expected = b"ELMOD V21 ORIGINATE 0123456789\r"
         peer_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

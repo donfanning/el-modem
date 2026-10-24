@@ -1317,7 +1317,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_dce.py": {
-      "sha256": "15487b15125d5330b58f87df3ae7706a124404a5b4c6415596e368214105cc1e",
+      "sha256": "140801d8bb9eb866dbca047e1830d5876db67c5583215f5f999c4e68f3e41ed0",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
