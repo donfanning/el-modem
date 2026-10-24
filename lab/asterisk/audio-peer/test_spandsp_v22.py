@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-tests for the SpanDSP V.22bis/Bell 212A binding (skipped when
+"""Self-tests for the SpanDSP V.22/V.22bis binding (skipped when
 libspandsp is not installed)."""
 
 import struct
@@ -44,7 +44,7 @@ class FramerTests(unittest.TestCase):
 
 @unittest.skipUnless(spandsp_v22.available(), "libspandsp not installed")
 class V22bisLoopbackTests(unittest.TestCase):
-    def test_bell212a_pair_trains_at_1200_and_exchanges_data(self):
+    def test_default_pair_trains_at_1200_and_exchanges_data(self):
         caller = V22bisModem(calling_party=True)
         answerer = V22bisModem(calling_party=False)
         sent = {"done": False}
@@ -89,6 +89,16 @@ class V22bisV42Tests(unittest.TestCase):
         caller = V22bisModem(True, bit_rate=2400, bell212a=False)
         answerer = V22bisModem(False, bit_rate=2400, bell212a=False)
         return caller, answerer
+
+    def test_default_detection_deadline_matches_v42_t400(self):
+        caller, answerer = self._pair()
+        # V.42 detection starts after the line modem has settled, so its
+        # bit-count deadline must use the negotiated bearer rate rather than
+        # the provisional 1200-bit/s rate present during V.22bis startup.
+        run_pair(caller, answerer, 15)
+        self.assertEqual((caller.bit_rate, answerer.bit_rate), (2400, 2400))
+        caller.start_v42(True)
+        self.assertEqual(caller._v42_detect_deadline, 750 * caller.bit_rate // 1000)
 
     def test_v42_lapm_over_a_v22bis_link_carries_data_both_ways(self):
         caller, answerer = self._pair()

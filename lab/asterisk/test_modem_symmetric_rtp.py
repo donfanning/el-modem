@@ -41,10 +41,18 @@ class SymmetricRtpTests(unittest.TestCase):
             accepted=session.note_rtp_source(addr,self.packet(2))
             self.assertEqual([x[0] for x in accepted],[self.packet(x) for x in range(3)])
             self.assertEqual(session._send_addr, ("192.0.2.21", 10004))
-            # A later source cannot hijack the media destination or DSP.
+            # A different address/port cannot hijack the destination. A new
+            # SSRC from this same RTP endpoint must pass three-packet probation.
             for seq in range(3,6):
                 self.assertEqual(session.note_rtp_source((addr[0],10008),self.packet(seq)),[])
-                self.assertEqual(session.note_rtp_source(addr,self.packet(seq,5678)),[])
+            self.assertEqual(session.note_rtp_source(addr,self.packet(3,5678)),[])
+            self.assertEqual(session.note_rtp_source(addr,self.packet(4,5678)),[])
+            accepted=session.note_rtp_source(addr,self.packet(5,5678))
+            self.assertEqual([x[0] for x in accepted], [
+                self.packet(3,5678), self.packet(4,5678), self.packet(5,5678)])
+            self.assertEqual(session._rtp_peer,(addr,struct.pack('!I',5678)))
+            self.assertEqual(session.note_rtp_source(addr,self.packet(6,1234)),[])
+            self.assertEqual(session.note_rtp_source((addr[0],10008),self.packet(6,5678)),[])
             self.assertEqual(session._send_addr, addr)
         finally:
             sock.close()

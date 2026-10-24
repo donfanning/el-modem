@@ -59,6 +59,49 @@ class RetrainTests(unittest.TestCase):
             m.note_concealed_rx(1600)
             restart.assert_not_called()
 
+    def test_concealed_gap_retrains_lapm_end_to_end_in_both_roles(self):
+        """A receive-side RTP erasure triggers full retrain without losing LAPM."""
+        with patch.dict('os.environ', {'V32_AUTO_LOSS_RETRAIN_MS': '120'}):
+            for role in ('call', 'answer'):
+                with self.subTest(role=role):
+                    p = Pair()
+                    p.until(p.ready)
+                    p.c.start_v42(True, detect=False)
+                    p.a.start_v42(False, detect=False)
+                    p.until(lambda: p.c.v42_mode == p.a.v42_mode == 'lapm')
+                    links = (p.c._v42, p.a._v42)
+
+                    # The DCE is told about one 120-ms timestamp gap, then gets
+                    # the concealed PCM that production RTP supplies for it.
+                    affected = p.c if role == 'call' else p.a
+                    affected.note_concealed_rx(960)
+                    self.assertTrue(affected.retrain_stats['active'])
+                    for _ in range(6):
+                        c_tx = p.c.tx_samples(160)
+                        a_tx = p.a.tx_samples(160)
+                        c_rx = [0] * 160 if affected is p.c else c_tx
+                        a_rx = [0] * 160 if affected is p.a else a_tx
+                        p.c.feed_pcm(struct.pack('<160h', *c_rx))
+                        p.a.feed_pcm(struct.pack('<160h', *a_rx))
+
+                    p.until(p.ready, carrier=True)
+                    self.assertIs(p.c._v42, links[0])
+                    self.assertIs(p.a._v42, links[1])
+                    self.assertEqual((p.c.bit_rate, p.a.bit_rate), (14400, 14400))
+                    # The peer detects the retrain request tone and enters the
+                    # coordinated full-retrain path too.
+                    self.assertEqual((p.c.retrain_stats['attempts'],
+                                      p.a.retrain_stats['attempts']), (1, 1))
+
+                    sent_c = bytes((i * 29 + 0x31) & 0xff for i in range(1024))
+                    sent_a = bytes((i * 47 + 0x73) & 0xff for i in range(1024))
+                    p.c.feed_bytes(sent_c)
+                    p.a.feed_bytes(sent_a)
+                    p.until(lambda: len(p.got_a) == len(sent_c)
+                            and len(p.got_c) == len(sent_a), carrier=True)
+                    self.assertEqual(bytes(p.got_a), sent_c)
+                    self.assertEqual(bytes(p.got_c), sent_a)
+
     def test_same_initiator_retrains_three_times_with_verified_lapm_and_budget_renewal(self):
         for role in ('call', 'answer'):
             with self.subTest(role=role):

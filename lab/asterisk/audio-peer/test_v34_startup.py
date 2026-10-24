@@ -44,6 +44,20 @@ class StartupTests(unittest.TestCase):
         self.assertEqual(c.stage,'probing')
         self.assertIsNone(c.l1_start)
 
+    def test_missing_probe_reanchors_to_later_reversal_inside_first_window(self):
+        import numpy as np
+        c=v34_call.V34Caller();c.info0a={}
+        c.stage='probing';c.probe_start=1000;c.rx_t=5000
+        c._rx=np.zeros(5000)
+        # A repeated INFO0 exchange can contribute an extra A reversal.  The
+        # real answering reversal at +115 ms is inside the first 120 ms search
+        # window, so it must remain eligible for the existing bounded retry.
+        c.a_reversals=[500,1000,1922]
+        with patch.object(v34_info.InfoDemodulator,'decode',return_value=[]):c._probing()
+        self.assertEqual(c.stage,'probing')
+        self.assertEqual(c.probe_start,1922)
+        self.assertEqual(c._probe_retries,1)
+
     def test_tone_reversal_fit_accepts_clock_offset_and_brief_post_tone(self):
         import numpy as np
         for at,guard in ((401,0.),(407,1000.),(414,0.)):
@@ -65,6 +79,20 @@ class StartupTests(unittest.TestCase):
         c.rx(x[:440])
         self.assertEqual(c.a_reversals,[])
         self.assertTrue(any(not r['accepted'] for r in c._reversal_candidates))
+
+    def test_reversal_spacing_uses_fitted_event_times(self):
+        import numpy as np
+        # The second V.34 reversal may be exactly 50 ms after the first. The
+        # analysis window that confirms it can end 4 samples before that
+        # boundary, so spacing must use the fitted transition timestamps.
+        for second, expected_count in ((800,1),(801,2)):
+            c=v34_call.V34Caller();n=np.arange(1100)
+            signs=np.where(n<401,1.,-1.)*np.where(n<second,1.,-1.)
+            x=1000*np.cos(2*np.pi*2400*n/8000+.7)*signs
+            for start in range(0,len(x),160):c.rx(x[start:start+160])
+            self.assertEqual(len(c.a_reversals),expected_count)
+            if expected_count==2:
+                self.assertAlmostEqual(c.a_reversals[1]-c.a_reversals[0],400,delta=1)
 
     def test_data_start_uses_prepared_mapper_without_constructing_it_on_transmit_path(self):
         for engine in (v34_call.V34Caller(data_rate=33600), v34_ans.V34Answerer(data_rate=33600)):
@@ -166,6 +194,45 @@ class StartupTests(unittest.TestCase):
                 engine._start_phase4()
                 self.assertEqual(engine._p4_c, want)
 
+    def test_answerer_phase4_trn_continues_until_burnin_without_qam_underrun(self):
+        import numpy as np
+        answerer = v34_ans.V34Answerer(data_rate=33600)
+        answerer.ans_rate = 33600
+        answerer.ans_baud = v34_tx.SYMBOL_RATES[5]
+        answerer.ans_fc = v34_tx.CARRIERS[3429][1]
+        answerer.call_trn_len = 0
+        answerer.call_j_pattern = "J_16PT"
+        answerer._p3 = {"rcv": Mock(idx=[0, 1, 2, 3], j=(0, 4, "J_16PT", 0))}
+        answerer._play = Mock()
+        answerer._start_phase4()
+        qam = answerer._qam
+        self.assertEqual(answerer._p4_trn_symbols_queued, 1500)
+        self.assertIs(qam.fill.__func__, answerer._fill_phase4_trn.__func__)
+
+        # Simulate TX consuming the fixed TRN before RX reports burn-in. The
+        # filler must extend the same scrambler sequence, never zero-pad.
+        for _ in range(200):
+            qam.read(qam.samples_per_chunk)
+            if answerer._p4_trn_symbols_queued > 1500:
+                break
+        self.assertGreater(answerer._p4_trn_symbols_queued, 1500)
+        self.assertEqual(getattr(qam, "underrun_symbols", 0), 0)
+
+        answerer._p4_mp_ready = True
+        for _ in range(8):
+            qam.read(qam.samples_per_chunk)
+            if qam.fill.__func__ is answerer._fill_mp.__func__:
+                break
+        self.assertIs(qam.fill.__func__, answerer._fill_mp.__func__)
+        self.assertEqual(getattr(qam, "underrun_symbols", 0), 0)
+
+    def test_segmented_answerer_trn_uses_continuous_scrambler_state(self):
+        import numpy as np
+        whole, _ = v34_tx.trn_symbols(1800, "answer", constellation=16)
+        first, state = v34_tx.trn_symbols(1500, "answer", constellation=16)
+        tail, _ = v34_tx.trn_symbols(300, "answer", constellation=16, scrambler=state)
+        np.testing.assert_array_equal(np.concatenate((first, tail)), whole)
+
     def test_single_info0a_standard_answerer_completes_duplex_startup(self):
         def send_once(answerer):
             bits = v34_info.build_info0(**answerer._info0)
@@ -201,6 +268,123 @@ class StartupTests(unittest.TestCase):
         self.assertEqual(caller.b2_reversal_t, 2000 + 980 - 1000 + 320)
         caller.tx(301)
         self.assertEqual(caller.stage, 'toneB2')
+
+    def test_second_reversal_uses_rtp_media_time_across_rx_tx_origins(self):
+        """RX and TX counters may have different media origins; preserve the 40-ms interval."""
+        for tx_deadline in (10.010, 10.025):
+            with self.subTest(tx_deadline=tx_deadline):
+                caller = v34_call.V34Caller()
+                caller.stage = 'toneB2'
+                caller.info0a = {}
+                caller._src = v34_call.ToneSrc(1200, caller.amp)
+                caller.l_started = True
+                caller.t, caller.rx_t = 10_000, 8_000
+                caller._toneb2_t0 = 0
+                caller._n_rev0 = 0
+                caller.a_reversals = [7_900]
+                caller.set_rx_media_deadline(10.000)
+                caller.set_tx_media_deadline(tx_deadline)
+                with patch.object(caller, '_a_tone_seen', return_value=False):
+                    caller._toneB2()
+
+                event_time = 10.000 + (7_900 - 8_000) / v34_call.FS
+                due_time = tx_deadline + (caller.b2_reversal_t - 10_000) / v34_call.FS
+                self.assertAlmostEqual(due_time - event_time, 0.040, places=6)
+
+    def test_answerer_second_reversal_uses_rtp_media_time_across_rx_tx_origins(self):
+        answerer = v34_ans.V34Answerer()
+        answerer.t, answerer.rx_t = 10_000, 2_000
+        answerer.a_rev1_t = 10_000
+        answerer._a_rev1_rx = 2_000
+        answerer._src = v34_ans.ToneASrc(answerer.amp)
+        answerer.set_rx_media_deadline(10.070)
+        answerer.set_tx_media_deadline(10.020)
+
+        answerer._accept_first_b_reversal(2_080)
+
+        event_time = 10.070 + (2_080 - 2_000) / v34_call.FS
+        due_sample = answerer._actions[0][0]
+        due_time = 10.020 + (due_sample - 10_000) / v34_call.FS
+        self.assertAlmostEqual(due_time - event_time, 0.040, places=6)
+        self.assertEqual(answerer.rtd_samples, int(0.020 * v34_call.FS))
+        answerer.tx(due_sample - answerer.t + 1)
+        self.assertTrue(any("RTP media interval 40.000 ms" in message
+                            for _, message in answerer.events))
+
+    def test_answerer_ignores_stale_tone_b_reversal_before_third_tone_a_reversal(self):
+        """A delayed B reversal from before A3 cannot start the L1/L2 receive window."""
+        answerer = v34_ans.V34Answerer()
+        answerer.stage = 'wait_b_rev'
+        answerer._src = v34_ans.ToneASrc(answerer.amp)
+        answerer.t = answerer.rx_t = 10_000
+        answerer.rtd_samples = 0
+        answerer.tone_b.reversals = [9_000]
+
+        answerer._a_rev3()
+        eligible_after = 10_000 + int(0.040 * v34_call.FS)
+        answerer._wait_b_rev()
+        self.assertEqual(answerer.stage, 'wait_b_rev')
+        self.assertFalse(hasattr(answerer, 'probe_start'))
+
+        answerer.tone_b.reversals.append(eligible_after)
+        answerer.rx_t = eligible_after + int(0.040 * v34_call.FS) + 1
+        answerer._wait_b_rev()
+        self.assertEqual(answerer.stage, 'probe_rx')
+        self.assertEqual(answerer.probe_start, eligible_after)
+
+    def test_answerer_does_not_use_rtd_as_a_hard_reversal_cutoff(self):
+        """An RTD estimate 10 ms high must not discard a valid response."""
+        answerer = v34_ans.V34Answerer()
+        answerer.stage = 'wait_b_rev'
+        answerer._src = v34_ans.ToneASrc(answerer.amp)
+        answerer.t = answerer.rx_t = 10_000
+        answerer.rtd_samples = int(0.080 * v34_call.FS)
+
+        answerer._a_rev3()
+        nominal = 10_000 + int(0.040 * v34_call.FS) + answerer.rtd_samples
+        # Saved local calls showed 10 ms difference between endpoint RTD
+        # estimates; this response follows A3 and is still after 40 ms.
+        reversal = nominal - int(0.010 * v34_call.FS)
+        answerer.tone_b.reversals = [reversal]
+        answerer.rx_t = reversal + int(0.040 * v34_call.FS) + 1
+        answerer._wait_b_rev()
+
+        self.assertEqual(answerer.stage, 'probe_rx')
+        self.assertEqual(answerer.probe_start, reversal)
+
+    def test_answerer_rejects_reversal_before_minimum_legal_interval(self):
+        answerer = v34_ans.V34Answerer()
+        answerer.stage = 'wait_b_rev'
+        answerer._src = v34_ans.ToneASrc(answerer.amp)
+        answerer.t = answerer.rx_t = 10_000
+        answerer.rtd_samples = int(0.080 * v34_call.FS)
+
+        answerer._a_rev3()
+        answerer.tone_b.reversals = [10_000 + int(0.038 * v34_call.FS)]
+        answerer.rx_t = answerer.tone_b.reversals[0] + int(0.040 * v34_call.FS) + 1
+        answerer._wait_b_rev()
+
+        self.assertEqual(answerer.stage, 'wait_b_rev')
+        self.assertFalse(hasattr(answerer, 'probe_start'))
+
+    def test_missing_post_probe_tone_a_reversal_uses_bounded_recovery(self):
+        """V.34 11.2.2.1.4 falls back after 900 ms + RTD instead of waiting forever."""
+        caller = v34_call.V34Caller()
+        caller.stage = 'toneB2'
+        caller.probe_start = 1000                 # second A reversal, the timer's specified origin
+        caller.rtd_samples = 80
+        caller._src = v34_call.ToneSrc(1200, caller.amp)
+        caller.a_reversals = [1000]                # no new A reversal after Tone B starts
+        caller.t = 3000
+        deadline = 1000 + int(0.900 * v34_call.FS) + 80
+        caller.rx_t = deadline - 1
+        caller._toneB2()
+        self.assertIsNone(caller.b2_reversal_t)
+
+        caller.rx_t = deadline
+        caller._toneB2()
+        self.assertEqual(caller.b2_reversal_t, 3000 + int(0.040 * v34_call.FS))
+        self.assertEqual(len(caller._actions), 1)
 
     def test_duplex_caller_waits_for_a_reversal_then_responds_after_40ms(self):
         caller = v34_call.V34Caller()

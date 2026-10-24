@@ -9,7 +9,9 @@ single-line modem this project is building.
 """
 
 import logging
+import os
 import socket
+import sys
 import threading
 import time
 import uuid
@@ -19,6 +21,14 @@ from typing import Callable
 from sip_uas import parse_message, parse_remote_rtp
 
 logger = logging.getLogger(__name__)
+
+
+def _sip_trace(event: str, **fields: object) -> None:
+    """Emit opt-in SIP setup metadata without headers, SDP, or credentials."""
+    if os.environ.get("EL_MODEM_SIP_TRACE") != "1":
+        return
+    details = " ".join(f"{key}={value}" for key, value in fields.items())
+    print(f"SIPTRACE side=caller event={event} {details}".rstrip(), file=sys.stderr, flush=True)
 
 
 @dataclass
@@ -48,7 +58,10 @@ class SipOriginateCall:
         username: str | None = None,
         password: str | None = None,
         caller_number: str | None = None,
+        packetization_ms: int = 20,
     ):
+        if packetization_ms not in (10, 20):
+            raise ValueError("SIP audio packetization must be 10 or 20 ms")
         # Optional digest credentials: with them a 401/407 challenge is answered (SIP trunk providers).
         self.username, self._password, self.caller_number = username, password, caller_number
         self.host = host
@@ -57,6 +70,7 @@ class SipOriginateCall:
         self.target_port = target_port
         self.media_host = media_host
         self.media_port = media_port
+        self.packetization_ms = packetization_ms
         self.on_connected = on_connected
         self.on_failed = on_failed
         self.on_hangup = on_hangup
@@ -75,7 +89,7 @@ class SipOriginateCall:
             "t=0 0\r\n"
             f"m=audio {self.media_port} RTP/AVP 0\r\n"
             "a=rtpmap:0 PCMU/8000\r\n"
-            "a=ptime:20\r\n"
+            f"a=ptime:{self.packetization_ms}\r\n"
             "a=sendrecv\r\n"
         )
 
@@ -87,7 +101,11 @@ class SipOriginateCall:
         """
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((self.host, self.port))
+        try:
+            sock.bind((self.host, self.port))
+        except OSError as exc:
+            _sip_trace("bind_failed", local=f"{self.host}:{self.port}", error=type(exc).__name__)
+            raise
         sock.settimeout(0.5)
         with self._lock:
             self._socket = sock
@@ -98,6 +116,7 @@ class SipOriginateCall:
         with self._lock:
             self._dialog = dialog
         local_port = sock.getsockname()[1]
+        _sip_trace("bound", local=f"{sock.getsockname()[0]}:{local_port}")
         sdp = self._invite_sdp()
         from_user = self.caller_number or self.username or "modem"
         dialog.from_uri = f"sip:{from_user}@{self.target_host if self.username else self.host}"
@@ -120,7 +139,9 @@ class SipOriginateCall:
 
         try:
             sock.sendto(build_invite().encode(), (self.target_host, self.target_port))
-        except OSError:                                    # network unreachable, no route: there is no line
+            _sip_trace("invite_sent", target=f"{self.target_host}:{self.target_port}", local_port=local_port)
+        except OSError as exc:                             # network unreachable, no route: there is no line
+            _sip_trace("invite_send_failed", target=f"{self.target_host}:{self.target_port}", error=type(exc).__name__)
             self._fail_once("no line")
             sock.close()
             return
@@ -135,7 +156,7 @@ class SipOriginateCall:
                     if self._finished:
                         return
                 try:
-                    data, _ = sock.recvfrom(65535)
+                    data, source = sock.recvfrom(65535)
                 except socket.timeout:
                     if not heard and time.monotonic() > first_deadline:
                         self._fail_once("no response")
@@ -148,6 +169,9 @@ class SipOriginateCall:
                     return
                 heard = True
                 start_line, headers, body = parse_message(data)
+                fields = start_line.split(" ", 2)
+                status = fields[1] if len(fields) > 1 and fields[0] == "SIP/2.0" else "non_response"
+                _sip_trace("response_received", status=status, source=f"{source[0]}:{source[1]}")
                 if not start_line.startswith("SIP/2.0") or headers.get("call-id") != call_id:
                     continue
                 fields = start_line.split(" ", 2)
@@ -156,6 +180,7 @@ class SipOriginateCall:
                 code = fields[1]
                 to_header = headers.get("to", "")
                 if code in ("401", "407") and self.username and not challenged:
+                    _sip_trace("auth_challenge", status=code)
                     challenged = True
                     from sip_auth import digest_response, parse_challenge  # noqa: PLC0415
 
@@ -173,6 +198,7 @@ class SipOriginateCall:
                         dialog.to_header = to_header
                     continue
                 if code.startswith("2"):
+                    _sip_trace("answered", status=code)
                     remote_addr = parse_remote_rtp(body)
                     with self._lock:
                         if self._finished:
@@ -196,6 +222,7 @@ class SipOriginateCall:
                         return
                     self._finished = True
                 self.on_failed(f"sip {code}")
+                _sip_trace("failed", reason=f"sip_{code}")
                 return
             self._fail_once("timeout" if heard else "no response")
         finally:
@@ -208,6 +235,7 @@ class SipOriginateCall:
             if self._finished:
                 return
             self._finished = True
+        _sip_trace("failed", reason=reason.replace(" ", "_"))
         self.on_failed(reason)
 
     def _send_ack(self, sock: socket.socket, dialog: _Dialog, with_route: bool) -> None:

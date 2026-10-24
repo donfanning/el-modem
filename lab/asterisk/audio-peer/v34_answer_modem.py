@@ -21,7 +21,7 @@ class V34AnswerModem(V42Layer):
     is_v34 = True
     capture_detect_bits = False
 
-    def __init__(self, fs: int = FS, data_rate: int | None = None, debug: bool = False, rms: float = 900.0, with_v8: bool = True):
+    def __init__(self, fs: int = FS, data_rate: int | None = None, min_data_rate: int = 2400, debug: bool = False, rms: float = 900.0, with_v8: bool = True):
         if fs != FS:
             raise ValueError("the V.34 engine runs at 8 kHz")
         from v8 import V8_MOD_V34, V8Negotiator
@@ -32,7 +32,7 @@ class V34AnswerModem(V42Layer):
         self.debug = debug
         self.events: list[tuple[float, str]] = []
         self._ev_seen = 0
-        self._answerer_args = dict(rms=rms, data_rate=rate,
+        self._answerer_args = dict(rms=rms, data_rate=rate, min_data_rate=min_data_rate,
             symbol_rates=[int(x) for x in syms.split(",")] if syms else None)
         self._retrains = 0
         self._retrain_budget = RetrainBudget(self.RETRAIN_MAX)
@@ -48,6 +48,9 @@ class V34AnswerModem(V42Layer):
         self.bit_rate = 0
         self.rx_bit_rate = 0
         self._t = 0
+        self._rtp_media_timing = os.environ.get("V34_RTP_MEDIA_TIMING", "0") == "1"
+        self._rx_media_deadline: float | None = None
+        self._tx_media_deadline: float | None = None
         self._rx_power = 0.0
         self._plain_bits: deque[int] = deque()
         self._deframe = _Framer()
@@ -60,6 +63,17 @@ class V34AnswerModem(V42Layer):
     def _new_answerer(self):
         self._rate_epoch_seen = 0
         answerer = V34Answerer(**self._answerer_args)
+        # Lab-only control for reproducing asymmetric MP negotiation through
+        # the real DCE/RTP path. AT+MS has one overall ceiling; this test hook
+        # lowers only the answerer's answer-to-call transmit offer while
+        # retaining its call-to-answer receive capability. It is intentionally
+        # opt-in and does not change user profiles or normal operation.
+        test_tx_rate = os.environ.get("V34_TEST_ANSWER_TX_RATE")
+        if test_tx_rate is not None:
+            rate = int(test_tx_rate)
+            if rate % 2400 or not 2400 <= rate <= self._answerer_args["data_rate"]:
+                raise ValueError("V34_TEST_ANSWER_TX_RATE must be a supported rate no higher than the answerer ceiling")
+            answerer._local_mp["max_a2c"] = rate // 2400
         rates=getattr(self,'_rate_fallback_rates',None)
         if rates is not None:
             from v34_negotiation import directional_offer
@@ -185,10 +199,22 @@ class V34AnswerModem(V42Layer):
     def tx_samples(self, count: int) -> list[int]:
         self._t += count
         if self._phase == "v8":
+            self._tx_media_deadline = None
             return self._v8.tx(count)
         if self._phase != "p2":
             return [0] * count
+        if self._tx_media_deadline is not None:
+            self.answerer.set_tx_media_deadline(self._tx_media_deadline)
+            self._tx_media_deadline = None
         return np.clip(np.round(self.answerer.tx(count)), -32768, 32767).astype(int).tolist()
+
+    def set_tx_media_deadline(self, deadline: float) -> None:
+        """Set the scheduled media time of the next transmit block."""
+        self._tx_media_deadline = float(deadline) if self._rtp_media_timing else None
+
+    def set_rx_media_deadline(self, deadline: float) -> None:
+        """Set the first-sample media time of the next received block."""
+        self._rx_media_deadline = float(deadline) if self._rtp_media_timing else None
 
     def note_concealed_rx(self, n: int) -> None:
         """Mark the next PCM chunk as transport concealment, like the caller."""
@@ -216,12 +242,17 @@ class V34AnswerModem(V42Layer):
                 self._phase = "p2"
                 self.answerer.rx_t = 0
                 self.answerer.t = 0
+                self._rx_media_deadline = None
             elif self._v8.status in (3, 4) or self._t / self.fs > SETUP_TIMEOUT:
                 self._fail("V.8 failed")
+            self._rx_media_deadline = None
             return b""
         if self._phase == "p2":
             if concealed and concealed == len(x):
                 self.answerer.note_concealed(self.answerer.rx_t,len(x))
+            if self._rx_media_deadline is not None:
+                self.answerer.set_rx_media_deadline(self._rx_media_deadline)
+                self._rx_media_deadline = None
             self.answerer.rx(x.astype(float))
             self._sync_events()
             epoch = getattr(self.answerer, '_rate_epoch', 0)

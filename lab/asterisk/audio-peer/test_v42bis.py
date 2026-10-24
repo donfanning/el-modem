@@ -4,6 +4,7 @@ import ctypes
 import os
 import random
 import unittest
+from unittest.mock import patch
 
 import v42bis as bis
 
@@ -50,6 +51,65 @@ class SelfTests(unittest.TestCase):
             out, _ = roundtrip(data, flush_every=0.1, auto=auto)
             self.assertEqual(out, data)
 
+    def test_flush_obeys_compressed_alignment_and_keeps_dictionaries_synchronized(self):
+        # V.42bis §7.9: emit the partial match; send FLUSH only when that leaves
+        # codeword bits pending, then zero-pad to an octet. The peer keeps the
+        # compression state and processes the next character after the flush.
+        for repeats, expect_flush in ((1, True), (5, False)):
+            with self.subTest(repeats=repeats):
+                data = b"ABCABABCABABCA" * repeats
+                enc, dec = bis.Encoder(auto_switch=False), bis.Decoder()
+                # Begin from a synchronized compressed state so this test
+                # isolates the C-FLUSH primitive rather than §7.8's heuristic.
+                enc.compressed = dec.compressed = True
+                received = bytearray(dec.decompress(enc.compress(data)))
+                self.assertTrue(enc.compressed)
+                self.assertIsNotNone(enc.cur)
+                expected_flush = (enc.bits.nbits + enc._cost(enc.cur)) % 8 != 0
+                self.assertEqual(expected_flush, expect_flush)
+
+                writes = []
+                original_put = bis._BitWriter.put
+
+                def trace_put(writer, value, width):
+                    writes.append((value, width))
+                    return original_put(writer, value, width)
+
+                with patch.object(bis._BitWriter, "put", trace_put):
+                    pending = enc.cur
+                    wire = enc.flush()
+                self.assertEqual(writes[0], (pending, enc.c2))
+                self.assertEqual(any(value == bis.FLUSH for value, _ in writes[1:]),
+                                 expect_flush)
+                received.extend(dec.decompress(wire))
+                self.assertEqual(bytes(received), data)
+                self.assertTrue(enc.compressed)
+                self.assertTrue(dec.compressed)
+                self.assertEqual(enc.d.c1, dec.d.c1)
+                self.assertEqual(enc.c2, dec.c2)
+                self.assertEqual(enc.c3, dec.c3)
+                self.assertEqual(dec.nbits, 0)
+
+                following = b"Z after a C-FLUSH"
+                received.extend(dec.decompress(enc.compress(following) + enc.flush()))
+                self.assertEqual(bytes(received), data + following)
+                self.assertEqual(enc.d.c1, dec.d.c1)
+
+    def test_transparent_flush_does_not_terminate_match_or_update_dictionary(self):
+        enc, dec = bis.Encoder(auto_switch=False), bis.Decoder()
+        prefix = b"transparent-mode flush preserves the current match"
+        wire = enc.compress(prefix)
+        current, next_code = enc.cur, enc.d.c1
+        wire += enc.flush()
+        self.assertFalse(enc.compressed)
+        self.assertEqual(enc.cur, current)
+        self.assertEqual(enc.d.c1, next_code)
+        self.assertEqual(dec.decompress(wire), prefix)
+
+        suffix = b" and continues it"
+        self.assertEqual(dec.decompress(enc.compress(suffix) + enc.flush()), suffix)
+        self.assertEqual(enc.d.c1, dec.d.c1)
+
     def test_dictionary_wraps_and_codeword_size_grows(self):
         rnd = random.Random(8)
         words = [bytes(rnd.randrange(32, 127) for _ in range(rnd.randrange(3, 9))) for _ in range(3000)]
@@ -58,10 +118,67 @@ class SelfTests(unittest.TestCase):
             out, wire = roundtrip(data, n2=n2, n7=n7, flush_every=0.05)
             self.assertEqual(out, data, (n2, n7))
 
+    def test_encoder_and_decoder_enforce_negotiable_parameter_bounds(self):
+        # P1 is a two-octet XID value; P2 is limited by V.42bis §5.1.
+        for factory in (bis.Encoder, bis.Decoder):
+            factory(65535, 250)
+            for n2 in (511, 65536):
+                with self.subTest(factory=factory.__name__, n2=n2):
+                    with self.assertRaises(ValueError):
+                        factory(n2, 6)
+            for n7 in (5, 251):
+                with self.subTest(factory=factory.__name__, n7=n7):
+                    with self.assertRaises(ValueError):
+                        factory(512, n7)
+
+    def test_reset_command_reinitializes_both_directions_from_compressed_mode(self):
+        escape_cycle = bytes((0, 51, 102, 153, 204, 255)) * 8
+        before = escape_cycle + TEXT * 5
+        after = TEXT[::-1] + bytes(range(256))
+        enc, dec = bis.Encoder(), bis.Decoder()
+
+        received = dec.decompress(enc.compress(before))
+        self.assertTrue(enc.compressed)
+        self.assertNotEqual(enc.escape, 0)
+        received += dec.decompress(enc.request_reset())
+        self.assertFalse(enc.compressed)
+        self.assertEqual((enc.escape, dec.escape), (0, 0))
+        self.assertEqual(received, before)
+
+        received += dec.decompress(enc.compress(after) + enc.flush())
+        self.assertEqual(received, before + after)
+
+    def test_reset_command_reinitializes_both_directions_from_transparent_mode(self):
+        before = bytes((0, 51, 102, 153, 204, 255)) * 8 + bytes(range(256))
+        after = TEXT
+        enc, dec = bis.Encoder(auto_switch=False), bis.Decoder()
+        received = dec.decompress(enc.compress(before))
+        self.assertFalse(enc.compressed)
+        received += dec.decompress(enc.request_reset())
+        self.assertEqual((enc.escape, dec.escape), (0, 0))
+        received += dec.decompress(enc.compress(after) + enc.flush())
+        self.assertEqual(received, before + after)
+
     def test_decoder_rejects_a_reserved_command_code(self):
         dec = bis.Decoder()
         with self.assertRaises(bis.V42bisError):
             dec.decompress(bytes([0, 9]))                   # escape character 0 followed by reserved code 9
+
+    def test_decoder_reports_all_normative_c_error_codeword_conditions(self):
+        cases = (
+            (bis.STEPUP, "STEPUP beyond the maximum codeword size"),
+            (bis.N5, "codeword 259 is empty or equals C1"),
+            (511, "codeword 511 is empty or equals C1"),
+        )
+        for codeword, expected in cases:
+            with self.subTest(codeword=codeword):
+                dec = bis.Decoder(512, 6)
+                dec.compressed = True
+                if codeword == bis.STEPUP:
+                    dec.c2 = dec.n1
+                wire = codeword.to_bytes(2, "little")
+                with self.assertRaisesRegex(bis.V42bisError, expected):
+                    dec.decompress(wire)
 
 
 # ---- independent reference: SpanDSP's v42bis (test only) -------------------------------------------------------
@@ -130,6 +247,60 @@ class InteropTests(unittest.TestCase):
                 for i in range(0, len(data), 97):
                     got += dec.decompress(ref.compress(data[i:i + 97]))
                 self.assertEqual(bytes(got), data, (n2, n7))
+
+    def test_reset_command_into_reference_decoder(self):
+        before = bytes((0, 51, 102, 153, 204, 255)) * 8 + TEXT * 5
+        after = TEXT[::-1] + bytes(range(256))
+        for n2, n7 in ((512, 6), (1024, 8)):
+            with self.subTest(n2=n2, n7=n7):
+                ref, enc = Ref(_spandsp(), n2, n7), bis.Encoder(n2, n7)
+                got = bytearray(ref.decompress(enc.compress(before)))
+                got += ref.decompress(enc.request_reset())
+                got += ref.decompress(enc.compress(after) + enc.flush())
+                self.assertEqual(bytes(got), before + after)
+
+    def test_transparent_reset_command_into_reference_decoder(self):
+        before = bytes((0, 51, 102, 153, 204, 255)) * 32 + bytes(range(256))
+        after = b"transparent data after reset\r\n"
+        ref, enc = Ref(_spandsp()), bis.Encoder(auto_switch=False)
+        got = bytearray(ref.decompress(enc.compress(before)))
+        got += ref.decompress(enc.request_reset())
+        got += ref.decompress(enc.compress(after) + enc.flush())
+        self.assertEqual(bytes(got), before + after)
+
+    def test_dictionary_wrap_and_stepup_interoperate_both_directions(self):
+        rnd = random.Random(8)
+        words = [bytes(rnd.randrange(32, 127) for _ in range(rnd.randrange(3, 9)))
+                 for _ in range(3000)]
+        noisy = b" ".join(rnd.choice(words) for _ in range(6000))
+        text = b"The quick brown fox jumps over the lazy dog. "
+        data = text * 1000 + noisy + text * 500
+
+        original_add = bis.Dictionary.add
+        wraps = 0
+
+        def count_wraps(dictionary, parent, char):
+            nonlocal wraps
+            previous = dictionary.c1
+            result = original_add(dictionary, parent, char)
+            wraps += dictionary.c1 < previous
+            return result
+
+        ref, enc = Ref(_spandsp(), 1024, 8), bis.Encoder(1024, 8)
+        received = bytearray()
+        with patch.object(bis.Dictionary, "add", count_wraps):
+            for offset in range(0, len(data), 251):
+                received += ref.decompress(enc.compress(data[offset:offset + 251]))
+                received += ref.decompress(enc.flush())
+        self.assertEqual(bytes(received), data)
+        self.assertGreater(wraps, 0, "test stream must wrap the encoder dictionary")
+        self.assertGreaterEqual(enc.c2, 10, "test stream must exercise STEPUP")
+
+        ref, dec = Ref(_spandsp(), 1024, 8), bis.Decoder(1024, 8)
+        received.clear()
+        for offset in range(0, len(data), 251):
+            received += dec.decompress(ref.compress(data[offset:offset + 251]))
+        self.assertEqual(bytes(received), data)
 
 
 if __name__ == "__main__":

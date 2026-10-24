@@ -36,7 +36,11 @@ class ModemSpec:
             from modem_serial_device import normalize_device, SUPPORTED_BAUDS
             try:self.serial_device=normalize_device(self.serial_device)
             except ValueError:raise
-            if isinstance(self.serial_baud,bool) or self.serial_baud not in SUPPORTED_BAUDS:
+            custom_bell_rate = (sys.platform.startswith('linux')
+                                and isinstance(self.serial_baud, int)
+                                and 1170 <= self.serial_baud <= 1212)
+            if (isinstance(self.serial_baud,bool)
+                    or (self.serial_baud not in SUPPORTED_BAUDS and not custom_bell_rate)):
                 raise ValueError('unsupported native serial-device baud rate')
         if self.serial=='com':
             from modem_serial_com import normalize_com_device, BAUD_MINIMUM, BAUD_MAXIMUM

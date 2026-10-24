@@ -56,8 +56,14 @@ class BatchReceiveTests(unittest.TestCase):
             a.rx_bit(bit)
         b.rx_bits(iter(bits))
         self.assert_link_equal(a, b)
-        self.assertEqual(b.state, 'down')
+        # DISC is not reported as fully down until its UA response has gone
+        # onto the line. Later frames in this same input batch must not
+        # advance the release state.
+        self.assertEqual(b.state, 'release_pending')
         self.assertEqual(b.read(), b'')
+        while b.state == 'release_pending':
+            b.tx_bit()
+        self.assertEqual(b.state, 'released')
 
     def test_corruption_abort_stuffing_and_boundary_splits(self):
         a, b = V42Link(True, detect=False), V42Link(True, detect=False)

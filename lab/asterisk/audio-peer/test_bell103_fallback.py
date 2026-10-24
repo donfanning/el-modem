@@ -1,11 +1,13 @@
 import os
+import random
 import unittest
 
 import numpy as np
 
 import v22
 from autochain import V8Chain
-from bell103_engine import Bell103Engine
+from audio_path_impairment import AudioPathImpairment
+from bell103_engine import Bell103Engine, SoftwareFskAudioLoop
 
 
 def pcm(samples):
@@ -50,6 +52,66 @@ class Bell103EngineTests(unittest.TestCase):
         caller.feed_pcm(pcm(np.zeros(8000)))
         self.assertFalse(caller.connected)
 
+    def test_broadband_noise_cannot_deliver_dte_bytes_without_carrier(self):
+        answerer = Bell103Engine(False)
+        rng = random.Random(10300)
+        samples = np.asarray(
+            [round(rng.gauss(0.0, 6000.0)) for _ in range(16000)], dtype="<i2")
+        decoded = bytearray()
+        for offset in range(0, len(samples), 160):
+            decoded.extend(answerer.feed_pcm(samples[offset:offset + 160].tobytes()))
+        self.assertFalse(answerer.connected)
+        self.assertEqual(bytes(decoded), b"")
+
+
+class SoftwareFskAudioLoopTests(unittest.TestCase):
+    def test_pc_mu_paired_loop_roundtrips_bell103_and_v21_in_both_roles(self):
+        payload = b"\x00\xff FSK loop\r\n"
+        for standard in ("bell103", "v21"):
+            for calling_party in (True, False):
+                with self.subTest(standard=standard, calling_party=calling_party):
+                    loop = SoftwareFskAudioLoop(
+                        standard=standard, calling_party=calling_party)
+                    loop.feed_bytes(payload)
+                    received = bytearray()
+                    for _ in range(200):
+                        received.extend(loop.step())
+                        if payload in received:
+                            break
+                    self.assertEqual(bytes(received), payload)
+                    for _ in range(20):
+                        if loop.endpoint.connected and loop.peer.connected:
+                            break
+                        loop.step()
+                    status = loop.status()
+                    self.assertFalse(status["physical_v54_loop"])
+                    self.assertEqual(status["standard"], standard)
+                    self.assertTrue(status["endpoint_carrier"])
+                    self.assertTrue(status["peer_carrier"])
+                    self.assertEqual(status["tx_bytes"], len(payload))
+
+    def test_bell103_and_v21_roundtrip_with_bounded_sample_impairment(self):
+        payload = bytes(range(16))
+        for standard in ("bell103", "v21"):
+            impairment = AudioPathImpairment(
+                gain_db=3, dc_offset=256, noise_rms=64,
+                clip_level=10000, seed=7)
+            loop = SoftwareFskAudioLoop(
+                standard=standard,
+                local_to_peer_impairment=impairment)
+            loop.feed_bytes(payload)
+            received = bytearray()
+            for _ in range(100):
+                received.extend(loop.step())
+                if payload in received:
+                    break
+
+            self.assertIn(payload, received)
+            decoded = received[received.index(payload):][:len(payload)]
+            bit_errors = sum((sent ^ got).bit_count()
+                             for sent, got in zip(payload, decoded))
+            self.assertEqual(bit_errors, 0)
+            self.assertGreater(impairment.report()["clipped_samples"], 0)
 
 class ChainFallbackTests(unittest.TestCase):
     def run_chain(self, **kw):

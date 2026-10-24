@@ -64,6 +64,11 @@ class SipIncomingCallTests(unittest.TestCase):
             f"Content-Length: {len(sdp.encode())}\r\n\r\n{sdp}"
         ).encode()
 
+    def test_answer_sdp_uses_selected_packetization(self) -> None:
+        self.assertIn("a=ptime:20\r\n", self.server._answer_sdp())
+        self.server.packetization_ms = 10
+        self.assertIn("a=ptime:10\r\n", self.server._answer_sdp())
+
     def _recv(self) -> tuple[dict[str, str], str]:
         data, _ = self.client.recvfrom(65535)
         start_line, headers, body = parse_message(data)

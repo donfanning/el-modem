@@ -3,7 +3,7 @@ import copy
 import math
 import unittest
 import numpy as np
-from v34_feedback_native import feedback,centroid,warmup
+from v34_feedback_native import feedback,window_energy,centroid,warmup
 from v34_rx import Phase3Rx,SymbolEq,decide4
 
 
@@ -26,6 +26,12 @@ class FeedbackTests(unittest.TestCase):
                 np.testing.assert_allclose(actual,expected,rtol=2e-15,atol=2e-15)
                 self.assertAlmostEqual(ap,ephase,places=15)
                 self.assertAlmostEqual(af,efreq,places=15)
+                known=h.copy();energy=window_energy(w)
+                kp2,kf2=feedback(known,w,yr,d,mu,kp,ki,phase,freq,energy)
+                np.testing.assert_allclose(known,expected,rtol=2e-15,atol=2e-15)
+                self.assertAlmostEqual(kp2,ephase,places=15)
+                self.assertAlmostEqual(kf2,efreq,places=15)
+                np.testing.assert_allclose(energy,float(np.vdot(w,w).real),rtol=1e-15,atol=1e-12)
                 oracle=float(np.sum(np.arange(length)*abs(h)**2)/(np.sum(abs(h)**2)+1e-12))-length//2
                 self.assertAlmostEqual(centroid(h,length//2),oracle,places=12)
         self.assertEqual(centroid(np.zeros(24,complex),12),-12.)

@@ -2,8 +2,10 @@
 """Minimal inbound SIP user agent for the isolated modem lab."""
 
 import logging
+import os
 import re
 import socket
+import sys
 import threading
 import time
 import uuid
@@ -11,6 +13,14 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 logger = logging.getLogger(__name__)
+
+
+def _sip_trace(event: str, **fields: object) -> None:
+    """Emit opt-in SIP setup metadata without headers, SDP, or credentials."""
+    if os.environ.get("EL_MODEM_SIP_TRACE") != "1":
+        return
+    details = " ".join(f"{key}={value}" for key, value in fields.items())
+    print(f"SIPTRACE side=answerer event={event} {details}".rstrip(), file=sys.stderr, flush=True)
 
 
 def parse_caller(from_header: str) -> dict:
@@ -80,11 +90,15 @@ class SipIncomingCallServer:
         on_ring: Callable[[], None],
         on_hangup: Callable[[], None],
         ring_interval: float = 6.0,
+        packetization_ms: int = 20,
     ):
+        if packetization_ms not in (10, 20):
+            raise ValueError("SIP audio packetization must be 10 or 20 ms")
         self.host = host
         self.port = port
         self.media_host = media_host
         self.media_port = media_port
+        self.packetization_ms = packetization_ms
         self.on_incoming = on_incoming
         self.on_ring = on_ring
         self.on_hangup = on_hangup
@@ -103,6 +117,7 @@ class SipIncomingCallServer:
         sock.bind((self.host, self.port))
         sock.settimeout(0.2)
         self._socket = sock
+        _sip_trace("bound", local=f"{sock.getsockname()[0]}:{sock.getsockname()[1]}")
         self._thread = threading.Thread(target=self._serve, name="sip-uas", daemon=True)
         self._thread.start()
 
@@ -133,6 +148,7 @@ class SipIncomingCallServer:
             )
         lines.extend((f"Content-Length: {len(body.encode())}", "", body))
         self._socket.sendto("\r\n".join(lines).encode(), invite.source)
+        _sip_trace("response_sent", status=status.split(" ", 1)[0], target=f"{invite.source[0]}:{invite.source[1]}")
 
     @staticmethod
     def _tagged_to(invite: SipInvite) -> str:
@@ -150,7 +166,7 @@ class SipIncomingCallServer:
             "t=0 0\r\n"
             f"m=audio {self.media_port} RTP/AVP 0\r\n"
             "a=rtpmap:0 PCMU/8000\r\n"
-            "a=ptime:20\r\n"
+            f"a=ptime:{self.packetization_ms}\r\n"
             "a=sendrecv\r\n"
         )
 
@@ -162,6 +178,7 @@ class SipIncomingCallServer:
             invite.answered = True
             self._send_response(invite, "200 OK", self._answer_sdp())
         if not invite.acked.wait(timeout):
+            _sip_trace("ack_timeout", source=f"{invite.source[0]}:{invite.source[1]}")
             logger.warning("SIP ACK timed out for incoming modem call")
             with self._lock:
                 invite.answered = False
@@ -224,6 +241,8 @@ class SipIncomingCallServer:
                 return
             request_line, headers, body = parse_message(data)
             method = request_line.split(" ", 1)[0].upper()
+            if method in {"INVITE", "ACK", "CANCEL", "BYE"}:
+                _sip_trace("request_received", method=method, source=f"{source[0]}:{source[1]}")
             if request_line.startswith("SIP/2.0"):
                 if self.registration is not None:
                     self.registration.deliver(data)         # responses to our REGISTERs
@@ -305,6 +324,7 @@ class SipIncomingCallServer:
         invite = self._find_invite(headers)
         if invite is not None:
             invite.acked.set()
+            _sip_trace("ack_matched")
 
     def _handle_cancel(self, headers: dict[str, str], source: tuple[str, int]) -> None:
         invite = self._find_invite(headers)

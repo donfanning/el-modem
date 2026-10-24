@@ -58,6 +58,25 @@ class OnlineControl:
             eng = self.engine()
             if getattr(eng, 'is_v32', False):
                 return self._request_v32(eng, parameter, origin, rates)
+            if getattr(eng, 'is_v22', False):
+                if (rates is not None or origin != 'host' or self.pending is not None
+                        or getattr(eng, 'profile', None) != 'v22bis'
+                        or not eng.connected or getattr(eng, '_state', None) != 'bis'
+                        or parameter not in (4, 5)):
+                    return False
+                target = 1200 if parameter == 4 else 2400
+                if eng.bit_rate == target:
+                    return False
+                entry = dict(parameter=parameter, requested_cap=target, origin=origin,
+                             started_monotonic=time.monotonic(), initial_tx_rate=eng.bit_rate,
+                             initial_rx_rate=eng.bit_rate, procedure='V22bis-section-6.6',
+                             event_index=len(eng.events), status='pending')
+                try:
+                    eng.request_rate_change(target)
+                except (RuntimeError, ValueError):
+                    return False
+                self.pending = (eng, eng, 0, entry)
+                return True
             if not self.allow_v34:
                 return False
             core = self.core(eng)
@@ -190,6 +209,20 @@ class OnlineControl:
                 return None
             eng, old, epoch, entry = self.pending
             current = self.core(eng)
+            if entry.get('procedure') == 'V22bis-section-6.6':
+                events = eng.events[entry['event_index']:]
+                success = next((rate for name, rate in events if name == 'RATE_CHANGE_SUCCEEDED'), None)
+                failure = next((rate for name, rate in events if name == 'RATE_CHANGE_FAILED'), None)
+                if failure is not None:
+                    entry.update(status='failed', reason=f'V.22bis rate change to {failure} failed')
+                elif success is not None:
+                    entry.update(status='rate-exchanged', tx_rate=success, rx_rate=success)
+                else:
+                    return None
+                entry.update(completed_monotonic=time.monotonic())
+                self.history.append(entry)
+                self.pending = None
+                return copy.deepcopy(entry)
             if entry.get('procedure') == 'V32bis-section-8':
                 return self._poll_v32_rate(eng, old, epoch, entry)
             if getattr(old, 'is_v32', False):

@@ -82,6 +82,12 @@ class SipOriginateCallTests(unittest.TestCase):
             on_hangup=on_hangup or (lambda: None),
         )
 
+    def test_invite_sdp_uses_selected_packetization(self) -> None:
+        call = self._make_call()
+        self.assertIn("a=ptime:20\r\n", call._invite_sdp())
+        call.packetization_ms = 10
+        self.assertIn("a=ptime:10\r\n", call._invite_sdp())
+
     def test_ringing_then_answer_then_remote_bye(self) -> None:
         connected: list[tuple[str, int]] = []
         hung_up = threading.Event()

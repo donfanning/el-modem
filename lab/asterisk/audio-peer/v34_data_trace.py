@@ -43,12 +43,17 @@ class DataTrace:
                 w=vit.w, nonlinear=bool(vit.nonlinear), energy=float(vit.energy),
                 backend=vit.backend, emit_states=bool(vit.emit_states), pending_intervals=len(vit.hist),
                 pending_history=[dict(interval=int(h['interval']), prev=h['prev'].tolist(),
-                    s0=h['s0'].tolist(), s1=h['s1'].tolist(), p0=h['p0'].tolist(), U=h['U'].tolist())
+                    s0=h['s0'].tolist(), s1=h['s1'].tolist(),
+                    p0=None if 'p0' not in h else h['p0'].tolist(),
+                    U=None if 'U' not in h else h['U'].tolist())
                     for h in vit.hist]),
             eq=dict(symbol=eq.k, taps=pairs(eq.h), timing_mode=eq.timing_mode,
                 trajectory_requested=bool(eq._traj), native_feedback=bool(eq._native_feedback),
                 native_interpolation=bool(getattr(eq, '_native_interp', False))))
-        self.header['trace_mode'] = 'trellis-only' if self.trellis_only else 'full'
+        if vit.backend.startswith('predictive-'):
+            self.header['trace_mode'] = 'predictive-backend-not-instrumented'
+        else:
+            self.header['trace_mode'] = 'trellis-only' if self.trellis_only else 'full'
 
     def publish(self, complete=True):
         if self.done:

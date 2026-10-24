@@ -1,5 +1,6 @@
 """Synchronization checks against analytical signals and injected clock truth."""
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 import numpy as np
 from v34_rx import SymbolEq,interp
@@ -37,6 +38,17 @@ class SynchronizationTests(unittest.TestCase):
             np.testing.assert_array_equal(eq.window(eq.k),window)
             self.assertEqual(eq._gradient_rows,[])
             if precoded:self.assertEqual((eq.kp,eq.ki),old_gains)
+
+    def test_gradient_defaults_and_explicit_carrier_gains(self):
+        with patch.dict('os.environ', {}, clear=True):
+            default = SymbolEq(self.eq().R, 40, timing_mode='gradient')
+        self.assertEqual((default.kp, default.ki), (.03, 5e-5))
+        with patch.dict('os.environ', {'V34_KP': '.01', 'V34_KI': '5e-6'}, clear=True):
+            overridden = SymbolEq(self.eq().R, 40, timing_mode='gradient')
+        self.assertEqual((overridden.kp, overridden.ki), (.01, 5e-6))
+        with patch.dict('os.environ', {'V34_KP': '.02'}, clear=True):
+            partial = SymbolEq(self.eq().R, 40, timing_mode='gradient')
+        self.assertEqual((partial.kp, partial.ki), (.02, 5e-5))
 
     def test_refined_tap_centroid_is_not_mistaken_for_clock_error_at_data_handoff(self):
         eq=self.eq();eq.h=np.zeros(eq.L,complex);eq.h[eq.span]=1;eq.h[eq.span+1]=.5j

@@ -1,6 +1,7 @@
 import os
 import select
 import socket
+import sys
 import time
 import unittest
 
@@ -101,6 +102,95 @@ class TcpSerialTests(unittest.TestCase):
 
 @unittest.skipIf(os.name == "nt", "PTY is POSIX only")
 class PtySerialTests(unittest.TestCase):
+    def test_sets_v250_character_format_in_termios(self):
+        import termios
+
+        ser = PtySerial()
+        try:
+            formats, _parities = ser.supported_dte_character_formats()
+            self.assertIn(1, formats)
+            self.assertTrue(ser.set_dte_character_format(1, 1))  # 8N2
+            attrs = termios.tcgetattr(ser.master)
+            self.assertEqual(attrs[2] & termios.CSIZE, termios.CS8)
+            self.assertFalse(attrs[2] & termios.PARENB)
+            self.assertTrue(attrs[2] & termios.CSTOPB)
+            self.assertTrue(ser.set_dte_character_format(3, 3))  # 8N1
+            attrs = termios.tcgetattr(ser.master)
+            self.assertEqual(attrs[2] & termios.CSIZE, termios.CS8)
+            self.assertFalse(attrs[2] & termios.PARENB)
+            self.assertFalse(attrs[2] & termios.CSTOPB)
+            if 4 in formats:
+                self.assertTrue(ser.set_dte_character_format(4, 1))  # 7N2
+                self.assertEqual(termios.tcgetattr(ser.master)[2] & termios.CSIZE, termios.CS7)
+            if 5 not in formats:
+                self.assertFalse(ser.set_dte_character_format(5, 1))
+        finally:
+            ser.close()
+
+    def test_sets_standard_dte_baud(self):
+        ser = PtySerial()
+        fd = os.open(ser.name, os.O_RDWR | os.O_NOCTTY)
+        try:
+            self.assertIn(9600, ser.supported_dte_baud_rates())
+            self.assertTrue(ser.set_dte_baud(9600))
+            self.assertEqual(ser.get_dte_baud(), 9600)
+            self.assertFalse(ser.set_dte_baud(12345))
+        finally:
+            os.close(fd)
+            ser.close()
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux termios2 only")
+    def test_sets_custom_bell_dte_baud(self):
+        ser = PtySerial()
+        fd = os.open(ser.name, os.O_RDWR | os.O_NOCTTY)
+        try:
+            supported = ser.supported_dte_baud_rates()
+            self.assertIn(1170, supported)
+            self.assertIn(1212, supported)
+            self.assertTrue(ser.set_dte_baud(1170))
+            self.assertEqual(ser.get_dte_baud(), 1170)
+            self.assertTrue(ser.set_dte_baud(1212))
+            self.assertEqual(ser.get_dte_baud(), 1212)
+            self.assertFalse(ser.set_dte_baud(1169))
+            self.assertFalse(ser.set_dte_baud(1213))
+        finally:
+            os.close(fd)
+            ser.close()
+
+    def test_reports_configured_dte_baud(self):
+        import termios
+
+        ser = PtySerial()
+        fd = os.open(ser.name, os.O_RDWR | os.O_NOCTTY)
+        try:
+            attrs = termios.tcgetattr(fd)
+            attrs[4] = termios.B1200
+            attrs[5] = termios.B1200
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+            self.assertEqual(ser.get_dte_baud(), 1200)
+        finally:
+            os.close(fd)
+            ser.close()
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux termios2 only")
+    def test_reports_custom_termios2_baud(self):
+        import fcntl
+        import struct
+
+        ser = PtySerial()
+        fd = os.open(ser.name, os.O_RDWR | os.O_NOCTTY)
+        try:
+            attrs = bytearray(44)  # Linux struct termios2, NCCS=19
+            fcntl.ioctl(fd, 0x802C542A, attrs, True)  # TCGETS2
+            cflag = struct.unpack_from("=I", attrs, 8)[0]
+            struct.pack_into("=I", attrs, 8, (cflag & ~0x100F) | 0x1000)  # CBAUD/BOTHER
+            struct.pack_into("=II", attrs, 36, 1212, 1212)
+            fcntl.ioctl(fd, 0x402C542B, attrs, True)  # TCSETS2
+            self.assertEqual(ser.get_dte_baud(), 1212)
+        finally:
+            os.close(fd)
+            ser.close()
+
     def test_open_data_close(self):
         ser = PtySerial()
         try:

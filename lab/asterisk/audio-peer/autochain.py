@@ -71,9 +71,11 @@ class V8Chain:
 
     def __init__(self, calling_party: bool, v34_rate: int = 33600, v32_rates=(14400, 12000, 9600, 7200, 4800),
                  v22_rate: int = 2400, allow=(V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22), patience: float = 6.0,
-                 debug: bool = False, b103_fallback: bool | None = None, v22_attempt_seconds: float | None = None):
+                 debug: bool = False, b103_fallback: bool | None = None, v22_attempt_seconds: float | None = None,
+                 v22_min_rate: int = 1200, v34_min_rate: int = 2400):
         self.calling = calling_party
-        self.v34_rate, self.v32_rates, self.v22_rate = v34_rate, tuple(v32_rates), v22_rate
+        self.v34_rate, self.v34_min_rate, self.v32_rates, self.v22_rate = v34_rate, v34_min_rate, tuple(v32_rates), v22_rate
+        self.v22_min_rate = v22_min_rate
         self.allow = allow
         self.patience = patience
         self.debug = debug
@@ -136,7 +138,8 @@ class V8Chain:
             from v34_answer_modem import V34AnswerModem  # noqa: PLC0415
             from v34_modem import V34Modem  # noqa: PLC0415
 
-            self.engine = (V34Modem if calling else V34AnswerModem)(data_rate=self.v34_rate, debug=self.debug,
+            self.engine = (V34Modem if calling else V34AnswerModem)(data_rate=self.v34_rate,
+                                                                    min_data_rate=self.v34_min_rate, debug=self.debug,
                                                                     with_v8=False)
         elif kind == "v32":
             if calling:
@@ -155,7 +158,7 @@ class V8Chain:
         else:
             from v22 import V22Modem  # noqa: PLC0415
 
-            self.engine = V22Modem(calling, self.v22_rate)
+            self.engine = V22Modem(calling, self.v22_rate, min_rate=self.v22_min_rate)
         if self._v8 is not None:
             self._v8.close()
             self._v8 = None

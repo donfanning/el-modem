@@ -146,6 +146,32 @@ class Info0RecoveryTests(unittest.TestCase):
         self.assertLessEqual(call._info0_repeats, call.INFO0_RECOVERY_MAX)
         self.assertIsNotNone(call.info0a)
 
+    def test_answerer_preserves_inflight_b_reversal_across_repeated_info0c(self):
+        """A B reversal detected as repeated INFO0c recovery resumes Tone A must not be cleared."""
+        answerer = v34_ans.V34Answerer()
+        samples = np.arange(8960)
+        signal = (answerer.amp * np.cos(2 * np.pi * 1200 * samples / 8000)).astype(float)
+        signal[8922:] *= -1
+        answerer._rx = signal[:8800].copy()
+        answerer.tone_b.feed(answerer._rx)
+        answerer.stage = 'toneA'
+        answerer._src = v34_ans.ToneASrc(answerer.amp)
+        answerer.info0c = {'ack': 1}
+        answerer._t_a = 8400
+        answerer.a_rev1_t = 5920
+        answerer._a_rev1_rx = 5920
+        answerer.t = 8960
+        answerer.rx_t = 8800
+
+        with patch.object(answerer, '_info0c_repeated', return_value=False):
+            answerer.rx(signal[8800:8960])
+
+        self.assertEqual(answerer.tone_b.reversals, [])
+        self.assertEqual(answerer.stage, 'a_rev1')
+        self.assertEqual(answerer.a_rev1_t, 5920)
+        self.assertEqual(answerer.rtd_samples, 8922 - 5920 - 320)
+        self.assertEqual(answerer._actions[0][0], 9242)
+
     def test_repeats_are_bounded_when_the_answerer_never_answers(self):
         call = v34_call.V34Caller()
         call.stage = 'info0'

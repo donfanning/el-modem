@@ -28,6 +28,7 @@ GET_REMOTE=0x800454e9
 GET_OPEN=0x800454ec
 
 class DriverSerial:
+    supports_modem_control = True
     def __init__(self, link):
         if not sys.platform.startswith("linux"):raise ValueError("serialsim driver backend requires Linux; choose PTY/TCP")
         self.allocator=os.open('/dev/ttyPipe',os.O_RDWR|os.O_CLOEXEC)
@@ -60,13 +61,26 @@ class DriverSerial:
     def signals(self):
         bits=self.remote()
         return dict(TR=bool(bits & termios.TIOCM_DTR),RTS=bool(bits & termios.TIOCM_RTS),CTS=bool(bits & termios.TIOCM_CTS))
-    def update_lines(self,carrier,ring,ready,hardware,backlog=0):
+    def update_lines(self,carrier,ring,ready,hardware,backlog=0,*,rts_flow=None,cts_flow=None):
         # Receiver backpressure controls peer CTS; RTS controls output flushing.
-        cts=ready and (not hardware or backlog < 40960)
+        gate_rts = bool(hardware if rts_flow is None else (hardware or rts_flow))
+        gate_cts = bool(hardware if cts_flow is None else (hardware or cts_flow))
+        cts=ready and (not gate_cts or backlog < 40960)
         mask=termios.TIOCM_CAR|termios.TIOCM_DSR|termios.TIOCM_CTS|termios.TIOCM_RNG
         value=(termios.TIOCM_CAR if carrier else 0)|(termios.TIOCM_DSR if ready else 0)|(termios.TIOCM_RNG if ring else 0)|(termios.TIOCM_CTS if cts else 0)
         fcntl.ioctl(self.fd,SET_REMOTE,(mask<<16)|value)
-        self.hardware=hardware
+        self.hardware=gate_rts
+    def output_pending(self):
+        """Bytes not yet consumed by the DTE, or None if the tty cannot report them."""
+        ioctl = getattr(termios, 'TIOCOUTQ', None)
+        if ioctl is None:
+            return None
+        queued = array.array('i', [0])
+        try:
+            fcntl.ioctl(self.fd, ioctl, queued, True)
+        except OSError:
+            return None
+        return len(self.pending) + max(0, int(queued[0]))
     def open_terminal(self):
         if self.client_present(): raise ValueError('serial port is owned by an external application')
         fd=os.open(self.client,os.O_RDWR|os.O_NONBLOCK|os.O_NOCTTY|os.O_CLOEXEC)
@@ -101,6 +115,8 @@ class DriverSerial:
             if self.link and os.path.islink(self.link): os.unlink(self.link)
 
 class LegacySerial:
+    supports_modem_control = False
+
     def __init__(self,kind,link=None,address=None):
         self.kind=kind
         if kind=='pty': self.backend=PtySerial(link)
@@ -113,7 +129,7 @@ class LegacySerial:
         poll=select.poll();poll.register(self.backend.master,select.POLLHUP)
         return not any(flags & select.POLLHUP for _,flags in poll.poll(0))
     def signals(self): return dict(TR=self.client_present(),RTS=None,CTS=None)
-    def update_lines(self,*args): pass
+    def update_lines(self,*args,**kwargs): pass
     def open_terminal(self):
         if self.client_present(): raise ValueError('serial port is owned by an external application')
         if self.kind=='pty':

@@ -11,6 +11,8 @@ error must stay near the ~1.3% of amplitude that G.711 specifies, at every level
 """
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,15 +24,28 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import v34_g711 as g711  # noqa: E402
 
-REFERENCE_DIR = Path("/tmp/opencode")
-
-
-def _reference_tables():
-    mu = REFERENCE_DIR / "ref_mulaw_codes.npy"
-    al = REFERENCE_DIR / "ref_alaw_codes.npy"
-    if not (mu.exists() and al.exists()):
-        return None
-    return np.load(mu), np.load(al)
+def _generate_reference_tables(out: Path):
+    """Generate fresh full-range vectors with FFmpeg; never trust /tmp state."""
+    if shutil.which("ffmpeg") is None:
+        raise unittest.SkipTest("ffmpeg absent; independent G.711 vectors unavailable")
+    script = Path(__file__).resolve().parent / "debug" / "make_g711_reference.sh"
+    env = os.environ.copy()
+    env["PATH"] = str(Path(sys.executable).resolve().parent) + os.pathsep + env.get("PATH", "")
+    result = subprocess.run(["sh", str(script), str(out)], capture_output=True, env=env)
+    if result.returncode:
+        raise AssertionError(result.stderr.decode(errors="replace")[-1000:])
+    return {
+        "pcmu": {
+            "encode": np.load(out / "ref_mulaw_codes.npy"),
+            "decode": np.load(out / "ref_mulaw_decode_pcm.npy"),
+            "decode_levels": np.load(out / "ref_mulaw_decode.npy"),
+        },
+        "pcma": {
+            "encode": np.load(out / "ref_alaw_codes.npy"),
+            "decode": np.load(out / "ref_alaw_decode_pcm.npy"),
+            "decode_levels": np.load(out / "ref_alaw_decode.npy"),
+        },
+    }
 
 
 class G711TableTests(unittest.TestCase):
@@ -90,29 +105,29 @@ class G711TableTests(unittest.TestCase):
                 self.assertTrue(np.array_equal(g711.roundtrip(once, law), once))
 
     def test_matches_independent_reference(self):
-        """Encode tables agree with the reference except at bucket edges.
+        """Pin full-range encoder parity and localize all differences to edges.
 
-        A real encoder truncates within a segment, so its bucket boundary sits a
-        few counts off the reconstructed level's midpoint. This implementation
-        cuts at the midpoint, which disagrees with the reference on ~0.8% of
-        inputs -- always by one code, always by one quantization step.
-
-        That difference is immaterial here and the test asserts so explicitly:
-        the round-trip error actually seen by the modem matches the reference to
-        better than 0.5% (see test_roundtrip_error_matches_reference). A larger
-        disagreement would mean the tables genuinely differ.
+        G.711 §3.6 leaves conversion at decision values to equipment
+        specification. FFmpeg and the project encoder choose different sides
+        for some samples immediately around those values. The gate permits only
+        boundary-localized differences, not a broad error-rate allowance. The
+        count is not pinned to one FFmpeg release because edge conventions may
+        vary by implementation.
         """
-        tables = _reference_tables()
-        if tables is None:
-            self.skipTest("reference tables absent; run debug/make_g711_reference.sh")
-        mu, al = tables
+        with tempfile.TemporaryDirectory() as tmp:
+            refs = _generate_reference_tables(Path(tmp))
         x = np.arange(-32768, 32768)
-        for law, reference in (("pcmu", mu), ("pcma", al)):
+        for law in self.LAWS:
+            reference = refs[law]["encode"]
             with self.subTest(law=law):
                 mine = g711.encode(x, law).astype(np.int64) & 0xFF
                 ref = reference.astype(np.int64)
                 mismatch = np.flatnonzero(mine != ref)
-                self.assertLess(len(mismatch) / len(x), 0.02)
+                transitions = np.flatnonzero(ref[1:] != ref[:-1]) + 1
+                if len(mismatch):
+                    distance = np.min(np.abs(mismatch[:, None] - transitions[None, :]), axis=1)
+                    # A change away from a quantizer transition is a real defect.
+                    self.assertLessEqual(int(distance.max()), 4)
 
     def test_roundtrip_error_matches_reference(self):
         """The quantity the codec control actually uses must match the reference.
@@ -122,33 +137,42 @@ class G711TableTests(unittest.TestCase):
         modem error to the codec or hide it. Compared as RMS round-trip error on
         realistic full-scale signals.
         """
-        tables = _reference_tables()
-        if tables is None:
-            self.skipTest("reference tables absent; run debug/make_g711_reference.sh")
-        mu, al = tables
         rng = np.random.default_rng(3)
-        for law, reference in (("pcmu", mu), ("pcma", al)):
-            for amplitude in (3000, 16000, 25000):
-                with self.subTest(law=law, amplitude=amplitude):
-                    signal = np.clip(rng.standard_normal(8000) * amplitude,
-                                     -32768, 32767).astype(float)
-                    ours = float(np.sqrt(np.mean((g711.roundtrip(signal, law) - signal) ** 2)))
-                    index = np.clip(np.rint(signal) + 32768, 0, 65535).astype(np.intp)
-                    theirs = g711.decode(reference[index], law).astype(float)
-                    theirs_rms = float(np.sqrt(np.mean((theirs - signal) ** 2)))
-                    self.assertLess(abs(ours - theirs_rms) / theirs_rms, 0.005)
+        with tempfile.TemporaryDirectory() as tmp:
+            refs = _generate_reference_tables(Path(tmp))
+            for law in self.LAWS:
+                reference = refs[law]["encode"]
+                for amplitude in (3000, 16000, 25000):
+                    with self.subTest(law=law, amplitude=amplitude):
+                        signal = np.clip(rng.standard_normal(8000) * amplitude,
+                                         -32768, 32767).astype(float)
+                        ours = float(np.sqrt(np.mean((g711.roundtrip(signal, law) - signal) ** 2)))
+                        index = np.clip(np.rint(signal) + 32768, 0, 65535).astype(np.intp)
+                        theirs = g711.decode(reference[index], law).astype(float)
+                        theirs_rms = float(np.sqrt(np.mean((theirs - signal) ** 2)))
+                        self.assertLess(abs(ours - theirs_rms) / theirs_rms, 0.005)
 
     def test_decode_matches_reference_levels(self):
-        tables = _reference_tables()
-        if tables is None:
-            self.skipTest("reference tables absent; run debug/make_g711_reference.sh")
-        for law, name in (("pcmu", "mulaw"), ("pcma", "alaw")):
-            reference = np.load(REFERENCE_DIR / f"ref_{name}_decode.npy")
-            with self.subTest(law=law):
-                mine = g711.decode(np.arange(256), law).astype(float)
-                valid = ~np.isnan(reference)
-                # Representatives are bucket midpoints, so allow a partial step.
-                self.assertLess(float(np.abs(mine[valid] - reference[valid]).max()), 128.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            refs = _generate_reference_tables(Path(tmp))
+            for law in self.LAWS:
+                reference = refs[law]["decode_levels"]
+                with self.subTest(law=law):
+                    mine = g711.decode(np.arange(256), law).astype(float)
+                    valid = ~np.isnan(reference)
+                    # Representatives are bucket midpoints, not decoder outputs.
+                    self.assertLess(float(np.abs(mine[valid] - reference[valid]).max()), 128.0)
+
+    def test_all_decode_codewords_match_ffmpeg_exactly(self):
+        """Check every PCMU/PCMA octet against ffmpeg's independent decoder."""
+        with tempfile.TemporaryDirectory() as tmp:
+            refs = _generate_reference_tables(Path(tmp))
+            for law in self.LAWS:
+                expected = refs[law]["decode"].astype(np.int32)
+                self.assertEqual(expected.shape, (256,))
+                with self.subTest(law=law):
+                    actual = g711.decode(np.arange(256), law).astype(np.int32)
+                    np.testing.assert_array_equal(actual, expected)
 
     def test_mulaw_never_emits_negative_zero_code(self):
         """mu-law reserves 0x7F; emitting it would break sign symmetry."""
@@ -166,15 +190,19 @@ class G711TableTests(unittest.TestCase):
 
 class G711ScriptTests(unittest.TestCase):
     def test_reference_generator_runs(self):
-        script = Path(__file__).resolve().parents[1] / "debug" / "make_g711_reference.sh"
+        script = Path(__file__).resolve().parent / "debug" / "make_g711_reference.sh"
         if not script.exists():
             self.skipTest("generator script absent")
-        if subprocess.run(["which", "ffmpeg"], capture_output=True).returncode != 0:
+        if shutil.which("ffmpeg") is None:
             self.skipTest("ffmpeg absent")
         with tempfile.TemporaryDirectory() as tmp:
-            result = subprocess.run(["sh", str(script), tmp], capture_output=True)
+            env = os.environ.copy()
+            env["PATH"] = str(Path(sys.executable).resolve().parent) + os.pathsep + env.get("PATH", "")
+            result = subprocess.run(["sh", str(script), tmp], capture_output=True, env=env)
             self.assertEqual(result.returncode, 0, result.stderr.decode()[-400:])
             self.assertTrue((Path(tmp) / "ref_mulaw_codes.npy").exists())
+            self.assertTrue((Path(tmp) / "ref_mulaw_decode_pcm.npy").exists())
+            self.assertTrue((Path(tmp) / "ref_alaw_decode_pcm.npy").exists())
 
 
 if __name__ == "__main__":

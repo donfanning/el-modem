@@ -8,6 +8,7 @@ from v42_detect import (
     AdpDetector, OdpDetector, adp_bits, char_bits, odp_bits,
 )
 from spandsp_v22 import _AsyncFramer
+from v42_layer import _Framer
 
 
 def decode(bits):
@@ -46,6 +47,48 @@ class PatternTests(unittest.TestCase):
         o = OdpDetector()
         self.assertFalse(o.feed(b"\x11"))
         self.assertTrue(o.feed(b"\x91\x11\x91"))
+
+    def test_adp_detector_bounds_mark_gaps_but_keeps_observed_zero_gap_peer(self):
+        for gap in (0, 8, 16):
+            with self.subTest(gap=gap):
+                d = AdpDetector()
+                self.assertIsNone(d.feed(b"EC", [None, gap]))
+                self.assertEqual(d.feed(b"EC", [gap, gap]), "v42")
+
+        for gap in (7, 17, 24):
+            with self.subTest(gap=gap):
+                d = AdpDetector()
+                self.assertIsNone(d.feed(b"EC", [None, gap]))
+                self.assertIsNone(d.feed(b"EC", [gap, gap]))
+
+        # The same spacing policy applies to the ADP that declines error
+        # control, so separated E/NUL text cannot spuriously force raw mode.
+        for gap in (0, 8, 16):
+            with self.subTest(no_v42_gap=gap):
+                d = AdpDetector()
+                self.assertIsNone(d.feed(b"E\x00", [None, gap]))
+                self.assertEqual(d.feed(b"E\x00", [gap, gap]), "no_v42")
+        for gap in (7, 17, 24):
+            with self.subTest(no_v42_gap=gap):
+                d = AdpDetector()
+                self.assertIsNone(d.feed(b"E\x00", [None, gap]))
+                self.assertIsNone(d.feed(b"E\x00", [gap, gap]))
+
+    def test_timed_framer_reports_intercharacter_mark_bits(self):
+        bits = []
+        for index, char in enumerate(b"ECEC"):
+            bits.extend(char_bits(char))
+            if index < 3:
+                bits.extend([1] * (0 if index == 0 else 16))
+        framer = _Framer()
+        decoded = []
+        for bit in bits:
+            decoded.extend(framer.push_with_gaps([bit]))
+        self.assertEqual(decoded, [(ord("E"), None), (ord("C"), 0),
+                                   (ord("E"), 16), (ord("C"), 16)])
+        detector = AdpDetector()
+        self.assertEqual(detector.feed(bytes(char for char, _ in decoded),
+                                       [gap for _, gap in decoded]), "v42")
 
 
 @unittest.skipUnless(spandsp_v22.available(), "libspandsp not installed")

@@ -33,6 +33,15 @@ from v34_call import (FS, WIN, P4_MP_BURNIN_SYMBOLS, ArraySrc, Silence, ToneSrc,
 # L1 10 ms after its tone B phase reversal (11.2.1.1.6), so this is generous by two orders of
 # magnitude; it exists only so a probing signal we cannot recognise cannot stall phase 2 forever.
 PROBE_WAIT = 0.45
+# The call modem's 40 +/- 1 ms response interval is specified at the line
+# terminals.  The answer modem's RTD estimate is diagnostic, not a precise
+# lower bound: the two modem clock/detector estimates can differ by a packet
+# interval on VoIP.  Use the earliest standards-permitted local interval as a
+# stale-event cutoff; the following L1/L2 probe confirms that a fresh response
+# followed it.
+_B_REV_MIN_AFTER_A3_S = 0.039
+P4_ANSWER_TRN_INITIAL_SYMBOLS = 1500
+P4_ANSWER_TRN_FILL_SYMBOLS = 128
 
 # Bands occupied by the L1/L2 comb (10.1.2.4 Table 17) and by the caller's tone B carrier. The comb
 # is detected as energy in its own bands relative to the tone B band, which is what separates the
@@ -179,11 +188,12 @@ class ToneTracker:
 
 
 class V34Answerer:
-    def __init__(self, rms: float = 900.0, info0: dict | None = None, log=None, symbol_rates=None, data_rate: int = 4800):
+    def __init__(self, rms: float = 900.0, info0: dict | None = None, log=None, symbol_rates=None, data_rate: int = 4800, min_data_rate: int = 2400):
         self.rms = rms
         self.amp = rms * math.sqrt(2)
         self.data_rate = data_rate
-        self._local_mp = v34_negotiation.offer(data_rate)
+        self._min_data_rate = min_data_rate
+        self._local_mp = v34_negotiation.offer(data_rate, minimum=min_data_rate)
         self.negotiated = None
         self.ans_rate = data_rate                            # initial transmit rate ceiling
         self.rx_rate = 0                                     # negotiated call->answer rate; 0 until MP lands
@@ -195,6 +205,9 @@ class V34Answerer:
         self.symbol_rates = symbol_rates
         self.t = 0
         self.rx_t = 0
+        self._rx_media_anchor: tuple[int, float] | None = None
+        self._tx_media_anchor: tuple[int, float] | None = None
+        self._first_b_reversal_media_time: float | None = None
         self._retrain_first_b_retries = 0                   # 11.2.2.2.2: a missed first B reversal reconditions twice before the call fails
         self.events: list[tuple[int, str]] = []
         self._log = log
@@ -219,12 +232,17 @@ class V34Answerer:
         self._info0c_at = None                        # rx position of the INFO0c frame already answered
         self._info0c_rep_checked = 0
         self.a_rev1_t: int | None = None
+        self._wait_b_rev_rx_after: int | None = None
         self.rtd_samples: int | None = None
         self.l1_start: int | None = None
         self.probe_result: dict | None = None
         self.mp_call: dict | None = None
         self._mp_ack = 0
         self._mp_ack_sent = False
+        self._p4_mp_ready = False
+        self._p4_trn_sc = None
+        self._p4_trn_symbols_queued = 0
+        self._p4_trn_symbol_limit = 0
         self.e_sent = False
         self.rx_bytes = bytearray()
         self._app = bytearray()
@@ -283,6 +301,32 @@ class V34Answerer:
     def _at(self, tx_sample: int, fn) -> None:
         self._actions.append((tx_sample, fn))
         self._actions.sort(key=lambda a: a[0])
+
+    def set_rx_media_deadline(self, deadline: float) -> None:
+        """Anchor the next received sample to its RTP playout time."""
+        self._rx_media_anchor = (self.rx_t, float(deadline))
+
+    def set_tx_media_deadline(self, deadline: float) -> None:
+        """Anchor the next generated sample to its RTP media deadline."""
+        self._tx_media_anchor = (self.t, float(deadline))
+
+    def _rx_sample_media_time(self, sample: int) -> float | None:
+        if self._rx_media_anchor is None:
+            return None
+        origin, deadline = self._rx_media_anchor
+        return deadline + (int(sample) - origin) / FS
+
+    def _tx_sample_for_media_time(self, media_time: float) -> int | None:
+        if self._tx_media_anchor is None:
+            return None
+        origin, deadline = self._tx_media_anchor
+        return origin + int(round((float(media_time) - deadline) * FS))
+
+    def _tx_sample_media_time(self, sample: int) -> float | None:
+        if self._tx_media_anchor is None:
+            return None
+        origin, deadline = self._tx_media_anchor
+        return deadline + (int(sample) - origin) / FS
 
     def tx(self, n: int) -> np.ndarray:
         if self._connected_rate_enabled:
@@ -404,6 +448,16 @@ class V34Answerer:
                 self._ev("INFO0a sent: tone A")
         elif st == "toneA":
             # Duplex 11.2.1.2.3: initiate A reversal after >=50 ms of A.
+            # A repeated INFO0c can restart INFO0a/Tone A while the caller's
+            # response to our previous A reversal is already in flight. The
+            # detector may recognize that B reversal in the same RX block
+            # which reaches this transition. Consume it against the previous
+            # A timestamp before the normal A-reversal path clears the history.
+            if (self.a_rev1_t is not None and self._a_rev1_rx is not None
+                    and self.tone_b.reversals
+                    and self.t >= self._t_a + int(0.050 * FS)):
+                self._accept_first_b_reversal(int(self.tone_b.reversals[0]))
+                return
             if self.info0c is None:
                 self._try_info0c()
                 if self.info0c is None and self.tone_b.steady_for(12):
@@ -429,12 +483,7 @@ class V34Answerer:
                 self._send_info0a()
                 return
             if self.tone_b.reversals:
-                t_brev = int(self.tone_b.reversals[0])
-                self.rtd_samples = max(0, t_brev - self._a_rev1_rx - int(0.040 * FS))
-                delay = max(0, t_brev + int(0.040 * FS) - self.rx_t)
-                self._at(self.t + delay, self._second_a_reversal)
-                self.stage = "a_rev1"
-                self._ev(f"round trip delay estimate {self.rtd_samples / FS * 1000:.1f} ms")
+                self._accept_first_b_reversal(int(self.tone_b.reversals[0]))
             elif self.rx_t - self._a_rev1_rx >= 2 * FS:
                 if (hasattr(self, '_retrain_first_b_retries')
                         and self._retrain_first_b_retries < 2):
@@ -463,10 +512,39 @@ class V34Answerer:
         elif st in ("p4", "data"):
             self._p4_poll()
 
+    def _accept_first_b_reversal(self, t_brev: int) -> None:
+        """Use the first B phase reversal, including one completed during INFO0 recovery."""
+        detected_at = self._rx_sample_media_time(t_brev)
+        self._first_b_reversal_media_time = detected_at
+        sent_a_at = (self._tx_sample_media_time(self.a_rev1_t)
+                     if self.a_rev1_t is not None else None)
+        if detected_at is not None and sent_a_at is not None:
+            self.rtd_samples = max(0, int(round(
+                (detected_at - sent_a_at - 0.040) * FS)))
+        else:
+            self.rtd_samples = max(0, t_brev - self._a_rev1_rx - int(0.040 * FS))
+        tx_due = (self._tx_sample_for_media_time(detected_at + 0.040)
+                  if detected_at is not None else None)
+        if tx_due is None:
+            # Legacy sample-domain mapping assumes receive and transmit sample
+            # origins advance together. RTP media anchors remove that
+            # assumption when the transport provides both timelines.
+            delay = max(0, t_brev + int(0.040 * FS) - self.rx_t)
+            tx_due = self.t + delay
+        self._at(max(self.t, tx_due), self._second_a_reversal)
+        self.stage = "a_rev1"
+        self.tone_b.reversals.clear()
+        self._ev(f"round trip delay estimate {self.rtd_samples / FS * 1000:.1f} ms")
+
     def _second_a_reversal(self) -> None:
         self._src.reverse()
         self._at(self.t + int(0.010 * FS), self._start_l)
-        self._ev("second tone A phase reversal sent")
+        tx_media_time = self._tx_sample_media_time(self.t)
+        if tx_media_time is not None and self._first_b_reversal_media_time is not None:
+            interval_ms = (tx_media_time - self._first_b_reversal_media_time) * 1000.0
+            self._ev(f"second tone A phase reversal sent; RTP media interval {interval_ms:.3f} ms after B reversal")
+        else:
+            self._ev("second tone A phase reversal sent")
 
     def _start_l(self) -> None:
         l1 = probing_signal(0.160, self.rms * 2.0)
@@ -491,12 +569,27 @@ class V34Answerer:
 
     def _a_rev3(self) -> None:
         self._src.reverse()
+        # 11.2.1.2.6 conditions the receiver for the caller's next Tone-B
+        # reversal only after this reversal is sent. Tone-B tracking continues
+        # while we transmit A/L2, so a delayed earlier reversal can still be in
+        # the history when this state begins. The caller's 40 +/- 1 ms interval
+        # is specified at line terminals (11.2.1.1.6); RTD is not an exact
+        # lower bound, so reject only reversals earlier than the minimum legal
+        # interval after our A3.
+        self._wait_b_rev_rx_after = (
+            self.rx_t + int(_B_REV_MIN_AFTER_A3_S * FS)
+        )
         self._at(self.t + int(0.010 * FS), lambda: self._play(Silence()))
         self._ev("third tone A phase reversal sent, then silence")
 
     def _wait_b_rev(self) -> None:
-        if self.tone_b.reversals and self.rx_t > self.tone_b.reversals[-1] + int(0.04 * FS):
-            self.probe_start = int(self.tone_b.reversals[-1])
+        eligible = [
+            reversal for reversal in self.tone_b.reversals
+            if self._wait_b_rev_rx_after is None
+            or reversal >= self._wait_b_rev_rx_after
+        ]
+        if eligible and self.rx_t > eligible[-1] + int(0.04 * FS):
+            self.probe_start = int(eligible[-1])
             self.stage = "probe_rx"
             self._ev("caller's tone B reversal: expecting L1/L2")
 
@@ -696,7 +789,7 @@ class V34Answerer:
         self._qam.preemphasis = PreEmphasis(self.ans_baud, self.ans_fc, index)
         # The caller's J requests our transmit constellation (10.1.3.3).
         c = self._p4_c = 16 if self.call_j_pattern == "J_16PT" else 4
-        trn, sc = v34_tx.trn_symbols(1500, "answer", constellation=c)
+        trn, sc = v34_tx.trn_symbols(P4_ANSWER_TRN_INITIAL_SYMBOLS, "answer", constellation=c)
         last_i = v34_tx.trn_last_rotation(trn, c)
         self._mp_sc, self._mp_z = sc, last_i
         # 11.4.1.2.1 is sequential: transmit S for 128T, condition the receiver to detect J' followed by
@@ -706,6 +799,16 @@ class V34Answerer:
         # transition we are waiting on it to cause. S alone goes out; S-bar + TRN follow once J' lands,
         # in _p4_poll.
         self._p4_trn = trn
+        # The receive equalizer may need longer than this initial transmit
+        # block to burn in. Preserve the TRN scrambler and refill with the
+        # continuing sequence instead of letting StreamQam zero-pad the tail.
+        # V.34 11.4.1.2.2 bounds answerer TRN to 2000 ms plus measured RTD.
+        self._p4_trn_sc = sc
+        self._p4_trn_symbols_queued = len(trn)
+        rtd_seconds = max(0, self.rtd_samples or 0) / FS
+        self._p4_trn_symbol_limit = max(
+            len(trn), int(math.ceil((2.0 + rtd_seconds) * self.ans_baud)))
+        self._p4_mp_ready = False
         # S is 4-point (10.1.3.7), like the phase-3 sequence before it, so the transmitter keeps
         # the 4-point normaliser for it.
         self._qam.push(v34_tx.s_signal(128))
@@ -721,7 +824,7 @@ class V34Answerer:
         self._qam.push(v34_tx.s_signal(16, True))
         self._qam.set_constellation(self._p4_c)
         self._qam.push(self._p4_trn)
-        self._qam.fill = None            # nothing after TRN until our receiver is trained
+        self._qam.fill = self._fill_phase4_trn
         self._play(_QamSrc(self._qam))
         self.stage = "p4"
         self._p4_state = "jprime"
@@ -740,6 +843,33 @@ class V34Answerer:
         sy, self._mp_z = v34_tx.bit_symbols(bits, "answer", self._mp_sc, self._mp_z, constellation=self._p4_c)
         qam.push(sy)
         self._mp_ack_sent = bool(self._mp_ack)
+
+    def _fill_phase4_trn(self, qam) -> None:
+        """Extend phase-4 TRN until RX burn-in is ready, then start MP.
+
+        TX and RX run on separate media callbacks. The old implementation set
+        ``fill`` from the RX callback while TX was draining a fixed 1500-symbol
+        queue; a late burn-in could therefore let StreamQam emit zero-padded
+        symbols at the TRN/MP boundary. Refill the continuing scrambled-one
+        training sequence until the receive side is ready.
+        """
+        if self._p4_mp_ready:
+            qam.fill = self._fill_mp
+            self._fill_mp(qam)
+            return
+        remaining = self._p4_trn_symbol_limit - self._p4_trn_symbols_queued
+        if remaining <= 0:
+            qam.fill = None
+            self.failed_reason = "phase-4 receive burn-in exceeded the V.34 TRN limit"
+            self.stage = "failed"
+            self._ev(self.failed_reason)
+            return
+        count = min(P4_ANSWER_TRN_FILL_SYMBOLS, remaining)
+        symbols, self._p4_trn_sc = v34_tx.trn_symbols(
+            count, "answer", constellation=self._p4_c, scrambler=self._p4_trn_sc)
+        qam.push(symbols)
+        self._mp_z = v34_tx.trn_last_rotation(symbols, self._p4_c)
+        self._p4_trn_symbols_queued += count
 
     def _p4_poll(self) -> None:
         if self._rx_state is not None or getattr(self, '_connected_rate', None) is not None:
@@ -776,12 +906,9 @@ class V34Answerer:
                 self._ev(f"caller's J' at symbol {jp}; S-bar and TRN already sent, reading its MP")
                 # S-bar and TRN already went out with S in _start_phase4, per 11.4.1.2.1; there is
                 # nothing left to owe the caller here, only a receiver to point at its phase-4 signal.
-                # fill stays None: 11.4.1.2.2 -- "The modem shall transmit TRN for at least 512T but
-                # no longer than 2000 ms plus a round trip delay. It shall then send MP sequences."
-                # MP waits on our receiver being trained on the caller's TRN, so _p4_poll installs
-                # the fill once the equalizer has burned in. Filling on our own queue draining sends
-                # MP before the caller is trained, and its first MP frames are lost.
-                self._qam.fill = None
+                # The existing fill callback extends our TRN if TX reaches its
+                # queue end before this receiver is trained. It switches to MP
+                # only after this phase-4 receiver reaches its burn-in target.
                 # Our J requested the caller's transmit training constellation,
                 # independently of the caller's request for our transmitter.
                 self._p4rcv = v34_rx.Phase4Receiver(R, rcv3.k_trn + k_trn_rel, "call", eq=eq,
@@ -791,11 +918,11 @@ class V34Answerer:
         rcv = self._p4rcv
         rcv.observer=getattr(self,'receive_dsp',None)
         rcv.feed(None)
-        if self._qam.fill is None and len(rcv.idx) >= P4_MP_BURNIN_SYMBOLS:
+        if not self._p4_mp_ready and len(rcv.idx) >= P4_MP_BURNIN_SYMBOLS:
             # Equalizer burned in on the caller's TRN, so 11.4.1.2.2 lets us stop TRN and send MP.
             # Not trn_end: that is latched from mismatches against the expected TRN index and only
             # appears once the caller sends MP, so gating on it deadlocks both sides.
-            self._qam.fill = self._fill_mp
+            self._p4_mp_ready = True
             self._ev(f"trained on caller's TRN ({len(rcv.idx)} symbols); sending MP")
         if rcv.trn_end is None:
             return

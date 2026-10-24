@@ -1,9 +1,12 @@
-"""Minimal Bell 212A (1200 bps DPSK) endpoints for the modem lab.
+"""Project-only 1200 bps differential-QPSK fixture for the modem lab.
 
-Bell 212A (and the equivalent ITU-T V.22, at the same frequencies) is
-600-baud differential QPSK: each symbol encodes a dibit (2 bits) as a phase
-*change* relative to the previous symbol, not an absolute phase, using the
-standard dibit table:
+This fixture borrows a 600-baud differential-QPSK shape and Bell/V.22-like
+carrier plan for exercising the lab's mode-switch plumbing. It is not an
+implementation of Bell 212A or ITU-T V.22, and it is not intended to
+interoperate with either. In particular, it does not implement their startup
+procedures or real asynchronous-to-synchronous conversion. Each symbol here
+encodes a dibit (2 bits) as a phase *change* relative to the previous symbol,
+using this fixture's mapping:
 
     dibit  phase change
     00     0 deg
@@ -57,7 +60,8 @@ FREQUENCIES = {
     "answer": 2400.0,
 }
 
-# dibit -> phase change in radians, the standard Bell 212A/V.22 table.
+# Fixture mapping only; this table is not offered as a complete Bell 212A or
+# ITU-T V.22 mapping/conformance claim.
 _DIBIT_TO_PHASE = {
     0b00: 0.0,
     0b01: math.pi / 2.0,
