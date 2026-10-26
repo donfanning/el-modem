@@ -59,6 +59,27 @@ class ConstellationTests(unittest.TestCase):
 
 @unittest.skipIf(np is None, "numpy not installed")
 class SixteenPointRoundTripTests(unittest.TestCase):
+    def test_scalar_slicer_matches_numpy_over_random_and_boundaries(self):
+        rng = np.random.default_rng(20261020)
+        points = v34_rx._C16_PTS
+        samples = list(rng.normal(size=20000) + 1j * rng.normal(size=20000))
+        # Exact midpoints exercise the first-wins tie rule; tiny perturbations
+        # on either side exercise the actual decision boundary.
+        for left in range(len(points)):
+            for right in range(left + 1, len(points)):
+                midpoint = complex((points[left] + points[right]) / 2)
+                delta = complex(points[right] - points[left])
+                normal = 1j * delta
+                if normal:
+                    normal /= abs(normal)
+                samples.extend((midpoint, midpoint + normal * 1e-12,
+                                midpoint - normal * 1e-12))
+        for sample in samples:
+            expected = int(np.argmin(np.abs(points - sample)))
+            self.assertEqual(v34_rx._nearest16_index(sample), expected)
+            self.assertEqual(v34_rx.slice16(sample), v34_rx._C16_QN[expected])
+            self.assertEqual(v34_rx.decide16(sample), complex(points[expected]))
+
     def test_candidate_reads_only_bounded_quarter_history(self):
         class WindowOnly:
             def __init__(self, values):

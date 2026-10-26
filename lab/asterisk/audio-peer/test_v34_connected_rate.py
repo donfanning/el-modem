@@ -219,6 +219,12 @@ class ConnectedRateTests(unittest.TestCase):
     @patch.dict('os.environ', {'V34_QUALITY_MONITOR':'1'})
     def test_quality_rebaselines_across_real_pcm_rate_epochs(self):
         result = self.exercise(lapm=True)
+        self.assertEqual([event['origin'] for event in result['caller_epochs']],
+                         ['local', 'peer', 'local'])
+        self.assertEqual([event['origin'] for event in result['answer_epochs']],
+                         ['peer', 'local', 'peer'])
+        self.assertTrue(all('completed_monotonic' in event
+                            for event in result['caller_epochs'] + result['answer_epochs']))
         for reports in result['quality_epochs'].values():
             self.assertEqual(len(reports), 4)
             self.assertEqual([r['profile']['rate'] for r in reports], [33600, 24000, 33600, 33600])

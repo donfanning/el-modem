@@ -1022,24 +1022,15 @@ class V34Answerer:
                 return
         st = self._rx_state
         drx, vit = st["drx"], st["vit"]
-        trellis_erasure=os.environ.get('V34_GAP_TRELLIS_ERASURE')=='1'
-        limit = rate_controller.limit(eq.available()) if rate_controller is not None else eq.available()
-        while eq.k < limit:
-            y = eq.step(decide=self._decide)
-            st["ys"].append(y)
-            if trellis_erasure:
-                st.setdefault("ys_tainted",[]).append(bool(getattr(eq,"last_transport_tainted",False)))
-            if len(st["ys"]) == 2:
-                if trellis_erasure:
-                    erasure=any(st["ys_tainted"])
-                    interval=vit.m4
-                    vit.feed(st["ys"][0], st["ys"][1],erasure=erasure)
-                    if erasure and getattr(eq,'_transport_guard',None) is not None:
-                        eq._transport_guard.record_trellis_erasure(interval)
-                    st["ys_tainted"] = []
-                else:
-                    vit.feed(st["ys"][0], st["ys"][1])
-                st["ys"] = []
+        from v34_transport import trellis_erasure_enabled
+        trellis_erasure=trellis_erasure_enabled(st['receiver'].profile.precoder)
+        requested_block=os.environ.get('V34_NATIVE_TRELLIS_BLOCK','0')
+        block_size=(max(2,min(16,int(requested_block)))
+                    if requested_block.isdigit() and int(requested_block)>=2 else 0)
+        if os.environ.get('V34_DATA_TRACE'):block_size=0
+        if trellis_erasure or vit is None or vit.backend!='numba':block_size=0
+        pending_intervals=[]
+        def publish_decided():
             while vit.decided:
                 u0, u1 = vit.decided.pop(0)
                 if vit.emit_states:
@@ -1061,6 +1052,33 @@ class V34Answerer:
                         self.bit_sink(raw)
                     else:
                         st["bits"] += raw
+        limit = rate_controller.limit(eq.available()) if rate_controller is not None else eq.available()
+        while eq.k < limit:
+            y = eq.step(decide=self._decide)
+            st["ys"].append(y)
+            if trellis_erasure:
+                st.setdefault("ys_tainted",[]).append(bool(getattr(eq,"last_transport_tainted",False)))
+            if len(st["ys"]) == 2:
+                if trellis_erasure:
+                    erasure=any(st["ys_tainted"])
+                    interval=vit.m4
+                    vit.feed(st["ys"][0], st["ys"][1],erasure=erasure)
+                    if erasure and getattr(eq,'_transport_guard',None) is not None:
+                        eq._transport_guard.record_trellis_erasure(interval)
+                    st["ys_tainted"] = []
+                else:
+                    if block_size:
+                        pending_intervals.append((st["ys"][0],st["ys"][1]))
+                        if len(pending_intervals)>=block_size:
+                            vit.feed_many(pending_intervals);pending_intervals=[]
+                            publish_decided()
+                    else:
+                        vit.feed(st["ys"][0], st["ys"][1])
+                        publish_decided()
+                st["ys"] = []
+        if pending_intervals:
+            vit.feed_many(pending_intervals);publish_decided()
+        if not block_size:publish_decided()
         v34_receive.observe_quality(self, st, eq)
         self._async_bytes(st)
         trim_data_pcm(self,eq,self._p3['x0'])

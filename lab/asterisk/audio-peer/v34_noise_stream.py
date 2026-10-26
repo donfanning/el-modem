@@ -14,6 +14,7 @@ class PredictiveTrellisDetector(TrellisDetector):
     def __init__(self, receiver, coefficients, residual_history, *, final_state=None, depth=24):
         start = tuple(receiver.drx.conv.d)
         drx=receiver.drx
+        from v34_transport import trellis_hold_enabled
         state=(start[0]<<3)|(start[1]<<2)|(start[2]<<1)|start[3]
         if final_state is not None and state!=int(final_state):
             raise ValueError('mapper and predictive trellis terminal states disagree')
@@ -21,7 +22,7 @@ class PredictiveTrellisDetector(TrellisDetector):
                          m4_start=receiver.drx.m4, precoder=receiver.h,
                          w=receiver.tx.w, nonlinear=receiver.profile.nonlinear,
                          energy=receiver.energy, x_hist=receiver.drx.x_hist,
-                         erasure_hold=os.environ.get('V34_GAP_TRELLIS_HOLD')=='1',
+                         erasure_hold=trellis_hold_enabled(receiver.profile.precoder),
                          backend='python')
         self.coefficients=np.ascontiguousarray(coefficients,dtype=np.complex128)
         self._classes=_tables(len(self.pts))[1]

@@ -190,12 +190,19 @@ class PresenceTests(unittest.TestCase):
     def test_signals_report_unknown_flow_lines(self):
         ser, kernel = make_ser()
         try:
-            # No CTS/RTS exists on a byte pipe, so they must be None rather than
-            # a fabricated False that the DCE would read as "peer not ready".
-            self.assertEqual(ser.signals(), dict(TR=False, RTS=None, CTS=None))
+            # No modem-control line exists on a byte pipe, so none of them may
+            # report a boolean. TR included: it used to follow driver presence,
+            # on the reasoning that the driver connecting means a terminal is
+            # using the port. It lit before ZOC was ever started. "Can use" is
+            # not "is using" -- the driver attaches as soon as the modem serves
+            # the pipe, and opening COM3 puts nothing on the wire, so a
+            # terminal attaching is not observable from this side at all.
+            self.assertEqual(ser.signals(), dict(TR=None, RTS=None, CTS=None))
             kernel.auto_connect = True
             self.assertTrue(wait_for(ser.client_present))
-            self.assertEqual(ser.signals(), dict(TR=True, RTS=None, CTS=None))
+            # Presence is still tracked, for the dashboard's "who owns the
+            # port", but it is not a signal line and must not light one.
+            self.assertEqual(ser.signals(), dict(TR=None, RTS=None, CTS=None))
         finally:
             ser.close()
 

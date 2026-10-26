@@ -1,24 +1,52 @@
 # El-Modem AT command reference
 
 `AT$`, `AT&$`, `ATS$`, `AT%$`, `ATD$`, `AT\$` and `AT+$` print help screens listing what is implemented.
+Human-readable ATI and help pages fit 80 columns with unlimited rows. Long
+values wrap rather than being truncated; non-ASCII text and terminal control
+characters are escaped. ATI9 is a machine-readable packet and is not reformatted.
 
 ## Information screens (ATI)
 | Command | Shows |
 |---|---|
-| `ATI0` | four-digit product code (`0030` = V0.3.0) |
+| `ATI0` | four-digit product code (`0040` = V0.4.0) |
 | `ATI1` | CRC-16 of the program image (the executable, or the source file) |
 | `ATI2` | self test (CRC known answer, RAM pattern, FFT): `OK`/`ERROR`, then the command's own `OK` |
-| `ATI3` | banner, build date, revision, project URL |
+| `ATI3` | banner, embedded UTC compilation timestamp, revision, project URL |
 | `ATI4` | active settings: S-register grid (7 per row), `&C &D &K E Q V X %C \N`, `+MS`, network registers |
 | `ATI5` | stored profiles (`AT&Wn`) and the four stored phone numbers |
 | `ATI6` | link diagnostics of the last call: characters, octets, blocks (sent/received/resent), FCS errors, rates, modulation, protocol, compression, disconnect reason |
 | `ATI7` | configuration: options, Python/NumPy, platform, program size, NVRAM file, build date, transport and SIP settings |
 | `ATI8` | stored numbers (`AT&Zn=number`, `ATDSn`), redial (`ATDL`), black list |
-| `ATI9` | PnP-style id (`ELM0001\El-Modem Software Modem`, not registered with any authority) |
+| `ATI9` | Serial PnP packet: project-local `ELM0001`, class `MODEM`, compatible ID `PNPC103`, description and checksum. The vendor ID is not registered. |
 | `ATI10` | dial security status (static: no dial security) |
-| `ATI11` `ATI16` `ATI17` | technical support report sections 1-3. Unmeasured figures (SNR, echo, trellis errors, PCM) print `N/A`; ATI16 reports V.34 RX equalizer timing slips when available |
+
+| `ATI11` | live or last-call DSP/line report: directional rates, receive level, available startup probe SNR, retrain counters, echo-canceller observations, detector quality, RTP and processing timing |
+| `ATI16` | error-control counters and observed byte ratios |
+| `ATI17` | PCM / V.90 / V.92 support status (not implemented) |
+
 | `ATI12` | SIP and IAX settings |
 | `ATI15` | caller ID of the last incoming call (`DATE=MMDD TIME=HHMM NMBR= NAME=`) |
+
+Build timestamps are stamped by the PyInstaller specification and read from the
+embedded `el-modem-build.json`. They do not change when an executable is copied
+or launched. Source runs say `uncompiled source`; older packages without a stamp
+say `unknown` rather than guessing from file modification times.
+
+DSP figures are reported only when available from the selected engine. The V.34
+startup probe SNR is labelled a startup estimate, not live data SNR. V.32 decision
+residual MSE and V.34 survivor path cost are not converted into SNR or BER.
+Echo-canceller input/output power includes the remote signal and is not an
+echo-only loss measurement. Unmeasured character loss, line conditioning and
+fallback counts say `N/A`, not zero or "good". Last-call statistics are copied at
+disconnect so a later call cannot mutate the record.
+
+For Windows, the inbox **Standard 33600 bps Modem** profile is `MDMGEN336`, section
+`Gen336` in `mdmgen.inf`. This is not a seven-character serial PnP ID. The draft
+`packaging/windows/el-modem-modem.inf` maps the El-Modem identity to that profile;
+it is not signed, installed or qualified. `PNPC103` is only a generic fallback.
+ATI9 alone does not implement Serenum's DTR/RTS discovery exchange, and the
+current byte-pipe driver does not forward those signal transitions to Python.
+Automatic Windows modem discovery is therefore not yet qualified.
 
 ## Network settings (string S-registers)
 `ATSn=text` sets, `ATSn?` reads (passwords read back as `********`), `AT&W` stores them (the NVRAM file is created mode 0600),

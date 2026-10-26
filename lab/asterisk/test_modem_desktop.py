@@ -11,8 +11,40 @@ from modem_dce import AtDce
 from modem_settings import set_value,snapshot
 from modem_supervisor import Supervisor
 from modem_control import Channel
+from el_modem import worker_profile_settings, worker_runtime_environment
 
 class SettingsTests(unittest.TestCase):
+    def test_timing_setting_default_matches_qualified_engine_default(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('V34_TIMING_MODE',None)
+            d=AtDce()
+            rows={row['name']:row for row in snapshot(d)}
+            self.assertEqual(rows['dsp.timing_mode']['value'],'centroid')
+            self.assertEqual(rows['dsp.timing_mode']['active'],'centroid')
+
+    def test_worker_environment_isolates_v42_and_applies_profile_override(self):
+        parent={'PATH':'/usr/bin','V42_CERROR_RECOVERY':'1',
+                'V34_TIMING_MODE':'data-gradient','MODEM_DEBUG':'1',
+                'EL_MODEM_TIMING_TRACE':'1'}
+        default=worker_runtime_environment(parent,{})
+        self.assertEqual(default['PATH'],'/usr/bin')
+        self.assertEqual(default['V42_CERROR_RECOVERY'],'0')
+        self.assertEqual(default['V34_TIMING_MODE'],'centroid')
+        self.assertNotIn('MODEM_DEBUG',default)
+        self.assertEqual(default['EL_MODEM_TIMING_TRACE'],'1')
+        d=AtDce()
+        rows={row['name']:row for row in snapshot(d)}
+        self.assertEqual(rows['v42.cerror_recovery']['value'],'0')
+        self.assertEqual(set_value(d,'v42.cerror_recovery','1'),'restart')
+        with tempfile.TemporaryDirectory() as root:
+            profile=Path(root)/'profiles.json'
+            profile.write_text(json.dumps({'profiles':{'0':{'extended_settings':
+                d.extended_settings}}}))
+            saved=worker_profile_settings(root)
+        self.assertEqual(saved['v42.cerror_recovery'],'1')
+        opted_in=worker_runtime_environment(parent,saved)
+        self.assertEqual(opted_in['V42_CERROR_RECOVERY'],'1')
+
     def test_pipe_backend_hayes_profile_roundtrip(self):
         backend='pipe' if sys.platform=='win32' else 'device'
         endpoint='ElModemSecond' if backend=='pipe' else '/dev/ttyUSB1'
@@ -71,6 +103,20 @@ class SettingsTests(unittest.TestCase):
         d=AtDce()
         for name,value in [('sip.port','0'),('sip.bind_host','no address'),('sip.bind_port','65536')]:
             with self.assertRaises(ValueError):set_value(d,name,value)
+
+class WorkerEnvironmentTests(unittest.TestCase):
+    def test_only_explicit_trace_recording_and_experiment_switches_survive(self):
+        from el_modem import worker_passthrough_environment
+        source={'EL_MODEM_TIMING_TRACE':'1','EL_MODEM_TX_WATCHDOG':'1',
+                'EL_MODEM_RECORDING':'0','EL_MODEM_RECORDING_SECONDS':'30',
+                'V34_GAP_FEEDBACK':'observe','V34_NATIVE_FEEDBACK':'1',
+                'V34_SYMBOL_INTERP_NATIVE':'1','MODEM_DEBUG':'1',
+                'EL_MODEM_METRICS_FILE':'/tmp/should-not-leak'}
+        self.assertEqual(worker_passthrough_environment(source),{
+            'EL_MODEM_TIMING_TRACE':'1','EL_MODEM_TX_WATCHDOG':'1',
+            'EL_MODEM_RECORDING':'0','EL_MODEM_RECORDING_SECONDS':'30',
+            'V34_GAP_FEEDBACK':'observe','V34_NATIVE_FEEDBACK':'1',
+            'V34_SYMBOL_INTERP_NATIVE':'1'})
 
 class SupervisorTests(unittest.TestCase):
     @unittest.skipUnless(os.name=='posix','POSIX serial backend only')
@@ -203,7 +249,7 @@ class UITests(unittest.IsolatedAsyncioTestCase):
                 self.assertGreaterEqual(len(rules),2,'each modem needs a box above and below')
                 stack=app.dashboard_widgets['stack']
                 inner=max(37,stack.size.width-6)
-                names=('HS','AA','CD','OH','RD','SD','TR','MR','RS','CS','SYN','ARQ')
+                names=('HS','AA','CD','OH','RD','SD','TR','MR','DC','CS','EC','ARQ')
                 if inner>=62:
                     self.assertGreaterEqual(len(rules[0])-2,62,'wide box must fit the 60-column lamp row')
                     labels=[r for r in rows if all(n in r for n in names)]
@@ -247,7 +293,7 @@ class UITests(unittest.IsolatedAsyncioTestCase):
     async def test_dashboard_indicator_cards_fit_80_columns(self):
         from modem_tui import ModemApp
         from textual.widgets import Static
-        names=('HS','AA','CD','OH','RD','SD','TR','MR','RS','CS','SYN','ARQ')
+        names=('HS','AA','CD','OH','RD','SD','TR','MR','DC','CS','EC','ARQ')
         with tempfile.TemporaryDirectory() as root:
             s=Supervisor(root+'/config.json');s.add(serial='pty');app=ModemApp(s)
             async with app.run_test(size=(80,45)) as pilot:
@@ -262,6 +308,27 @@ class UITests(unittest.IsolatedAsyncioTestCase):
                 lamp_rows=[row for row in rows if '(.)' in row]
                 self.assertIn(len(lamp_rows),(2,3),'compact lamps use six or four columns per row')
                 self.assertEqual([name for row in lamp_rows for name in names if name in row],list(names))
+            s.close()
+
+    async def test_compression_and_error_correction_lamps_render_live_values(self):
+        from modem_tui import ModemApp
+        from textual.widgets import Static
+        with tempfile.TemporaryDirectory() as root:
+            s=Supervisor(root+'/config.json');spec=s.add(serial='pty');app=ModemApp(s)
+            async with app.run_test(size=(80,45)) as pilot:
+                await pilot.pause()
+                for compression in (False,True):
+                    s.states[spec.id]={'port':'COM3','serial':r'\\.\pipe\ElModemSerial',
+                                      'lights':{'DC':compression,'EC':True,'ARQ':True}}
+                    app.tick()
+                    rendered=str(app.query_one('#modems',Static).renderable)
+                    self.assertIn('COM3',rendered)
+                    self.assertNotIn('ElModemSerial',rendered)
+                    self.assertIn(('(*)' if compression else '( )')+'DC',rendered)
+                    self.assertIn('(*)EC',rendered)
+                    self.assertIn('(*)ARQ',rendered)
+                    self.assertNotIn('SYN',rendered)
+                    self.assertNotIn('(.)RS',rendered)
             s.close()
 
     async def test_instance_dialog_mounts_and_saves(self):
@@ -324,6 +391,7 @@ class TerminalUITests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(120,40)) as pilot:
                 app.action_terminal();await pilot.pause(.2)
                 self.assertIsInstance(app.screen,TerminalScreen)
+                self.assertIs(app.focused,app.screen.query_one('#term-input'))
                 await pilot.press('a','t','q');await pilot.pause(.1)
                 self.assertEqual(app.screen.query_one('#term-input').value,'atq')
                 self.assertEqual(str(app.screen.query_one('#term-label').renderable),'DTE >')

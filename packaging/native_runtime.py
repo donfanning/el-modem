@@ -13,10 +13,13 @@ NATIVE_ENV = {
     'V34_NATIVE_FEEDBACK': '1', 'V34_SYMBOL_INTERP_NATIVE': '1',
     'V34_TRN_CLOCK_NATIVE': '1', 'MODEM_CAPTURE_ASYNC': '1',
     'V34_TRACKING_PACKET_POLL': '1', 'EL_MODEM_RTP_DEADLINE_DRAIN': '1',
-    'EL_MODEM_DSP_TRAINING_STRIDE': '4', 'V34_TIMING_MODE': 'data-gradient',
+    # Keep the qualified production timing loop as the packaged default.
+    # data-gradient remains an explicit experiment; see V34_CLOCK_ISOLATION.md.
+    'EL_MODEM_DSP_TRAINING_STRIDE': '4', 'V34_TIMING_MODE': 'centroid',
     'V34_TRAJECTORY_GRID': '1', 'V34_CONNECTED_RATE': '1',
     'V34_QUALITY_MONITOR': '1', 'V34_AUTO_RATE': '1',
     'V42_DEFAULT_PARAMETERS': '0', 'V42_ASSUME_BIS': '0',
+    'V42_CERROR_RECOVERY': '0',
     'V34_PREIMPORT': '1', 'EL_MODEM_GC_PAUSE': '1', 'V34_NATIVE_TRELLIS': '1',
 }
 

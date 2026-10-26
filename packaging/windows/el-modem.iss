@@ -3,7 +3,7 @@
 ; too old, it is downloaded from Microsoft at install time, checked for a valid Microsoft Authenticode
 ; signature, then run. See lab/WINDOWS_ATTRIBUTION_2026_10_13.md.
 ;
-; iscc /DSourceDir=<extracted candidate archive> /DAppVersion=0.3.0-rc1 /DOutputDir=<dir> el-modem.iss
+; iscc /DSourceDir=<extracted candidate archive> /DAppVersion=0.4.0-rc1 /DOutputDir=<dir> el-modem.iss
 #ifndef SourceDir
   #error SourceDir (extracted el-modem-*-windows-x86_64 archive) is required
 #endif

@@ -68,6 +68,7 @@ class V42LayerTests(unittest.TestCase):
         answerer.start_v42(False, rate=9600)
         pump(caller, answerer, 9600 * 4)
         self.assertEqual((caller.v42_mode, answerer.v42_mode), ("lapm", "lapm"))
+        self.assertTrue(answerer._v42_ever_established)
 
         # A valid-FCS response-address I frame is not a legal V.42 frame type.
         # Exercise the full V42Layer receive/check path, not just V42Link.
@@ -78,8 +79,12 @@ class V42LayerTests(unittest.TestCase):
 
         self.assertTrue(answerer.v42_lost)
         self.assertEqual(answerer.v42_mode, "lost")
+        self.assertTrue(answerer._v42_ever_established)
         self.assertEqual(answerer.v42_read(), b"")
         self.assertEqual(answerer._v42._out, b"")
+
+        answerer.start_v42(False, rate=9600)
+        self.assertFalse(answerer._v42_ever_established)
 
     def test_test_loopback_primitive_is_exposed_through_control_function_layer(self):
         caller, answerer = BitEngine(), BitEngine()

@@ -366,6 +366,55 @@ def probe_device(device):
     return normalize_pipe_name(device)
 
 
+def presented_port():
+    r"""The COM port a terminal should be pointed at, or None.
+
+    This backend's own name is the pipe -- \\.\pipe\ElModemSerial -- which is
+    the modem's internal link to the driver and nothing a terminal can open.
+    The driver is what presents a COM port, and it publishes that port name
+    in the device instance it installs:
+
+        HKLM\SYSTEM\CurrentControlSet\Enum\ROOT\PORTS\<instance>
+            Device Parameters\PortName = COM3
+
+    Measured on this machine: ROOT\PORTS\0000 carries
+    ``FriendlyName = El-Modem Virtual COM Port (COM3)`` and
+    ``PortName = COM3``, so the lookup needs no driver change.
+
+    The installer does not record which pipe serves which port, so with more
+    than one port installed this cannot tell them apart and returns None
+    rather than guessing. Saying so beats naming the wrong one.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+    except ImportError:
+        return None
+    root = r"SYSTEM\CurrentControlSet\Enum\ROOT\PORTS"
+    found = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, root) as base:
+            index = 0
+            while True:
+                try:
+                    instance = winreg.EnumKey(base, index)
+                except OSError:
+                    break
+                index += 1
+                path = root + "\\" + instance + "\\Device Parameters"
+                try:
+                    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+                        port, _ = winreg.QueryValueEx(key, "PortName")
+                except OSError:
+                    continue
+                if isinstance(port, str) and port.upper().startswith("COM"):
+                    found.append(port)
+    except OSError:
+        return None
+    return found[0] if len(found) == 1 else None
+
+
 class PipeSerial:
     """Byte-pipe serial endpoint for the virtual-COM driver. See module docstring."""
 
@@ -407,14 +456,39 @@ class PipeSerial:
 
     # ----- presence and modem-control lines -----
 
+    def presented_port(self):
+        """The COM port a terminal opens. The dashboard shows this, not the
+        pipe name: the pipe is the modem's internal link to the driver."""
+        return presented_port()
+
     def client_present(self):
-        """The driver has connected, i.e. a terminal can be using the port."""
+        """The driver has attached to the pipe.
+
+        This is NOT a terminal being connected. The driver connects as soon
+        as the modem starts serving the pipe, long before anything opens the
+        COM port, so this answers "is there a driver", not "is someone
+        there". Measured 2026-10-19: opening COM3 and asserting DTR/RTS
+        added nothing to the broker log, so a terminal attaching is not
+        observable from this side at all.
+        """
         return bool(self._present)
 
+    def terminal_present(self):
+        """Terminal attachment is not observable through the byte-only pipe."""
+        return None
+
     def signals(self):
-        """TR follows driver presence. RTS/CTS are genuinely unknown, so they
-        report None rather than a fabricated boolean."""
-        return dict(TR=self.client_present(), RTS=None, CTS=None)
+        """No modem-control lines exist on a byte pipe, so every one of them
+        reports None rather than a fabricated boolean.
+
+        TR used to be reported as driver presence, on the reasoning that the
+        driver connecting means a terminal can use the port. That was wrong
+        and it showed: the lamp lit before ZOC was ever started. "Can use"
+        is not "is using". Lighting TR here would be inventing a reading the
+        pipe cannot carry, and the dashboard could not tell the invention
+        from the real thing.
+        """
+        return dict(TR=None, RTS=None, CTS=None)
 
     def update_lines(self, carrier, ring, ready, hardware, backlog=0, *, rts_flow=None, cts_flow=None):
         """No modem-control lines exist on a byte pipe.

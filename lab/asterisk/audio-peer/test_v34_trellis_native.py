@@ -8,6 +8,37 @@ from v34_trellis_native import njit
 
 @unittest.skipIf(njit is None,'optional Numba backend unavailable')
 class NativeTrellisTests(unittest.TestCase):
+    def test_native_clean_interval_blocks_match_single_interval_feed(self):
+        rng=np.random.default_rng(251025)
+        options=dict(depth=7,precoder=[.25+.125j,-.1j,.0625],w=2,
+            nonlinear=False,energy=675.,x_hist=[1.5+1j,-1+1j,0j],
+            start_state=(1,0,1,0),m4_start=29)
+        samples=rng.normal(0,9,160)+1j*rng.normal(0,9,160)
+        pairs=samples.reshape(-1,2)
+        for block_size in (2,4,8,16):
+            with self.subTest(block_size=block_size):
+                ref=TrellisDetector(128,8,15,backend='numba',**options)
+                batched=TrellisDetector(128,8,15,backend='numba',**options)
+                ref.record_snapshots=batched.record_snapshots=False
+                for start in range(0,len(pairs),block_size):
+                    block=pairs[start:start+block_size]
+                    for a,b in block:ref.feed(a,b)
+                    batched.feed_many(block)
+                    self.assertEqual(batched.decided,ref.decided)
+                    self.assertEqual(batched.x_hist,ref.x_hist)
+                    self.assertEqual(batched.m4,ref.m4)
+                    self.assertAlmostEqual(batched.metric_offset,ref.metric_offset,places=8)
+                    np.testing.assert_allclose(batched.metric,ref.metric,rtol=1e-11,atol=1e-10)
+                    self.assertEqual(len(batched.hist),len(ref.hist))
+                    for a,b in zip(batched.hist,ref.hist):
+                        for key in ('prev','s0','s1','p0','U','native_indices'):
+                            if key=='native_indices':
+                                self.assertIn(key,a)
+                                continue
+                            np.testing.assert_array_equal(a[key],b[key])
+                ref.flush();batched.flush()
+                self.assertEqual(batched.decided,ref.decided)
+
     def test_dynamic_erasure_hold_traceback_matches_python(self):
         rng=np.random.default_rng(221023)
         ref=TrellisDetector(128,8,15,depth=3,backend='python',trace=True,erasure_hold=True)
@@ -135,6 +166,8 @@ class NativeTrellisTests(unittest.TestCase):
             self.assertEqual(a.decided,b.decided)
             self.assertLessEqual(len(b.hist),3)
             self.assertEqual(b.snapshots,[])
+            self.assertNotIn('metric_before',b.hist[-1])
+            self.assertNotIn('metric_after',b.hist[-1])
         a.flush();b.flush();self.assertEqual(a.decided,b.decided)
 
 

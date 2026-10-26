@@ -41,6 +41,7 @@ FIELDS = {'modem.echo':'echo', 'modem.quiet':'quiet', 'modem.verbose':'verbose',
  'modem.flow_control':'flow_control', 'modem.error_control':'error_control',
  'modem.compression':'compression', 'modem.auto_rate':'auto_rate_mode', 'modem.result_mode':'result_mode'}
 ENV = {
+ 'v42.cerror_recovery':('V42_CERROR_RECOVERY','0',('0','1')),
  'dsp.eq_span':('V34_PHASE4_EQ_SPAN','24',()),
  'dsp.trn_clock':('V34_TRN_CLOCK','1',('0','1')),
  'dsp.clock_fit_gate':('V34_CLOCK_FIT_GATE','1',('0','1')),
@@ -57,7 +58,7 @@ ENV = {
  'dsp.packet_poll':('V34_TRACKING_PACKET_POLL','1',('0','1')),
  'dsp.deadline_drain':('EL_MODEM_RTP_DEADLINE_DRAIN','1',('0','1')),
  'dsp.training_stride':('EL_MODEM_DSP_TRAINING_STRIDE','4',()),
- 'dsp.timing_mode':('V34_TIMING_MODE','data-gradient',('data-gradient','centroid')),
+ 'dsp.timing_mode':('V34_TIMING_MODE','centroid',('data-gradient','centroid')),
  'dsp.trajectory_grid':('V34_TRAJECTORY_GRID','1',('0','1')),
  'dsp.connected_rate':('V34_CONNECTED_RATE','1',('0','1')),
  'dsp.quality_monitor':('V34_QUALITY_MONITOR','1',('0','1')),

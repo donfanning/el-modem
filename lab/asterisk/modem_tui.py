@@ -146,7 +146,16 @@ class TerminalScreen(Screen):
     def data(self,data):
         self.query_one('#terminal-output',Static).update(self.buffer.feed(data))
         self.query_one('#terminal',VerticalScroll).scroll_end(animate=False)
-    def on_mount(self):self.query_one('#term-input',Input).focus()
+    def on_mount(self):
+        # Claim DTE focus as soon as the screen mounts, then reassert it after
+        # layout. On slower event loops the first rendered frame can otherwise
+        # leave focus on the scroll pane long enough for an initial key to be
+        # lost or handled by the dashboard.
+        self.focus_input()
+        self.call_after_refresh(self.focus_input)
+    def focus_input(self):
+        """Set DTE focus after the screen is laid out so the first key is not lost."""
+        self.query_one('#term-input',Input).focus()
     def action_send_control(self, byte):
         self.app.command(self.ident,'terminal.write',None,hex=bytes([byte]).hex())
     async def on_key(self,event):
@@ -293,8 +302,10 @@ class ModemApp(App):
         for spec in self.supervisor.specs:
             state=self.supervisor.states.get(spec.id,{})
             lights=state.get('lights',{})
-            names=('HS','AA','CD','OH','RD','SD','TR','MR','RS','CS','SYN','ARQ')
-            mapped={'HS':None,'AA':lights.get('AA'),'CD':lights.get('CD'),'OH':lights.get('OH'),'RD':lights.get('RD'),'SD':lights.get('SD'),'TR':None,'MR':lights.get('MR'),'RS':lights.get('RTS'),'CS':lights.get('CTS'),'SYN':None,'ARQ':None}
+            names=('HS','AA','CD','OH','RD','SD','TR','MR','DC','CS','EC','ARQ')
+            # Owner-selected twelve-slot panel: RS -> DC, SYN -> EC.
+            # Retain ARQ alongside EC; both report negotiated error control.
+            mapped={'HS':lights.get('HS'),'AA':lights.get('AA'),'CD':lights.get('CD'),'OH':lights.get('OH'),'RD':lights.get('RD'),'SD':lights.get('SD'),'TR':lights.get('TR'),'MR':lights.get('MR'),'DC':lights.get('DC'),'CS':lights.get('CTS'),'EC':lights.get('EC'),'ARQ':lights.get('ARQ')}
             # Three states: (*) on, ( ) off, (.) not reported. The third state
             # matters: a modem that failed to start must not look identical
             # to a healthy idle one.
@@ -319,7 +330,7 @@ class ModemApp(App):
             running=spec.id in self.supervisor.workers
             availability=('STARTING' if running and state.get('state')=='starting' else
                           'ONLINE' if running else 'OFFLINE')
-            rows=[f"{focus} [{idx}/{len(self.supervisor.specs)}] {name} | {state.get('serial','')} | "
+            rows=[f"{focus} [{idx}/{len(self.supervisor.specs)}] {name} | {state.get('port') or state.get('serial','')} | "
                   f"Ext {state.get('extension','—')} | {state.get('registration','unknown').upper()} | "
                   f"{availability}",
                   *indicator_rows,
@@ -327,7 +338,7 @@ class ModemApp(App):
                   f"{call.get('speed','')}"]
             if inner<62:
                 rows[0:1]=[f"{focus} [{idx}/{len(self.supervisor.specs)}] {name}",
-                           f"{state.get('serial','')} Ext {state.get('extension','—')} | "
+                           f"{state.get('port') or state.get('serial','')} Ext {state.get('extension','—')} | "
                            f"{state.get('registration','unknown').upper()} | "
                            f"{'START' if availability=='STARTING' else 'ON' if running else 'OFF'}"]
             rows=[r[:inner-2] for r in rows]

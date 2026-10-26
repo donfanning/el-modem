@@ -7,12 +7,39 @@ from unittest.mock import patch
 import numpy as np
 
 from v34_rx import Phase3Rx, SymbolEq
-from v34_transport import FeedbackValidity, feedback_support, note_concealed
+from v34_transport import (FeedbackValidity, feedback_support, gap_recovery_enabled,
+                           note_concealed, trellis_erasure_enabled, trellis_hold_enabled)
 from v34_quality import DataQuality, observe
 from v34_streaming import update_data_baseband
 
 
 class TransportFeedbackTests(unittest.TestCase):
+    def test_combined_recovery_selects_trellis_only_for_zero_precoder(self):
+        with patch.dict('os.environ',{'V34_GAP_RECOVERY':'1'}):
+            self.assertTrue(gap_recovery_enabled())
+            self.assertTrue(trellis_erasure_enabled(()))
+            self.assertTrue(trellis_erasure_enabled((0j,0j,0j)))
+            self.assertFalse(trellis_erasure_enabled((.25+0j,0j,0j)))
+            self.assertFalse(trellis_hold_enabled((.25+0j,0j,0j)))
+        with patch.dict('os.environ',{'V34_GAP_RECOVERY':'0'}):
+            self.assertFalse(gap_recovery_enabled())
+        with patch.dict('os.environ',{'V34_GAP_RECOVERY':'1','V34_GAP_TRELLIS_ERASURE':'1'}):
+            self.assertFalse(trellis_erasure_enabled((.25+0j,0j,0j)))
+        with patch.dict('os.environ',{'V34_GAP_RECOVERY':'yes'}):
+            with self.assertRaisesRegex(ValueError,'must be 0 or 1'):
+                gap_recovery_enabled()
+
+    def test_combined_recovery_overrides_split_switches_as_one_policy(self):
+        R=Phase3Rx(3200,1800);R.lag=0.;R.delay=0.;R._span=12
+        R.taps=np.zeros(24,complex);R.taps[12]=1.;R._z=np.ones(2000,complex)
+        R._pcm_source_offset=10000
+        env={'V34_GAP_RECOVERY':'1','V34_GAP_FEEDBACK':'0',
+             'V34_GAP_TRELLIS_ERASURE':'0','V34_GAP_TRELLIS_HOLD':'0',
+             'V34_INPUT_POWER_GUARD':'0'}
+        with patch.dict('os.environ',env):eq=SymbolEq(R,150)
+        self.assertEqual(eq._transport_guard.mode,'hold')
+        self.assertTrue(eq._transport_guard.hold_dsp)
+
     def test_trellis_erasure_opt_in_enables_observation_and_marks_tainted_windows(self):
         R=Phase3Rx(3200,1800);R.lag=0.;R.delay=0.;R._span=12
         R.taps=np.zeros(24,complex);R.taps[12]=1.;R._z=np.ones(2000,complex)

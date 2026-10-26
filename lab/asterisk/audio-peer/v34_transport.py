@@ -5,6 +5,32 @@ The decoder and both NCOs still consume all samples/symbols. No payload truth.
 """
 from collections import deque
 import math
+import os
+
+
+def gap_recovery_enabled():
+    """Return whether the combined concealed-media experiment is requested.
+
+    The combined mode coordinates equalizer/carrier/timing hold with neutral
+    trellis metrics and delayed traceback. Keep the older individual switches
+    available for controlled A/B work.
+    """
+    value=os.environ.get('V34_GAP_RECOVERY','0')
+    if value not in ('0','1'):
+        raise ValueError('V34_GAP_RECOVERY must be 0 or 1')
+    return value=='1'
+
+
+def trellis_erasure_enabled(precoder):
+    """Use erased trellis metrics when enabled and supported by the profile."""
+    if gap_recovery_enabled():return not any(precoder)
+    return os.environ.get('V34_GAP_TRELLIS_ERASURE')=='1'
+
+
+def trellis_hold_enabled(precoder):
+    """Keep extended traceback for the combined or legacy erasure mode."""
+    if gap_recovery_enabled():return not any(precoder)
+    return os.environ.get('V34_GAP_TRELLIS_HOLD')=='1'
 
 
 def feedback_support(eq):

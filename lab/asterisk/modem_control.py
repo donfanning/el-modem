@@ -38,7 +38,8 @@ class WorkerControl:
         self.channel=Channel(fd if isinstance(fd,socket.socket) else socket.socket(fileno=fd))
         self.next_status=0.; self.terminal=None; self.terminal_backend=None; self.pending=bytearray()
         self.rd_until=0.; self.sd_until=0.; self.counts=(0,0)
-    def poll(self, dce, ser, registration, session):
+    def poll(self, dce, ser, registration, session, iax_registered=False,
+             iax_configured=False):
         from modem_settings import snapshot, set_value
         now=time.monotonic()
         for message in self.channel.receive():
@@ -91,13 +92,55 @@ class WorkerControl:
             self.counts=counts
             carrier=bool(dce.online or (session and session.negotiation_complete))
             signals=ser.signals()
+            # MR means registered to Asterisk, on either transport. It was a
+            # hardcoded True, so it showed lit whether or not anything had
+            # registered, and could never distinguish SIP from IAX.
+            registered=bool(registration and registration.registered) or bool(iax_registered)
+            # HS/DC/EC were left unwired in the dashboard mapping. Semantics follow the
+            # owner's chosen panel: replace RS/SYN with DC/EC, retain ARQ.
+            #   HS  high speed: the requested threshold is >= 9600 bps.
+            #   DC  data compression: V.42bis in use, not merely supported.
+            #   EC  error correction: V.42 or MNP 4 in use. The V.92 calls
+            #       this EC; ARQ was the older name for the same thing.
+            # The engine is reached the way modulation_name and link_stats
+            # reach it - through _auto when the autodetect line is in play,
+            # because AutoCallerLine surfaces bit_rate itself and its state
+            # is a plain string, not an engine. Before it picks a standard
+            # there is no line, and its bit_rate would dereference a None
+            # engine.
+            auto=getattr(session,'_auto',None)
+            if auto is not None:
+                # AutoCallerLine exposes bit_rate and connected itself. Its
+                # state is a plain string ("listen"|"v22"|"bell103") rather
+                # than an engine, and before it picks a standard there is no
+                # line at all. It holds no v42_mode of its own, so the error
+                # control state comes from the V.22 engine inside it.
+                eng=None if getattr(auto,'state','')=='listen' else auto
+                error_engine=getattr(auto,'_v22',None) if getattr(auto,'state','')=='v22' else None
+            else:
+                eng=getattr(session,'_v22',None)
+                eng=getattr(eng,'engine',None) or eng      # V8Chain handover
+                error_engine=eng
+            v42=getattr(error_engine,'v42_mode','off')
+            try: rate=int(getattr(eng,'bit_rate',0) or 0)
+            except Exception: rate=0
+            compress=v42=='lapm' and bool(getattr(error_engine,'v42_compression',False))
+            terminal_present=getattr(ser, 'terminal_present', ser.client_present)()
+            if self.terminal is not None:
+                owner='dashboard'
+            elif terminal_present is None:
+                owner='unknown'
+            else:
+                owner='external' if terminal_present else 'none'
             signals.update(AA=bool(dce.registers[0]),CD=carrier if dce.carrier_detect else True,
                            OH=bool(carrier or dce.outgoing_pending or dce._answering),
-                           RD=now<self.rd_until,SD=now<self.sd_until,MR=True,
+                           RD=now<self.rd_until,SD=now<self.sd_until,MR=registered,
+                           HS=rate>=9600,DC=compress,EC=v42=='lapm',ARQ=v42=='lapm',
                            RI=bool(dce.incoming_ringing))
             value=dict(state='connected' if carrier else 'dialing' if dce.outgoing_pending else 'ringing' if dce.incoming_ringing else 'idle',
-                       lights=signals,serial=ser.name,owner='terminal' if self.terminal is not None else 'external' if ser.client_present() else 'none',
-                       registration='registered' if registration and registration.registered else 'pending' if registration else 'disabled',
+                       lights=signals,serial=ser.name,port=getattr(ser,'presented_port',lambda:None)() or ser.name,owner=owner,
+                       registration=('registered' if registered else
+                                     'pending' if registration or iax_configured else 'disabled'),
                        error_control=dce.error_control,compression=dce.compression,profile=dict(dce.ms),
                        call={key:call[key] for key in ('speed','suffix','modulation','chars_sent','chars_received') if key in call},
                        recording=os.environ.get('MODEM_CAPTURE',''),

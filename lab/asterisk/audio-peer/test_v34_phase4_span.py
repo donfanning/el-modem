@@ -1,12 +1,21 @@
 """Long-channel recovery and training/streaming alignment for the span candidate."""
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
-from v34_rx import Phase3Rx, SymbolEq
+from v34_rx import Phase3Rx, SymbolEq, phase4_equalizer_span
 
 
 class Phase4SpanTests(unittest.TestCase):
+    def test_qualified_span_is_default_and_12_remains_selectable(self):
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertEqual(phase4_equalizer_span(), 24)
+            with patch.dict('os.environ', {'V34_PHASE4_EQ_SPAN': '12'}):
+                self.assertEqual(phase4_equalizer_span(), 12)
+            with patch.dict('os.environ', {'V34_PHASE4_EQ_SPAN': '24'}):
+                self.assertEqual(phase4_equalizer_span(), 24)
+
     def channel(self, span):
         rng = np.random.default_rng(8)
         symbols = rng.choice([-1, 1], 2000) + 1j * rng.choice([-1, 1], 2000)

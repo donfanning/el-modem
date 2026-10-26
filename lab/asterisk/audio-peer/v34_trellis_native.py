@@ -36,6 +36,28 @@ def _traceback(previous,last_interval,steps,state):
     return before,after
 
 
+def _block(waves,pts,h,hist,nonlinear,energy,step,labels,par,metric,cprev,cs0,cs1,
+           inversions,grid,min_re,min_im,available):
+    """Advance consecutive clean intervals within one nopython call."""
+    count=len(waves)
+    ys=np.empty((count,2),np.complex128);cs=np.empty((count,2),np.complex128)
+    deltas=np.empty((count,2),np.complex128);indices=np.empty((count,2,8,2),np.int64)
+    prevs=np.empty((count,16),np.int64);s0s=np.empty((count,16),np.int64)
+    s1s=np.empty((count,16),np.int64);p0s=np.empty((count,16),np.int64)
+    uss=np.empty((count,16),np.int64);normalizations=np.empty(count,np.float64)
+    metrics=np.empty((count,16),np.float64)
+    current_hist=hist.copy();current_metric=metric.copy()
+    for j in range(count):
+        result=_pair(waves[j],pts,h,current_hist,nonlinear,energy,step,labels,par,
+            current_metric,cprev,cs0,cs1,int(inversions[j]),grid,min_re,min_im,
+            available,False)
+        y,c,delta,current_hist,best,ix,cost,parity,us,new,prev,s0,s1,p0,norm=result
+        ys[j]=y;cs[j]=c;deltas[j]=delta;indices[j]=ix
+        prevs[j]=prev;s0s[j]=s0;s1s[j]=s1;p0s[j]=p0;uss[j]=us
+        normalizations[j]=norm;current_metric=new;metrics[j]=new
+    return ys,cs,deltas,current_hist,current_metric,indices,prevs,s0s,s1s,p0s,uss,normalizations,metrics
+
+
 def _pair(waves,pts,h,hist,nonlinear,energy,step,labels,par,
           metric,cprev,cs0,cs1,inversion,grid,min_re,min_im,available,erasure):
     ys=np.empty(2,np.complex128);c=np.empty(2,np.complex128)
@@ -125,6 +147,7 @@ if njit is not None:
     _round=njit(cache=True,inline='always',fastmath=False)(_round)
     _inverse=njit(cache=True,inline='always',fastmath=False)(_inverse)
     _pair=njit(cache=True,nogil=True,fastmath=False)(_pair)
+    _block=njit(cache=True,nogil=True,fastmath=False)(_block)
     _traceback=njit(cache=True,nogil=True,fastmath=False)(_traceback)
 
 
@@ -142,7 +165,9 @@ def warmup():
     if njit is None:raise RuntimeError('native trellis requires the optional Numba lab image')
     from v34_viterbi import TrellisDetector
     d=TrellisDetector(16,8,15,backend='python')
-    advance(d,0j,0j,0,layouts(d.pts))
+    labels=layouts(d.pts)
+    advance(d,0j,0j,0,labels)
+    advance_block(d,np.zeros((2,2),np.complex128),np.zeros(2,np.int64),labels)
     _traceback(np.zeros((25,16),np.int64),24,25,0)
 
 
@@ -172,3 +197,29 @@ def advance(detector,y0,y1,inversion,labels,*,erasure=False):
         bool(detector.nonlinear),float(detector.energy),float(2**detector.w),labels,
         detector.par,detector.metric,detector._cand_prev,detector._cand_s0,
         detector._cand_s1,int(inversion),grid,min_re,min_im,available,bool(erasure))
+
+
+def advance_block(detector,waves,inversions,labels):
+    """Advance matching clean symbol pairs while preserving trellis order."""
+    if njit is None:raise RuntimeError('native trellis requires Numba')
+    if detector.nonlinear and (not math.isfinite(detector.energy) or detector.energy<=0):
+        raise ValueError('nonlinear energy must be finite and positive')
+    waves=np.asarray(waves,dtype=np.complex128)
+    inversions=np.asarray(inversions,dtype=np.int64)
+    if waves.ndim!=2 or waves.shape[1]!=2 or len(waves)!=len(inversions) or not len(waves):
+        raise ValueError('trellis block must contain matching non-empty symbol pairs')
+    if not np.isfinite(waves).all():raise ValueError('finite received symbols required')
+    if not hasattr(detector,'_native_point_grid'):
+        re,im=detector.pts.real,detector.pts.imag
+        min_re,min_im=float(re.min()),float(im.min())
+        grid=np.full((int((re.max()-min_re)/2)+1,int((im.max()-min_im)/2)+1),-1,np.int64)
+        grid[((re-min_re)/2).astype(np.int64),((im-min_im)/2).astype(np.int64)]=np.arange(len(re))
+        available=np.zeros((8,8,8,2),np.bool_)
+        for ro in range(8):
+            for io in range(8):available[ro,io,labels[ro,io],detector.par]=True
+        detector._native_point_grid=(grid,min_re,min_im,available)
+    grid,min_re,min_im,available=detector._native_point_grid
+    return _block(waves,detector.pts,np.asarray(detector.h,np.complex128),
+        np.asarray(detector.x_hist,np.complex128),bool(detector.nonlinear),float(detector.energy),
+        float(2**detector.w),labels,detector.par,detector.metric,detector._cand_prev,
+        detector._cand_s0,detector._cand_s1,inversions,grid,min_re,min_im,available)

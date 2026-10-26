@@ -158,8 +158,12 @@ class TrellisDetector:
         if self.erasure_hold:
             self._update_erasure_hold(bool(erasure))
         interval = self.m4
-        metric_before = self.metric.copy()
-        history_before = list(self.x_hist)
+        # Streaming data receivers disable retained survivor snapshots. Keep
+        # the diagnostic copies only when a trace/snapshot consumer will read
+        # them; the ordinary hot path does not use either copy for decoding.
+        keep_metrics = self.record_snapshots or self.trace is not None
+        metric_before = self.metric.copy() if keep_metrics else None
+        history_before = list(self.x_hist) if self.trace is not None else None
         if erasure and any(self.h):
             raise ValueError('trellis erasure experiment requires a zero precoder')
         v0 = 0
@@ -205,8 +209,10 @@ class TrellisDetector:
         self.metric_offset += normalization
         self.metric = new
         h = {"prev": prev, "s0": bs0, "s1": bs1, "p0": bp0, "y0": y0, "y1": y1, "U": Us, "c0": c0, "c1": c1, "wave0":wave0,"wave1":wave1,"delta0":delta0,"delta1":delta1,
-             "erasure":bool(erasure),
-             "interval": interval, "metric_before": metric_before, "metric_after": new.copy()}
+             "erasure":bool(erasure), "interval": interval}
+        if keep_metrics:
+            h['metric_before'] = metric_before
+            h['metric_after'] = new.copy()
         self.hist.append(h)
         if self.trace is not None:
             self.trace.append(dict(h, branch_cost=cost.copy(), observation_branch_cost=observation_cost,
@@ -217,6 +223,45 @@ class TrellisDetector:
         if len(self.hist) > self.depth:
             self._decide()
 
+    def feed_many(self, pairs) -> None:
+        """Feed consecutive clean intervals, batching the native detector call.
+
+        Diagnostic consumers and erasure recovery retain the original per-
+        interval path. Streaming production has no snapshots or trace and can
+        safely defer Python traceback publication until the block is complete.
+        """
+        pairs=np.asarray(pairs,dtype=np.complex128)
+        if pairs.ndim!=2 or pairs.shape[1]!=2:
+            raise ValueError('trellis block must have shape (intervals, 2)')
+        if not len(pairs):return
+        if (self.backend!='numba' or self.record_snapshots or self.trace is not None
+                or self.emit_states or self.emit_metrics or self.erasure_hold
+                or len(pairs)>=len(self._native_previous)):
+            for row in pairs:self.feed(row[0],row[1])
+            return
+        from v34_trellis_native import advance_block
+        start=self.m4;period=2*self.P
+        inversions=np.zeros(len(pairs),dtype=np.int64)
+        for j in range(len(pairs)):
+            interval=start+j
+            if interval%period==0:
+                inversions[j]=self._inv[(interval//period+self.inv_offset)%len(self._inv)]
+        result=advance_block(self,pairs,inversions,self._native_labels)
+        ys,cs,deltas,history,metric,indices,prevs,s0s,s1s,p0s,uss,norms,metrics=result
+        self.x_hist=list(history);self.m4=start+len(pairs)
+        for j in range(len(pairs)):
+            self.metric=metrics[j]
+            interval=start+j
+            self.metric_offset+=float(norms[j])
+            h=dict(prev=prevs[j],s0=s0s[j],s1=s1s[j],p0=p0s[j],y0=ys[j,0],y1=ys[j,1],
+                U=uss[j],c0=cs[j,0],c1=cs[j,1],wave0=complex(pairs[j,0]),
+                wave1=complex(pairs[j,1]),delta0=deltas[j,0],delta1=deltas[j,1],
+                interval=interval,native_indices=indices[j],erasure=False)
+            self.hist.append(h)
+            self._native_previous[interval%len(self._native_previous)]=prevs[j]
+            if len(self.hist)>self.depth:self._decide()
+        self.metric=metric
+
     def _native_feed(self,wave0,wave1,interval,v0,metric_before,history_before,erasure=False):
         from v34_trellis_native import advance
         ys,cs,delta,history,best,indices,cost,parity,Us,new,prev,s0,s1,p0,normalization=advance(
@@ -225,8 +270,11 @@ class TrellisDetector:
         self.x_hist=list(history);self.metric=new;self.metric_offset+=normalization
         h=dict(prev=prev,s0=s0,s1=s1,p0=p0,y0=ys[0],y1=ys[1],U=Us,
             c0=cs[0],c1=cs[1],wave0=wave0,wave1=wave1,delta0=delta[0],delta1=delta[1],
-             interval=interval,metric_before=metric_before,metric_after=new.copy(),native_indices=indices,
+             interval=interval,native_indices=indices,
              erasure=bool(erasure))
+        if self.record_snapshots or self.trace is not None:
+            h['metric_before']=metric_before
+            h['metric_after']=new.copy()
         self.hist.append(h)
         self._native_previous[interval%len(self._native_previous)]=prev
         if self.trace is not None:

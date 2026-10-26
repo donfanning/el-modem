@@ -1,5 +1,5 @@
 # Build and exercise the Windows installer on a CI runner. Usage:
-#   build_installer.ps1 -Archive build\el-modem-0.3.0-rc1-windows-x86_64.zip -Version 0.3.0-rc1 -Out installers
+#   build_installer.ps1 -Archive build\el-modem-0.4.0-rc1-windows-x86_64.zip -Version 0.4.0-rc1 -Out installers
 #
 # -DriverPackage stages an already-signed virtual COM driver into the installer
 # (the .inf, .dll, wudf.cat and the public .cer). Produce it with

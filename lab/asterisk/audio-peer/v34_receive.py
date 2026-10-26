@@ -220,15 +220,23 @@ class Receiver:
         self.expected_mapper = np.asarray(independent["u"])
         self.linear = np.asarray(independent["x"])
         self.energy=1.; self.slicer_hist=[0j]*3
+        self._native_decision_kernel=None
+        self._native_slicer_hist=None
+        self._native_precoder=None
+        self._native_points=None
+        self._native_point_grid=None
+        self._native_grid_origin=None
+        self._native_hist_synced=False
         self.diagnostics={'profile':asdict(profile),'qualified':False,'initial_trellis_state':list(initial_state),'standard_initialization':not any(initial_state)}
 
     def detector(self, start=False, trace=False):
         d=self.drx
+        from v34_transport import trellis_hold_enabled
         detector=vv.TrellisDetector(4*d.M*2**d.q,d.J,d.P,
             start_state=tuple(d.conv.d) if start else self.initial_state,
             m4_start=d.m4 if start else 0,precoder=self.h,w=self.tx.w,
             nonlinear=self.profile.nonlinear,energy=self.energy,
-            erasure_hold=os.environ.get('V34_GAP_TRELLIS_HOLD')=='1',
+            erasure_hold=trellis_hold_enabled(self.profile.precoder),
             x_hist=d.x_hist if start else None,trace=trace)
         # Qualification diagnostics retain every interval. Ordinary native
         # streaming uses only bounded traceback; opt-in tracing still records.
@@ -311,7 +319,34 @@ class Receiver:
         u=self.drx.nearest_point(x+p-c)
         target=u+c-p
         self.slicer_hist=[target]+self.slicer_hist[:2]
+        self._native_hist_synced=False
         return complex(projection(target,self.energy)) if self.profile.nonlinear else target
+
+    def decide_and_feedback(self, eq, window, yr, phase, freq, known_energy=-1.):
+        """Experimental fused data-mode decision plus equalizer feedback."""
+        if self._native_decision_kernel is None:
+            from v34_decision_feedback_native import step
+            self._native_decision_kernel=step
+            self._native_slicer_hist=np.zeros(3,dtype=np.complex128)
+            self._native_precoder=np.asarray(self.h,dtype=np.complex128)
+            self._native_points=np.asarray(self.drx._pts,dtype=np.complex128)
+            xs=self._native_points.real.astype(np.int64);ys=self._native_points.imag.astype(np.int64)
+            x0=int(xs.min());y0=int(ys.min())
+            self._native_grid_origin=(x0,y0)
+            self._native_point_grid=np.zeros(((int(xs.max())-x0)//2+1,
+                                               (int(ys.max())-y0)//2+1),dtype=np.bool_)
+            self._native_point_grid[((xs-x0)//2),((ys-y0)//2)]=True
+        if not self._native_hist_synced:self._native_slicer_hist[:]=self.slicer_hist
+        d,phase,freq=self._native_decision_kernel(
+            eq.h,window,yr,phase,freq,self._native_slicer_hist,self._native_precoder,
+            self._native_points,self._native_point_grid,*self._native_grid_origin,
+            bool(self.profile.nonlinear),float(self.energy),float(2.**self.tx.w),
+            float(eq.mu),float(eq.kp),float(eq.ki),float(known_energy))
+        self.slicer_hist[0]=complex(self._native_slicer_hist[0])
+        self.slicer_hist[1]=complex(self._native_slicer_hist[1])
+        self.slicer_hist[2]=complex(self._native_slicer_hist[2])
+        self._native_hist_synced=True
+        return complex(d),float(phase),float(freq)
 
 
 def live_policy():
@@ -405,9 +440,10 @@ def initialize(engine, eq, remote_role, baud, policy=None):
     # Every allowed rate gets the same state/boundary search, ranked only on
     # calibration samples. Expected held-out bits never select a candidate.
     score,selected_profile,state,shift,observed=min(candidates,key=lambda q:q[0])
-    if (os.environ.get('V34_GAP_TRELLIS_ERASURE')=='1'
+    from v34_transport import gap_recovery_enabled
+    if (not gap_recovery_enabled() and os.environ.get('V34_GAP_TRELLIS_ERASURE')=='1'
             and any(selected_profile.precoder)):
-        reason='V34 gap trellis erasure experiment requires a zero precoder'
+        reason='V34_GAP_TRELLIS_ERASURE requires a zero precoder; use V34_GAP_RECOVERY for safe profile fallback'
         engine.rx_qualification={'profile':asdict(selected_profile),'qualified':False,
             'reason':reason,'search_evidence':search_evidence}
         engine.failed_reason=reason

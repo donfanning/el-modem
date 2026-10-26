@@ -11,6 +11,7 @@ except ImportError:
 if numpy is not None:
     import v34_ans
     import v34_call
+    import v34_data
     import v34_info
     import v34_loop
     import v34_mp
@@ -494,6 +495,42 @@ class StartupTests(unittest.TestCase):
         caller2.mp_ans = {"max_c2a": 13, "max_a2c": 14, "precoder": None, "shaping": 0, "nonlinear": 0}
         caller2._prepare_data_mode()
         self.assertEqual(caller2.data_rate, 31200)
+
+    def test_data_mode_entry_resets_b1_transmit_state(self):
+        """B1 starts from fresh scrambler, mapper, trellis and precoder state."""
+        import numpy as np
+        caller = v34_call.V34Caller(data_rate=33600)
+        caller.call_baud = caller.ans_baud = 3429.0
+        caller.mp_ans = {"max_c2a": 14, "max_a2c": 14, "precoder": None,
+                         "shaping": 0, "nonlinear": 0, "trellis": 0}
+        caller._mp_z = 3
+        caller._mp_sc = v34_tx.Scrambler("call")
+        for bit in [1, 0, 1, 1, 0] * 12:
+            caller._mp_sc.step(bit)
+        caller._dsc = v34_tx.Scrambler("call")
+        for bit in [1, 0, 1, 1, 0] * 12:
+            caller._dsc.step(bit)
+        stale = v34_data.DataTx(33600, 3429)
+        stale.z = 3
+        stale.conv.d = [1] * len(stale.conv.d)
+        stale.x_hist = [1+1j, 2+2j, 3+3j]
+        caller._dtx = stale
+        caller._prepare_data_mode()
+
+        reference = v34_data.DataTx(
+            caller.data_rate, caller.call_baud,
+            expanded=caller.negotiated.tx.shaping,
+            precoder=v34_data.precoder_from_mp(caller.negotiated.tx.precoder),
+            nonlinear=caller.negotiated.tx.nonlinear,
+            trellis=caller.negotiated.tx.trellis)
+        b1_scrambler = v34_tx.Scrambler("call")
+        b1_bits = [b1_scrambler.step(1) for _ in range(reference.bits_per_data_frame)]
+        expected = np.asarray(reference.data_frame(b1_bits)) * caller._dscale
+        np.testing.assert_array_equal(caller._b1_sy, expected)
+        self.assertEqual(caller._dsc.reg, b1_scrambler.reg)
+        self.assertEqual(caller._dtx.z, reference.z)
+        self.assertEqual(caller._dtx.conv.d, reference.conv.d)
+        self.assertEqual(caller._dtx.x_hist, reference.x_hist)
 
     def test_answerer_tx_rate_is_capped_by_max_a2c_but_not_by_max_c2a(self):
         """The mirror of the caller's cap test, and the same bug on the other side of the wire.

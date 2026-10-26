@@ -9,39 +9,58 @@ import time
 _PACKAGING=Path(__file__).resolve().parents[2]/'packaging'
 if _PACKAGING.is_dir(): sys.path.insert(0,str(_PACKAGING))
 
+
 WORKER_PASSTHROUGH_ENV=(
-    'V34_GAP_FEEDBACK', 'V34_EQUALIZER_BACKEND',
-    'V32_NUMPY_METRICS',
-    'EL_MODEM_WINDOWS_TIMER_RESOLUTION_MS',
-    'EL_MODEM_TIMING_TRACE',
+    'V34_GAP_FEEDBACK', 'V34_GAP_RECOVERY', 'V34_EQUALIZER_BACKEND',
+    'V34_NATIVE_FEEDBACK', 'V34_SYMBOL_INTERP_NATIVE', 'V32_NUMPY_METRICS',
+    'EL_MODEM_WINDOWS_TIMER_RESOLUTION_MS', 'EL_MODEM_TIMING_TRACE',
+    'EL_MODEM_TX_WATCHDOG', 'EL_MODEM_RECORDING', 'EL_MODEM_RECORDING_SECONDS',
 )  # explicitly opted-in experiments/diagnostics; all other modem env is scrubbed
+WORKER_SCRUB_PREFIXES=('V34_','V42_','MODEM_','EL_MODEM_')
 
 
-def worker_passthrough_environment(environ):
+def worker_passthrough_environment(environ=None):
     """Return the small, explicit set of parent settings workers may inherit."""
+    environ = os.environ if environ is None else environ
     return {key: environ[key] for key in WORKER_PASSTHROUGH_ENV if key in environ}
+
+def worker_runtime_environment(environ, profile_settings=None):
+    """Build an isolated modem environment, then apply explicit per-modem settings."""
+    from native_runtime import NATIVE_ENV
+    from modem_settings import ENV
+    result={key:value for key,value in environ.items()
+            if not key.startswith(WORKER_SCRUB_PREFIXES)}
+    result.update(NATIVE_ENV)
+    result.update(worker_passthrough_environment(environ))
+    for name,value in (profile_settings or {}).items():
+        if name in ENV:
+            result[ENV[name][0]]=str(value)
+    result['EL_MODEM_FACTORY_NATIVE']='1'
+    return result
+
+def worker_profile_settings(directory):
+    """Read the selected modem's persisted extended settings, if present."""
+    profile=Path(directory)/'profiles.json'
+    if not profile.exists():
+        return {}
+    return json.loads(profile.read_text()).get('profiles',{}).get('0',{}).get('extended_settings',{})
+
 
 def worker(path,fd=None):
     import signal
     signal.signal(signal.SIGTERM,lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
-    from native_runtime import NATIVE_ENV
     from modem_settings import ENV
     document=json.loads(Path(path).read_text()); spec=document['spec']; directory=Path(document['directory'])
-    experiment=worker_passthrough_environment(os.environ)  # deliberate opt-ins survive the scrub
-    for key in list(os.environ):
-        if key.startswith(('V34_','MODEM_','EL_MODEM_')): del os.environ[key]
-    os.environ.update(NATIVE_ENV)
-    os.environ.update(experiment)
-    os.environ['EL_MODEM_FACTORY_NATIVE']='1'
+
+    profile=directory/'profiles.json'
+    runtime_env=worker_runtime_environment(os.environ.copy(),worker_profile_settings(directory))
+    os.environ.clear()
+    os.environ.update(runtime_env)
+
     boot={'instance.name':'name','serial.backend':'serial','serial.tcp_port':'serial_port',
           'serial.device':'serial_device','serial.baud':'serial_baud',
           'sip.bind_host':'sip_host','sip.bind_port':'sip_port','sip.media_host':'media_host','sip.media_port':'media_port'}
     for name,key in boot.items(): os.environ[ENV[name][0]]=str(spec[key])
-    profile=directory/'profiles.json'
-    if profile.exists():
-        saved=json.loads(profile.read_text()).get('profiles',{}).get('0',{}).get('extended_settings',{})
-        for name,value in saved.items():
-            if name in ENV: os.environ[ENV[name][0]]=str(value)
     for name,key in boot.items():
         value=os.environ[ENV[name][0]]
         spec[key]=int(value) if key.endswith(('port','baud')) else value

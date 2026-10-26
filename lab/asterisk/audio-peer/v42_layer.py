@@ -72,6 +72,7 @@ class V42Layer:
 
     def _v42_setup(self) -> None:
         self._v42 = None
+        self._v42_ever_established = False
         self._v42_lock = threading.RLock()
         self._v42_bits = 0
         self._v42_detect_deadline = 0
@@ -131,6 +132,7 @@ class V42Layer:
         from v42_detect import AdpDetector
 
         with self._v42_lock:
+            self._v42_ever_established = False
             rate = max(rate or getattr(self, "bit_rate", 0), 300)
             extra = max(0.0, float(self.v42_detect_extra_seconds)) if detect else 0.0
             detect_seconds += extra
@@ -395,6 +397,8 @@ class V42Layer:
     def _v42_check(self) -> None:
         link = self._v42
         state = link.state
+        if state == "lapm":
+            self._v42_ever_established = True
         if self.v42_mode == "lapm" and getattr(link, "_compression_error", None):
             if not self._v42_compression_recovery:
                 self.v42_mode = "lost"

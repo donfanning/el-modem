@@ -4,11 +4,33 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import numpy as np
-from v34_trn_clock import TrnClock, MAX_ROWS
+from v34_trn_clock import TrnClock, MAX_ROWS, fit_validation_ranges
 from v34_receive_dsp import ReceiveDsp, configured
 
 
 class TrnClockTests(unittest.TestCase):
+    def test_short_trn_uses_disjoint_middle_fit_and_late_validation_windows(self):
+        fit_start, fit_stop, hold_start, hold_stop = fit_validation_ranges(1549)
+        self.assertEqual((fit_start, fit_stop), (199, 699))
+        self.assertEqual((hold_start, hold_stop), (949, 1449))
+        self.assertEqual(fit_stop-fit_start, 500)
+        self.assertEqual(hold_stop-hold_start, 500)
+        self.assertEqual(hold_start-fit_stop, 250)
+
+    def test_shorter_trn_reduces_block_sizes_but_preserves_guards(self):
+        fit_start, fit_stop, hold_start, hold_stop = fit_validation_ranges(1260)
+        self.assertEqual((fit_start, fit_stop), (100, 555))
+        self.assertEqual((hold_start, hold_stop), (705, 1160))
+        self.assertEqual(hold_start-fit_stop, 150)
+        self.assertEqual(fit_validation_ranges(950), (100, 400, 550, 850))
+
+    def test_long_trn_keeps_the_qualified_window_layout(self):
+        self.assertEqual(fit_validation_ranges(6000), (4400, 4900, 5400, 5900))
+
+    def test_short_trn_requires_at_least_300_fit_and_validation_rows(self):
+        with self.assertRaisesRegex(ValueError, 'insufficient guarded TRN'):
+            fit_validation_ranges(949)
+
     def test_default_is_off_and_clock_only_retains_no_tx_history(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(configured(SimpleNamespace()))

@@ -1820,6 +1820,52 @@ class AtProfileTests(unittest.TestCase):
         self.assertIn(b"+V23DIR=0", out)
         self.assertTrue(out.endswith(b"OK\r\n"))
 
+    def test_view_configuration_accepts_supervisor_partial_profile(self) -> None:
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profiles.json"
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"profiles": {"0": {"net": {"100": "sip.local", "103": "do-not-show"},
+                                               "extended_settings": {"recording.enabled": "0"}}}}, fh)
+            dce = AtDce()
+            dce.load_profiles(str(path))
+            out = dce.feed(b"AT&V\r")
+            self.assertIn(b"Stored Profile 0:", out)
+            self.assertIn(b"\\N", out)
+            self.assertIn(b"sip.local", out)
+            self.assertNotIn(b"do-not-show", out)
+            self.assertTrue(out.endswith(b"OK\r\n"))
+
+    def test_partial_profile_view_uses_factory_defaults_not_live_settings(self) -> None:
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profiles.json"
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"profiles": {"0": {"net": {"100": "sip.local"},
+                                               "extended_settings": {"recording.enabled": "0"}}}}, fh)
+            dce = AtDce()
+            # Match runtime-selected defaults such as the reliable line mode.
+            dce.default_error_control = 3
+            dce.default_auto_rate = 2
+            dce.load_profiles(str(path))
+            factory = AtDce()
+            factory.default_error_control = dce.default_error_control
+            factory.default_auto_rate = dce.default_auto_rate
+            factory._factory_reset()
+            dce.feed(b"ATE0V0X1&K4\\N0%C1S0=5\r")
+
+            out = dce.feed(b"AT&V\r").decode()
+            active, stored = out.split("Stored Profile 0:", 1)
+            self.assertIn("S00=005", active)
+            self.assertIn("E0  Q0  V0  X1", active)
+            self.assertIn("S00=000", stored)
+            self.assertIn("S07=060", stored)
+            self.assertIn("\\N3", stored)
+            for line in factory._setting_lines(lambda name: getattr(factory, name)):
+                self.assertIn(line, stored)
+
     def test_identification_and_ms(self) -> None:
         dce = AtDce()
         self.assertIn(b"El-Modem Software Modem", dce.feed(b"ATI3\r"))
@@ -1860,19 +1906,20 @@ class AtiScreenTests(unittest.TestCase):
 
     def test_identification_screens(self) -> None:
         dce = AtDce()
-        self.assertEqual(self.ati(dce, 0), "ATI0\r\r\n0030\r\n\r\nOK\r\n")        # code, blank line, OK like a Courier
+        self.assertEqual(self.ati(dce, 0), "ATI0\r\r\n0040\r\n\r\nOK\r\n")        # code, blank line, OK like a Courier
         self.assertRegex(self.ati(dce, 1), r"\r\n[0-9A-F]{4}\r\n\r\nOK\r\n$")
         self.assertIn("\r\nOK\r\nOK\r\n", self.ati(dce, 2))                    # self-test OK, then the command's own OK
         out = self.ati(dce, 3)
-        for text in ("El-Modem Software Modem", "Build date:", "Revision: 0.3.0-rc1", "https://github.com/donfanning/el-modem"):
+        for text in ("El-Modem Software Modem", "Build date:", "Revision: 0.4.0-rc1", "https://github.com/donfanning/el-modem"):
             self.assertIn(text, out)
         for n in (7, 8, 9, 10, 11, 12, 15, 16, 17):
             self.assertTrue(self.ati(dce, n).endswith("OK\r\n"), n)
         out = self.ati(dce, 7)
-        for text in ("El-Modem Configuration...", "Product Type:            Software", "V.34", "EPROM Checksum:          Pass",
+        for text in ("El-Modem Configuration...", "Product Type:            Software", "V.34", "Program CRC-16:",
                      "https://github.com/donfanning/el-modem"):
             self.assertIn(text, out)
-        self.assertIn("ELM0001\\El-Modem Software Modem", self.ati(dce, 9))
+        from modem_pnp import identification
+        self.assertIn(identification(), self.ati(dce, 9))
         out = self.ati(dce, 10)
         self.assertIn("DIAL SECURITY ACCOUNT STATUS:", out)
         self.assertIn("LOCAL ACCESS:   ENABLED", out)
@@ -1958,7 +2005,7 @@ class AtiScreenTests(unittest.TestCase):
         self.assertIn("SYMBOL RATE: 3429", live)
         self.assertIn("RX LEVEL: -18.2 dBm0", live)
         self.assertIn("SNR: N/A (NOT MEASURED)", live)                         # never invented
-        self.assertIn("LINE QUALITY: 95.0% OF BLOCKS CLEAN", live)
+        self.assertIn("RETRANSMISSIONS / I-FRAME TX: 5.0%", live)
         section2 = self.ati(dce, 16)
         self.assertIn("TECHNICAL SUPPORT REPORT - SECTION 2", section2)
         self.assertIn("RESENT 5", section2)
@@ -1976,9 +2023,11 @@ class AtiScreenTests(unittest.TestCase):
         self.assertRegex(done, r"Blocks resent\s+5")
         self.assertRegex(done, r"Last Tx rate\s+33600\s+Last Rx rate\s+33600")
         self.assertRegex(done, r"Modulation\s+V\.34\s+Protocol\s+V\.42")
-        self.assertRegex(done, r"Compression\s+V\.42 bis\s+Line Conditioned\s+Ok")
-        self.assertRegex(done, r"Retrains Requested\s+N/A\s+Retrains Granted\s+N/A")
+
+        self.assertRegex(done, r"Compression\s+V\.42 bis\s+Line Conditioned\s+N/A")
+        self.assertRegex(done, r"Retrain attempts\s+N/A\s+Retrains completed\s+N/A")
         self.assertRegex(done, r"Fallbacks\s+N/A")
+
         self.assertIn("Remote Hangup / No Carrier", done)
         self.assertIn("RESENT 5", self.ati(dce, 16))                            # frozen at the end of the call
 
@@ -2675,9 +2724,14 @@ class OnlineAudioSessionTests(unittest.TestCase):
 
     def test_link_stats_exposes_v34_rx_timing_slips(self) -> None:
         session = OnlineAudioSession.__new__(OnlineAudioSession)
+        connected_rate = types.SimpleNamespace(
+            phase='idle', exchange=None,
+            completed=[dict(tx_rate=26400, rx_rate=33600, origin='peer',
+                            completed_monotonic=123.0, b1_symbol=456)],
+        )
         caller = types.SimpleNamespace(
             _p4rcv=types.SimpleNamespace(eq=types.SimpleNamespace(slips=5)),
-            _rx=[],
+            _rx=[], _connected_rate=connected_rate,
         )
         session._v22 = types.SimpleNamespace(
             caller=caller, answerer=None, v42_mode="off", v42_compression=None,
@@ -2693,6 +2747,38 @@ class OnlineAudioSessionTests(unittest.TestCase):
         stats = session.link_stats()
         self.assertEqual(stats["v34_rx_timing_slips"], {
             "by_core": {"caller": 5}, "total": 5,
+        })
+        self.assertEqual(stats['v34_connected_rate']['caller'], {
+            'phase': 'idle', 'active_origin': None,
+            'completed': [dict(tx_rate=26400, rx_rate=33600, origin='peer',
+                               completed_monotonic=123.0, b1_symbol=456)],
+        })
+
+    def test_link_stats_preserves_error_control_history_after_link_loss(self) -> None:
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        link = types.SimpleNamespace(
+            state="down", stats={}, events=[], tx_n401=32, rx_n401=32,
+            tx_k=15, rx_k=15,
+        )
+        session._v22 = types.SimpleNamespace(
+            v42_mode="lost", v42_compression=None, _v42=link,
+            _v42_ever_established=True, rx_signal_power_dbm0=None,
+        )
+        session._rtp_frame_seconds = 0.02
+        session._v23_detector_transitions = []
+        session._timer_resolution_request = None
+        session.realtime = types.SimpleNamespace(report=lambda: {})
+        session.timing_trace = None
+        session._want_v42 = True
+        session._want_mnp = False
+        session._rtp_counts = {}
+
+        stats = session.link_stats()
+
+        self.assertEqual(stats["error_control"], "V.42 LAPM")
+        self.assertEqual(stats["v42_session"], {
+            "requested": "V.42 LAPM", "ever_established": True,
+            "final_mode": "lost", "final_state": "down",
         })
 
     def test_v22bis_dte_payload_waits_for_retrain_transmit_readiness(self) -> None:

@@ -3,6 +3,7 @@
 
 import argparse
 import cmath
+import copy
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import struct
 import sys
 import threading
 import time
+import textwrap
 from collections.abc import Callable
 from queue import Empty, SimpleQueue
 
@@ -39,12 +41,18 @@ from pcm_capture import capture_from_env  # noqa: E402
 from sip_uac import SipOriginateCall  # noqa: E402
 from sip_uas import SipIncomingCallServer  # noqa: E402
 from iax_transport import IaxMediaSocket, IaxTransport  # noqa: E402
+
 from windows_timer import TimerResolutionRequest  # noqa: E402
+from modem_build import build_timestamp  # noqa: E402
+from modem_pnp import identification as pnp_identification  # noqa: E402
+from modem_diagnostics import finite, line_metrics  # noqa: E402
+from modem_help import help_screen  # noqa: E402
+
 
 MAX_COMMAND_BYTES = 256
 PRODUCT = "EL-MODEM"
-VERSION = "0.3.0-rc1"
-PRODUCT_CODE = "0030"          # four digits: major, minor, patch (V0.3.0)
+VERSION = "0.4.0-rc1"
+PRODUCT_CODE = "0040"          # four digits: major, minor, patch (V0.4.0)
 STORED_NUMBER_SLOTS = 4        # phone-number slots 0-3 (AT&Zn=, ATDSn)
 PNP_ID = "ELM0001"            # three-letter vendor tag + number; not registered with any PnP authority
 PROJECT_URL = "https://github.com/donfanning/el-modem"
@@ -265,8 +273,13 @@ class V42BreakRequestQueue:
 
 
 def v34_rx_timing_slips(engine) -> dict | None:
-    """Snapshot equalizer timing-slip counts from the active V.34 receive cores."""
+    """Snapshot timing slips and optional sampled equalizer-stage timings."""
     by_core = {}
+    step_profile_by_core = {}
+    slip_events_by_core = {}
+    timing_state_by_core = {}
+    timing_anomalies_by_core = {}
+    timing_low_power_by_core = {}
     for name in ("caller", "answerer"):
         core = getattr(engine, name, None)
         receiver = getattr(core, "_p4rcv", None) if core is not None else None
@@ -274,9 +287,35 @@ def v34_rx_timing_slips(engine) -> dict | None:
         slips = getattr(equalizer, "slips", None) if equalizer is not None else None
         if isinstance(slips, int) and not isinstance(slips, bool):
             by_core[name] = slips
+        profile = getattr(equalizer, "_step_profile", None) if equalizer is not None else None
+        if profile is not None and profile.count:
+            step_profile_by_core[name] = profile.report()
+        trace = getattr(equalizer, "_timing_slip_trace", None) if equalizer is not None else None
+        if trace is not None:
+            slip_events_by_core[name] = list(trace)
+        state_trace = getattr(equalizer, "_timing_state_trace", None) if equalizer is not None else None
+        if state_trace is not None:
+            timing_state_by_core[name] = list(state_trace)
+        anomalies = getattr(equalizer, "_timing_anomaly_trace", None) if equalizer is not None else None
+        if anomalies is not None:
+            timing_anomalies_by_core[name] = list(anomalies)
+        low_power = getattr(equalizer, "_timing_low_power_trace", None) if equalizer is not None else None
+        if low_power is not None:
+            timing_low_power_by_core[name] = list(low_power)
     if not by_core:
         return None
-    return {"by_core": by_core, "total": sum(by_core.values())}
+    result = {"by_core": by_core, "total": sum(by_core.values())}
+    if step_profile_by_core:
+        result['symbol_eq_step_profile_by_core'] = step_profile_by_core
+    if slip_events_by_core:
+        result['slip_events_by_core'] = slip_events_by_core
+    if timing_state_by_core:
+        result['timing_state_samples_by_core'] = timing_state_by_core
+    if timing_anomalies_by_core:
+        result['timing_anomalies_by_core'] = timing_anomalies_by_core
+    if timing_low_power_by_core:
+        result['timing_low_power_events_by_core'] = timing_low_power_by_core
+    return result
 
 
 # Modulation switch guard times. After the CONFIRM exchange the sender lets
@@ -970,25 +1009,29 @@ class OnlineAudioSession:
     def link_stats(self) -> dict:
         eng = self._v22
         eng = getattr(eng, "engine", None) or eng
-        stats: dict = {"error_control": None, "compression": None}
+        if getattr(self, '_auto', None) is not None and self._auto.state != 'v22':
+            eng = None  # Do not report a dormant V.22 engine on another call mode.
+
+        stats: dict = {"error_control": None, "compression": None,
+                       "rtp": dict(self._rtp_counts), "realtime": self.realtime.report()}
         stats["rtp_packetization_ms"] = self._rtp_frame_seconds * 1000
         stats["runtime_clock"] = dict(_RUNTIME_CLOCK_INFO)
         if self._v23_detector_transitions:
             stats["v23_detector_transitions"] = list(self._v23_detector_transitions)
         if self._timer_resolution_request is not None:
-            stats['windows_timer_resolution']=self._timer_resolution_request.report()
+            stats['windows_timer_resolution'] = self._timer_resolution_request.report()
+        if self.timing_trace is not None:
+            stats['timing_trace'] = self.timing_trace.report()
         if eng is None:
             return stats
         timing_slips = v34_rx_timing_slips(eng)
         if timing_slips is not None:
             stats["v34_rx_timing_slips"] = timing_slips
-        stats['realtime']=self.realtime.report()
+        stats.update(line_metrics(eng))
         if getattr(self, '_gc_pause', None) is not None:stats['gc_pause']=dict(self._gc_pause)
         recorder=getattr(self,'_capture',None)
         recording=recorder.report() if recorder is not None else getattr(self,'_capture_stats',None)
         if recording is not None:stats['pcm_capture']=recording
-        if self.timing_trace is not None:
-            stats['timing_trace'] = self.timing_trace.report()
         dsp=getattr(eng,'receive_dsp',None)
         if dsp is not None:stats['receive_dsp']=dsp.report()
         distance_backend=getattr(eng,'distance_backend',None)
@@ -1012,7 +1055,15 @@ class OnlineAudioSession:
         stats["rx_dbm0"] = getattr(eng, "rx_signal_power_dbm0", None)
         mode = getattr(eng, "v42_mode", "off")
         stats["v42_mode"] = mode
-        stats["error_control"] = ("MNP" if self._want_mnp else "V.42 LAPM") if mode == "lapm" else "NONE"
+        # error_control is the negotiated call result (the protocol reported
+        # by CONNECT), not merely whether the link object is currently in its
+        # connected state. Preserve it after a post-connect C-ERROR or release;
+        # v42_session.final_mode reports the final live state separately.
+        v42_ever_established = bool(getattr(eng, "_v42_ever_established", mode == "lapm"))
+        stats["error_control"] = (
+            ("MNP" if self._want_mnp else "V.42 LAPM")
+            if mode == "lapm" or v42_ever_established else "NONE"
+        )
         stats["compression"] = "V.42BIS" if getattr(eng, "v42_compression", None) else "NONE"
         if type(eng).__name__ == "V23Modem":
             stats["v23_channels"] = dict(
@@ -1021,6 +1072,13 @@ class OnlineAudioSession:
                 backward_channel=("enabled" if eng.backward_channel_enabled else "disabled"),
             )
         link = getattr(eng, "_v42", None)
+        if link is not None:
+            stats["v42_session"] = {
+                "requested": "MNP" if self._want_mnp else ("V.42 LAPM" if self._want_v42 else None),
+                "ever_established": v42_ever_established,
+                "final_mode": mode,
+                "final_state": getattr(link, "state", None),
+            }
         recovery_stats = getattr(eng, "_v42_recovery_stats", None)
         if recovery_stats is not None:
             stats["v42_recovery"] = dict(recovery_stats)
@@ -1067,6 +1125,11 @@ class OnlineAudioSession:
         blocks = getattr(link, "stats", None)
         if blocks:
             stats["blocks"] = dict(blocks)
+        lapm_trace = getattr(link, "bad_frame_trace_report", None)
+        if callable(lapm_trace):
+            report = lapm_trace()
+            if report is not None:
+                stats["v42_lapm_bad_frame_trace"] = report
         for part in ("caller", "answerer"):
             core=getattr(eng,part,None)
             baud = getattr(core, "call_baud", None)
@@ -1076,6 +1139,18 @@ class OnlineAudioSession:
                 from dataclasses import asdict
                 negotiated=getattr(core,'negotiated',None)
                 if negotiated is not None:stats['negotiated']=asdict(negotiated)
+                connected_rate=getattr(core,'_connected_rate',None)
+                if connected_rate is not None:
+                    exchange=getattr(connected_rate,'exchange',None)
+                    active_origin=(None if exchange is None else
+                                   ('local' if exchange.initiating else 'peer'))
+                    stats.setdefault('v34_connected_rate', {})[part]=dict(
+                        phase=connected_rate.phase,
+                        active_origin=active_origin,
+                        completed=[{key:event[key] for key in
+                                    ('tx_rate','rx_rate','origin','completed_monotonic','b1_symbol')
+                                    if key in event}
+                                   for event in connected_rate.completed])
                 stats['rx_qualification']=getattr(core,'rx_qualification',None)
                 eq=getattr(getattr(core,'_p4rcv',None),'eq',None)
                 if eq is not None:stats['equalizer_backend']=getattr(eq,'arithmetic_backend','legacy')
@@ -1497,6 +1572,14 @@ class OnlineAudioSession:
                 self.transmitter.release_call_sequence()
                 self._release_held()
         started=time.monotonic()
+
+        rx_thread_started=(time.thread_time()
+                           if getattr(self.realtime, 'thread_timing', False) is True else None)
+        # Wall time alone cannot tell whether a long receive interval was DSP
+        # work or a descheduled Python worker. Capture thread CPU only when
+        # the opt-in trace is active.
+        thread_cpu_started=time.thread_time() if self.timing_trace is not None else None
+
         data_phase=bool(getattr(self._v22,'connected',False))
         age = None
         if self._rx_arrival is not None:
@@ -1517,6 +1600,8 @@ class OnlineAudioSession:
         v23_samples_before = getattr(v23_engine, "_rx_samples", 0)
         decoded = (diagnostic.feed(pcm,self.receiver) if diagnostic is not None
                    else self.receiver.feed_pcm(pcm))
+        thread_cpu_seconds=(time.thread_time()-thread_cpu_started
+                            if thread_cpu_started is not None else None)
         ended = time.monotonic()
         if v23_engine is not None:
             for transition in v23_engine.take_carrier_transitions():
@@ -1534,9 +1619,13 @@ class OnlineAudioSession:
             if len(self._v23_detector_transitions) > 64:
                 del self._v23_detector_transitions[:-64]
         self.realtime.add('rx_seconds',ended-started,data=data_phase)
+        if rx_thread_started is not None:
+            self.realtime.add('rx_thread_cpu_seconds',time.thread_time()-rx_thread_started,
+                              data=data_phase)
         if self.timing_trace is not None:
             row = dict(self._rx_context, started=started, ended=ended,
                        samples=len(pcm)//2, data=data_phase, queue_age=age)
+            row['thread_cpu_seconds']=thread_cpu_seconds
             self.timing_trace.threshold('rx_processing', ended-started, row)
             if age is not None:
                 self.timing_trace.threshold('queue', age, row, data=data_phase)
@@ -1792,6 +1881,8 @@ class OnlineAudioSession:
         next_frame = time.monotonic()
         while not self._stop.is_set():
             started=time.monotonic()
+            tx_thread_started=(time.thread_time()
+                               if getattr(self.realtime, 'thread_timing', False) is True else None)
             trace = self.timing_trace
             stamps = [(started,time.thread_time())] if trace is not None else None
             data_phase=bool(getattr(self._v22,'connected',False))
@@ -1826,6 +1917,9 @@ class OnlineAudioSession:
             ended = time.monotonic()
             self._tx_active = None
             self.realtime.add('tx_seconds',ended-started,data=data_phase)
+            if tx_thread_started is not None:
+                self.realtime.add('tx_thread_cpu_seconds',time.thread_time()-tx_thread_started,
+                                  data=data_phase)
             self.realtime.add('sender_lateness_seconds',max(0.,started-next_frame),data=data_phase)
             if self.timing_trace is not None:
                 stamps.append((ended,time.thread_time()))
@@ -2415,7 +2509,7 @@ class AtDce:
         lines = ["SIP SETTINGS (S100-S106):"] + self._net_lines()[:7] + ["IAX SETTINGS (S110-S115):"] + self._net_lines()[7:13]
         lines.append(f"TRUNK FOR ATD: {'IAX2' if self.net[120] == '1' else 'SIP'} (S120)")
         lines.append("SIP: " + ("CONFIGURED" if sip_host else "USING COMMAND-LINE DIAL HOST") +
-                     (f", REGISTERED AS {self.net[102]}" if self.net[104] and self.net[102] else ", NO REGISTRATION"))
+                     (f", REGISTRATION USER {self.net[102]}" if self.net[104] and self.net[102] else ", NO REGISTRATION CONFIGURED"))
         lines.append("IAX: " + ("CONFIGURED" if iax_host else "NOT CONFIGURED") + " - RFC 5456 / G.711 U-LAW")
         return lines
 
@@ -2445,7 +2539,7 @@ class AtDce:
                 except Exception:                                          # noqa: BLE001 -- diagnostics only
                     stats = None
             self.last_call = dict(call, connected=True, result=reason, duration=time.monotonic() - call["start"],
-                                  stats=stats or {})
+                                  stats=copy.deepcopy(stats or {}))
             self._direction = ""
 
     @staticmethod
@@ -2539,24 +2633,33 @@ class AtDce:
         b = stats.get("blocks") or {}
         lines.append("")
         lines.append(self._columns(("Chars sent", c.get("chars_sent", 0)), ("Chars received", c.get("chars_received", 0))))
+
         # These are not maintained end-to-end counters.  A literal zero would
         # claim that the receive path detected no lost characters, which the
         # current byte-stream and modem engines cannot establish.
         lines.append(self._columns(("Chars lost", "N/A")))
+
         if b:
             lines.append(self._columns(("Octets sent", b["wire_out"]), ("Octets received", b["wire_in"])))
             lines.append(self._columns(("Blocks sent", b["i_tx"]), ("Blocks received", b["i_rx"])))
             lines.append(self._columns(("Blocks resent", b["i_resent"])))
             lines.append(self._columns(("FCS errors", b["fcs_errors"]), ("REJ sent / received", f"{b['rej_tx']}/{b['rej_rx']}")))
         lines.append("")
-        lines.append(self._columns(("Last Tx rate", c["speed"]), ("Last Rx rate", c["speed"])))
+        lines.append(self._columns(("Last Tx rate", stats.get('tx_rate') or c["speed"]),
+                                   ("Last Rx rate", stats.get('rx_rate') or c["speed"])))
         protocol = (stats.get("error_control") or "None").replace("V.42 LAPM", "V.42")
         lines.append(self._columns(("Modulation", c.get("modulation") or "Unknown"), ("Protocol", protocol)))
         comp = "V.42 bis" if stats.get("compression") == "V.42BIS" else "None"
-        ok = "Ok" if not b or not b["i_tx"] or b["i_resent"] / b["i_tx"] < 0.10 else "Poor"
-        lines.append(self._columns(("Compression", comp), ("Line Conditioned", ok)))
-        lines.append(self._columns(("Retrains Requested", "N/A"), ("Retrains Granted", "N/A")))
-        lines.append(self._columns(("Fallbacks", "N/A"), ("Disconnect Reason", self.DISCONNECT_REASONS.get(c["result"], c["result"]))))
+
+        lines.append(self._columns(("Compression", comp), ("Line Conditioned", 'N/A')))
+        retrain = stats.get('v32_retrain') or {}
+        events = retrain.get('events', [])
+        completed = sum('completed_seconds' in event for event in events) if 'events' in retrain else 'N/A'
+        lines.append(self._columns(("Retrain attempts", retrain.get('attempts', stats.get('retrain_attempts', 'N/A'))),
+                                   ("Retrains completed", completed)))
+        lines.append(self._columns(("Fallbacks", stats.get('fallbacks', 'N/A'))))
+        lines.append(self._columns(("Disconnect Reason", self.DISCONNECT_REASONS.get(c["result"], c["result"]))))
+
         mins, secs = divmod(int(c["duration"]), 60)
         lines.append(self._columns(("Duration", f"{mins:02d}:{secs:02d}")))
         return lines + [""]
@@ -2579,14 +2682,19 @@ class AtDce:
             return [head, "  NO LINK", ""]
         b = stats.get("blocks") or {}
         if section == 1:
-            lines = [head, f"  MODULATION: {c.get('modulation') or 'UNKNOWN'}   TX {c['speed']}  RX {c['speed']}"]
+            tx_rate, rx_rate = stats.get('tx_rate') or c['speed'], stats.get('rx_rate') or c['speed']
+            lines = [head, f"  MODULATION: {c.get('modulation') or 'UNKNOWN'}   TX {tx_rate}  RX {rx_rate}"]
             if stats.get("symbol_rate"):
                 lines.append(f"  SYMBOL RATE: {stats['symbol_rate']:.0f}")
             level = stats.get("rx_dbm0")
-            lines.append("  RX LEVEL: " + (f"{level:.1f} dBm0" if level is not None else "N/A"))
+            lines.append("  RX LEVEL: " + (f"{level:.1f} dBm0" if finite(level) else "N/A"))
             lines.append("  SNR: N/A (NOT MEASURED)   ECHO: N/A (NOT MEASURED)")
+            probe_snr = stats.get('probe_snr_db')
+            if finite(probe_snr):
+                lines.append(f"  PROBE SNR: {probe_snr:.1f} dB (STARTUP ESTIMATE, NOT LIVE DATA SNR)")
             if b and b["i_tx"]:
-                lines.append(f"  LINE QUALITY: {100.0 * (1 - b['i_resent'] / b['i_tx']):.1f}% OF BLOCKS CLEAN")
+                lines.append(f"  RETRANSMISSIONS / I-FRAME TX: {100.0 * b['i_resent'] / b['i_tx']:.1f}%")
+            lines.extend(self._dsp_report(stats))
             return lines + [""]
         if section == 2:
             timing_slips = stats.get("v34_rx_timing_slips")
@@ -2612,67 +2720,77 @@ class AtDce:
             return lines + [""]
         return [head, "  PCM / V.90 / V.92: NOT IMPLEMENTED", ""]
 
+    @staticmethod
+    def _dsp_report(stats: dict) -> list[str]:
+        """Observable line/DSP facts, without inventing SNR, BER or echo loss."""
+        lines = []
+        if stats.get('line_state') is not None:
+            lines.append(f"  DSP STATE: {stats['line_state']}")
+        retrain = stats.get('v32_retrain') or {}
+        attempts = retrain.get('attempts', stats.get('retrain_attempts'))
+        if attempts is not None:
+            active = retrain.get('active', stats.get('retraining', False))
+            lines.append(f"  RETRAIN ATTEMPTS: {attempts}   ACTIVE: {'YES' if active else 'NO'}")
+        echo = stats.get('v32_echo') or {}
+        if echo:
+            lines.append(f"  ECHO CANCELLER: {'ENABLED' if echo.get('enabled') else 'DISABLED'}")
+            if echo.get('detected_delay') is not None:
+                lines.append(f"  ECHO DETECTED DELAY: {echo['detected_delay']} {echo.get('delay_units', '')}")
+            if finite(echo.get('input_power')) and finite(echo.get('output_power')):
+                lines.append(f"  EC BASEBAND POWER: IN {echo['input_power']:.6g} OUT {echo['output_power']:.6g}")
+                lines.append('  Power includes remote signal; not echo-only loss or SNR.')
+        quality = stats.get('v34_data_quality') or {}
+        if finite(stats.get('decision_mse')):
+            lines.append(f"  V.32 DECISION RESIDUAL MSE (EWMA): {stats['decision_mse']:.6g}")
+            lines.append(f"  DECISION SYMBOLS: {stats.get('decision_symbols', 'N/A')}; not SNR or BER.")
+        cost = quality.get('path_cost_per_symbol')
+        if finite(cost):
+            lines.append(f"  V.34 DETECTOR PATH COST / SYMBOL: {cost:.6g}")
+            lines.append('  Squared waveform-grid units; not SNR or bit error rate.')
+            lines.append(f"  QUALITY SYMBOLS: {quality.get('symbols', 'N/A')}   WINDOWS: {quality.get('windows', 'N/A')}")
+        rtp = stats.get('rtp') or {}
+        if rtp:
+            lines.append(f"  RTP PACKETS: RX {rtp.get('received_packets', 'N/A')} DECODED {rtp.get('decoded_packets', 'N/A')}")
+            lines.append(f"  RTP LATE/DUPLICATE: {rtp.get('late_or_duplicate_packets', 'N/A')}   CONCEALED SAMPLES: {rtp.get('concealed_samples', 'N/A')}")
+        measurements = (stats.get('realtime') or {}).get('measurements') or {}
+        for name, label in (('data_rx_seconds', 'RX DSP'), ('data_tx_seconds', 'TX DSP'),
+                            ('data_sender_lateness_seconds', 'TX SENDER LATENESS')):
+            row = measurements.get(name) or {}
+            if finite(row.get('mean')) and finite(row.get('maximum')):
+                lines.append(f"  {label}: MEAN {row['mean']*1000:.3f} ms MAX {row['maximum']*1000:.3f} ms")
+        return lines
+
     def _help_screen(self, stem: str) -> list[str] | None:
         """The AT$ family: reference screens listing what this modem actually implements."""
-        if stem == "":
-            return ["HELP - BASIC COMMANDS:",
-                    "  A     Answer Call                  O     Return Online",
-                    "  Dn    Dial Number (ATDSn stored, ATDL redial)   H     Hang Up",
-                    "  En    Command Echo (0=Off, 1=On)   Qn    Result Codes (0=On, 1=Off)",
-                    "  Vn    Result Format (0=Num, 1=Word)  Xn   Call Progress Level (0-4)",
-                    "  Sr=n  Write Register r           Sr?   Read Register r",
-                    "  In    Information screens (ATI0-ATI12, ATI15-ATI17)",
-                    "  Z     Reset to Stored Profile",
-                    "  $ after a command stem lists its family: AT& AT% ATS ATD AT\\ AT+", ""]
-        if stem == "&":
-            return ["HELP - AMPERSAND COMMANDS:",
-                    "  &Cn   DCD behaviour (stored)       &Dn   DTR drop: 0 ignore 1 command 2 hang up 3 reset",
-                    "  &Gn   V.22 guard tone (0=off, 1=550 Hz, 2=1800 Hz; high-channel answer only)",
-                    "  &Ln   Line type (0=switched, 1=two-wire leased Bell 212A; 2-wire only)",
-                    "  &Kn   Flow control (2,4-6 = XON/XOFF)  &F  Factory defaults",
-                    "  &V    View active and stored settings  &Wn  Write profile n (0-1) to NVRAM",
-                    "  &Zn=s Store phone number n (0-3)", ""]
-        if stem == "S":
-            return ["HELP - S-REGISTERS:",
-                    "  S0   Rings to auto-answer         S7   Carrier wait seconds",
-                    "  S1   Ring counter                 S8   Comma pause seconds",
-                    "  S2   Escape character (43)        S10  Lost-carrier delay 1/10 s",
-                    "  S3   Carriage return (13)         S12  Escape guard time 1/50 s",
-                    "  S4   Line feed (10)               S11,S19,S25,S32,S33,S36,S37 stored only",
-                    "  S5   Backspace (8)",
-                    "  S100-S106 SIP: server, port, user, password, registrar, caller number, contact host",
-                    "  S110-S115 IAX: server, port, user, password, caller number, register",
-                    "  S120 Trunk for ATD (0=SIP, 1=IAX)  - text values: ATSn=text, ATSn? reads", ""]
-        if stem == "%":
-            return ["HELP - PERCENT COMMANDS:",
-                    "  %C0/%C1   V.42bis data compression off / offered", ""]
-        if stem == "\\":
-            return ["HELP - BACKSLASH COMMANDS:",
-                    "  \\N0 raw   \\N1 lab ARQ   \\N2 MNP 2-4   \\N3 V.42 LAPM (auto-reliable, falls back to raw)",
-                    "  \\K0-5 BREAK control: command/no-send, destructive, immediate, or in-sequence",
-                    "  \\Bn Transmit BREAK (V.42: 300 ms; n=0-9 accepted)", ""]
-        if stem == "D":
-            return ["HELP - DIAL MODIFIERS:",
-                    "  0-9 * #   Digits                   T P   Tone / pulse (accepted, ignored)",
-                    "  ,         Pause (S8)               ;     Return to command mode",
-                    "  Sn        Dial stored number n     L     Redial last number", ""]
-        if stem == "+":
-            return ["HELP - EXTENDED COMMANDS:",
-                    "  +MS=mod,auto,min,max   Modulation: B103 B212 V21 V22 V22B V23 V32 V32B V34; auto=1 runs V.8",
-                    "  +MS? +MS=?             Show / list         +GMI +GMM +GMR +GCAP  Identification",
-                    "  +IFC? / =? / =d,d     Local flow control for online data",
-                    "  +BDF? / =? / =9|10|11|12   Bell 212A async character bits (project extension)",
-                    "  +BPAR? / =? / =E|O|M|S   Bell 212A parity (project extension; used at 11/12 bits)",
-                    "  +XID? / =? / =0|1   V.42 XID strict / legacy-peer fallback (project extension)",
-                    "  +V23BC? / =? / =0|1 V.23 75-baud backward channel (project extension)",
-                    "  +V23DIR? / =? / =0|1 Software-loop role (0 caller, 1 answerer)",
-                    "  +ICF? / =? / =format,parity   Command/result framing on POSIX PTY",
-                    "  +IPR? / =? / =rate  DTE baud on POSIX PTY; applies after OK",
-                    ""]
-        return None
+
+        return help_screen(stem)
+
+    @staticmethod
+    def _screen_lines(lines: list[str]) -> list[str]:
+        """80-column human-readable pages, unlimited rows; never truncate values."""
+        out = []
+        for text in lines:
+            text = str(text).encode('ascii', 'backslashreplace').decode('ascii')
+            text = ''.join(c if 32 <= ord(c) < 127 else f'\\x{ord(c):02x}' for c in text)
+            if len(text) <= 80:
+                out.append(text)
+            else:
+                out.extend(textwrap.wrap(text, width=80, subsequent_indent='  ',
+                                         replace_whitespace=False, drop_whitespace=False,
+                                         break_on_hyphens=False))
+        return out
+
 
     def _ati(self, n: int) -> list[str] | None:
+        lines = self._ati_page(n)
+        # ATI9 is a machine packet; preserve its revision bytes and checksum.
+        return lines if lines is None or n == 9 else self._screen_lines(lines)
+
+    def _ati_page(self, n: int) -> list[str] | None:
         title = PRODUCT.title()
+        if n == 666:
+            from modem_easter_egg import SCREEN
+            return ['', *SCREEN, '']
         if n == 0:
             return [PRODUCT_CODE, ""]
         if n == 1:
@@ -2680,11 +2798,7 @@ class AtDce:
         if n == 2:
             return [self._self_test()]                                    # the command's own OK follows
         if n == 3:
-            path = sys.executable if getattr(sys, "frozen", False) else __file__
-            try:
-                built = time.strftime("%m/%d/%y", time.localtime(os.path.getmtime(path)))
-            except OSError:
-                built = "unknown"
+            built = build_timestamp()
             return [f"{title} Software Modem", f"Build date: {built}", f"Revision: {VERSION}", PROJECT_URL, ""]
         if n == 4:
             dial = "ONLINE" if self.online else "ON-HOOK"
@@ -2696,10 +2810,21 @@ class AtDce:
             return out
         if n == 5:
             out = [f"{title} NVRAM Settings...", ""]
+            # A profile managed by the supervisor may omit Hayes fields. On
+            # recall, _load_profile() first restores factory defaults and then
+            # overlays the stored values, so AT&V must display that same
+            # effective profile rather than borrowing the live modem state.
+            factory = AtDce()
+            factory.default_error_control = self.default_error_control
+            factory.default_auto_rate = self.default_auto_rate
+            factory.net_defaults = dict(self.net_defaults)
+            factory._factory_reset()
             for k in sorted(self.profiles):
                 snap = self.profiles[k]
-                out += [f"  Stored Profile {k}:"] + self._register_grid(snap["registers"]) + [""]
-                out += self._setting_lines(snap.get) + [""]
+                registers = dict(factory.registers)
+                registers.update({int(reg): value for reg, value in snap.get("registers", {}).items()})
+                out += [f"  Stored Profile {k}:"] + self._register_grid(registers) + [""]
+                out += self._setting_lines(lambda name: snap.get(name, getattr(factory, name))) + [""]
                 if "net" in snap:
                     out += self._net_lines({int(r): v for r, v in snap["net"].items()}) + [""]
             if not self.profiles:
@@ -2719,9 +2844,9 @@ class AtDce:
             path = sys.executable if getattr(sys, "frozen", False) else __file__
             try:
                 size = f"{os.path.getsize(path) // 1024}KB"
-                built = time.strftime("%b %d %Y", time.localtime(os.path.getmtime(path)))
             except OSError:
-                size, built = "unknown", "unknown"
+                size = "unknown"
+            built = build_timestamp()
             nvram = self.profile_path or "memory only"
             options = "V.34, V.32bis, V.22bis, V.21, V.8, V.42, V.42bis, MNP2-4"
             return [f"{title} Configuration...", "",
@@ -2732,7 +2857,7 @@ class AtDce:
                     f"  Program Size:            {size}",
                     f"  NVRAM:                   {nvram}",
                     f"  Build Date:              {built}",
-                    "  EPROM Checksum:          " + ("Pass" if self._program_checksum() != "UNAVAILABLE" else "Fail"),
+                    "  Program CRC-16:          " + self._program_checksum(),
                     ""] + ["  " + line for line in self.config_lines] + ([""] if self.config_lines else []) + [
                     f"  {PROJECT_URL}", ""]
         if n == 8:
@@ -2745,7 +2870,7 @@ class AtDce:
             out.append("REDIAL: ATDL" + (f" ({self.last_dialed})" if self.last_dialed else " (NOTHING DIALED YET)"))
             return out + ["BLACK LIST SCREEN: EMPTY", ""]
         if n == 9:
-            return [f"{PNP_ID}\\{title} Software Modem", ""]
+            return [pnp_identification(), ""]
         if n == 10:
             return ["DIAL SECURITY ACCOUNT STATUS:", "LOCAL ACCESS:   ENABLED", "AUTOPASSWORD:   DISABLED",
                     "DIALBACK:       DISABLED", "S53 REGISTER MAP: 000", ""]
@@ -2791,7 +2916,7 @@ class AtDce:
         helped = re.fullmatch(r"AT\s*([&%\\+SD]?)\$", command)
         if helped:                                             # AT$, AT&$, ATS$, AT%$, ATD$, AT\$, AT+$: help screens
             screen = self._help_screen(helped.group(1))
-            return b"".join(self._line(t) for t in screen) + self._result("OK") if screen else self._result("ERROR")
+            return b"".join(self._line(t) for t in self._screen_lines(screen)) + self._result("OK") if screen else self._result("ERROR")
         index = 2
         output = bytearray()
         result = "OK"
@@ -3566,6 +3691,7 @@ def run_pty(
         active_outbound: SipOriginateCall | None = None
         iax_dial_pending = False
         iax_media_active = False
+        iax_registered = False      # drives the MR lamp on the IAX path
         online_session: OnlineAudioSession | None = None
         software_loop = None
         arq_session: ArqSession | None = None
@@ -3874,7 +4000,7 @@ def run_pty(
             sip_server.start()
         def apply_network() -> None:
             """Apply active SIP registration and IAX endpoint settings."""
-            nonlocal registration, registration_key, iax_transport, iax_media_socket
+            nonlocal registration, registration_key, iax_transport, iax_media_socket, iax_registered
             net = dce.net
             key = (net[104], net[102], net[103], net[106] or sip_host) if net[104] and net[102] else None
             if key != registration_key:
@@ -3892,6 +4018,9 @@ def run_pty(
             iax_key = (net[110], int(net[111] or 4569), net[112], net[113]) if net[110] and net[112] else None
             current_key = getattr(iax_transport, "config_key", None)
             if iax_key != current_key:
+                # Do not carry the old endpoint's registration into the new
+                # configuration while its REGISTER exchange is pending.
+                iax_registered = False
                 if iax_transport is not None:
                     iax_transport.close()
                     iax_transport = None
@@ -4245,27 +4374,11 @@ def run_pty(
     try:
         while True:
             if control is not None:
-                control.poll(dce, ser, registration, online_session)
-            if hasattr(ser, "update_lines"):
-                dcd_state = getattr(online_session, "dte_dcd_state", None)
-                output_pending = bool(ifc_output_hold or len(escaped) or remote_break_post_data)
-                pending_query = getattr(ser, "output_pending", None)
-                if callable(pending_query):
-                    try:
-                        pending = pending_query()
-                    except OSError:
-                        pending = None
-                    # If a line-capable backend cannot report its queue, keep
-                    # DCD asserted until teardown rather than dropping it
-                    # ahead of bytes that may still be in the hardware queue.
-                    output_pending = output_pending or pending is None or pending > 0
-                elif getattr(ser, "supports_modem_control", False):
-                    output_pending = True
-                dcd = (dcd_state(dce.online, force_on=not dce.carrier_detect,
-                                 output_pending=output_pending)
-                       if dcd_state is not None
-                       else (dce.online or not dce.carrier_detect))
-                ser.update_lines(dcd, dce.incoming_ringing, True,
+
+                control.poll(dce, ser, registration, online_session, iax_registered,
+                             iax_configured=iax_transport is not None)
+                ser.update_lines(dce.online or not dce.carrier_detect, dce.incoming_ringing, True,
+
                                  dce.flow_control in (1,3),
                                  ((online_session.transmitter.pending() if online_session else 0) +
                                   (arq_session.pending_bytes()*10 if arq_session else 0)),
@@ -4310,7 +4423,9 @@ def run_pty(
                     if kind == "incoming":
                         dce.begin_incoming_call({"number": event.get("from", ""), "technology": "IAX2"})
                         dce.notify_incoming_ring()
-                    elif kind == "answered":
+                    elif kind == "registered":
+                        iax_registered = True
+                    if kind == "answered":
                         iax_dial_pending = False
                         iax_media_active = True
                         if online_session is None:
@@ -4333,6 +4448,7 @@ def run_pty(
                         if was_pending or dce.online or dce.outgoing_pending:
                             dce.notify_call_progress("NO CARRIER")
                     elif kind == "register_lost":
+                        iax_registered = False
                         print(f"[iax] registration lost: {event.get('reason', 'unknown')}", file=sys.stderr, flush=True)
                 if online_session is not None and iax_media_active:
                     for ulaw in iax_transport.drain_audio():
@@ -4741,6 +4857,11 @@ def main(serial_backend=None, control=None) -> None:
     if os.environ.get('V34_NATIVE_FEEDBACK')=='1':
         from v34_feedback_native import warmup as warm_feedback
         warm_feedback()
+    if os.environ.get('V34_NATIVE_DECISION_FEEDBACK')=='1':
+        import numpy as np
+        from v34_data import QUARTER
+        from v34_decision_feedback_native import warmup as warm_decision_feedback
+        warm_decision_feedback(np.asarray(QUARTER[:4],dtype=np.complex128))
     if (os.environ.get('V34_TRN_GRADIENT') in ('1','auto')
             or os.environ.get('V34_TRN_CLOCK_NATIVE')=='1'
             or os.environ.get('V34_SYMBOL_INTERP_NATIVE')=='1'):

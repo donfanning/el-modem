@@ -33,7 +33,8 @@ def assemble(executable,root,reports,notices,output,target,version,revision):
         if path.is_symlink() or not path.is_file():raise ValueError('regular explicit package file required: '+str(path))
         files[name]=path.read_bytes()
     add('el-modem.exe' if actual.startswith('windows') else 'el-modem',executable)
-    for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','docs/REDISTRIBUTION.md','packaging/serial/README.md','packaging/serial/build-driver.sh','packaging/serial/serialsim-flow.patch','packaging/serial/COPYING','packaging/com0com/README.md'):add(name,root/name)
+    for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','packaging/serial/README.md','packaging/serial/build-driver.sh','packaging/serial/serialsim-flow.patch','packaging/serial/COPYING','packaging/com0com/README.md'):add(name,root/name)
+    add('docs/REDISTRIBUTION.md',root/'packaging/public/REDISTRIBUTION.md')
     for path in sorted(reports.glob('*')):
         if path.is_file():add('qualification/'+path.name,path)
     for path in sorted(notices.rglob('*')):

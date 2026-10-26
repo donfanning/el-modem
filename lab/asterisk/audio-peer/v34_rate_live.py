@@ -7,6 +7,7 @@ still required before enabling this path by default.
 import copy
 import math
 import sys
+import time
 from collections import deque
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -262,6 +263,8 @@ class ConnectedRate:
                 e.mp_call = copy.deepcopy(self.exchange.peer)
             e._connected_rate_b1 = False
             self.completed.append(dict(tx_rate=p.tx.rate, rx_rate=p.rx.rate,
+                origin='local' if self.exchange.initiating else 'peer',
+                completed_monotonic=time.monotonic(),
                 b1_symbol=e._rx_b1, local_mp=copy.deepcopy(self.exchange.local),
                 peer_mp=copy.deepcopy(self.exchange.peer), qualification=copy.deepcopy(e.rx_qualification)))
             e._ev(f'connected rate exchange complete: tx={p.tx.rate} rx={p.rx.rate}')

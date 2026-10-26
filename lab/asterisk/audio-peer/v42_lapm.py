@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import math
+import time
 
 from collections import deque
 
@@ -353,6 +354,14 @@ class V42Link:
                           disc_tx=0, disc_rx=0, ua_tx=0, ua_rx=0, dm_tx=0, dm_rx=0,
                           bytes_in=0, bytes_out=0, wire_in=0, wire_out=0, wire_acked=0,
                           hdlc_good=0, hdlc_bad=0, t403_expiries=0)
+        # Optional bounded timing trace for bad established LAPM frames. The
+        # default path pays only one environment check at link construction and
+        # one false branch per completed frame; timestamps are taken only for
+        # invalid frames.
+        self._bad_frame_trace_enabled = os.environ.get("V42_LAPM_TRACE") == "1"
+        self._bad_frame_trace_started = time.monotonic() if self._bad_frame_trace_enabled else None
+        self._bad_frame_trace: list[dict] = []
+        self._bad_frame_trace_first_at: float | None = None
         self.bits_sent = 0
         self.cmd_addr = 0x03 if calling_party else 0x01
         self.rsp_addr = 0x01 if calling_party else 0x03
@@ -913,6 +922,8 @@ class V42Link:
             # The invalid bit sequence is not an FCS error. §8.5.4 requires
             # discarding it without taking action; in particular do not
             # trigger the optional REJ response reserved for a bad FCS.
+            if self.state == "lapm":
+                self._trace_bad_frame("invalid_hdlc", frame)
             return
         addressed = ok and len(frame) >= 2 and frame[0] in (self.cmd_addr, self.rsp_addr)
         if ok:
@@ -922,9 +933,52 @@ class V42Link:
             # completed frame whose FCS fails. Other invalid frames do not
             # enter this branch.
             self.stats["fcs_errors"] += 1
+            self._trace_bad_frame("fcs", frame)
             self._need_rej = True
         if addressed and self.state == "lapm" and self._t401_at is None and not self._poll_out:
             self._start_t403()
+
+    def _trace_bad_frame(self, kind: str, frame: bytes | None) -> None:
+        if not self._bad_frame_trace_enabled:
+            return
+        bad_count = self.stats["hdlc_bad"]
+        # Keep the first 16 events, then sample every 16th. This captures onset
+        # and whether an error burst persists without growing with call length.
+        if bad_count > 16 and bad_count % 16:
+            return
+        if len(self._bad_frame_trace) >= 32:
+            return
+        now = time.monotonic() - self._bad_frame_trace_started
+        if self._bad_frame_trace_first_at is None:
+            self._bad_frame_trace_first_at = now
+        self._bad_frame_trace.append(dict(
+            elapsed_seconds=now,
+            kind=kind,
+            bad_count=bad_count,
+            fcs_errors=self.stats["fcs_errors"],
+            hdlc_good=self.stats["hdlc_good"],
+            hdlc_bad=self.stats["hdlc_bad"],
+            t401_expiries=self.stats["t401_expiries"],
+            i_tx=self.stats["i_tx"],
+            i_rx=self.stats["i_rx"],
+            i_resent=self.stats["i_resent"],
+            vs=getattr(self, "vs", None),
+            va=getattr(self, "va", None),
+            vr=getattr(self, "vr", None),
+            frame_header=None if frame is None else frame[:3].hex(),
+            frame_length=None if frame is None else len(frame),
+        ))
+
+    def bad_frame_trace_report(self) -> dict | None:
+        if not self._bad_frame_trace_enabled:
+            return None
+        return dict(
+            enabled=True,
+            elapsed_seconds=(time.monotonic() - self._bad_frame_trace_started),
+            first_bad_elapsed_seconds=self._bad_frame_trace_first_at,
+            sample_policy="first 16 invalid frames, then every 16th; max 32",
+            samples=list(self._bad_frame_trace),
+        )
 
     # -- link state -------------------------------------------------------------------------------------------
     def _reset_link(self) -> None:

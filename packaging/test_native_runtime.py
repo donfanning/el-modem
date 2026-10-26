@@ -14,6 +14,8 @@ class NativeRuntimeTests(unittest.TestCase):
             self.assertEqual(service['command'][service['command'].index(flag)+1],
                              '/tmp/cap/trial'+suffix)
         self.assertEqual(service['environment']['V34_CLOCK_FIT_DUMP'], '/tmp/cap/trial')
+        self.assertEqual(service['environment']['V34_TIMING_MODE'], 'centroid')
+        self.assertEqual(service['environment']['V42_CERROR_RECOVERY'], '0')
 
     def test_profiles_do_not_share_mutable_settings(self):
         first = override('one', '/tmp/cap/one', 'media.test', 'sip.test')['services']['modem']

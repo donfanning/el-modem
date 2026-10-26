@@ -1,12 +1,16 @@
 """Bounds, clock evidence, and PCM parity of optional timing instrumentation."""
 import socket
 import struct
+import time
 import unittest
 import threading
+from types import SimpleNamespace
 from unittest.mock import patch
 from runtime_timing import TimingTrace
 from modem_dce import OnlineAudioSession
+
 from el_modem import worker_passthrough_environment
+from v34_realtime import RealtimeStats
 
 
 class TimingTraceTests(unittest.TestCase):
@@ -16,12 +20,14 @@ class TimingTraceTests(unittest.TestCase):
             'EL_MODEM_TIMING_TRACE': '1',
             'EL_MODEM_UNRELATED_SETTING': 'must-not-leak',
             'V34_EQUALIZER_BACKEND': 'python',
+            'V34_GAP_RECOVERY': '1',
             'V32_NUMPY_METRICS': '1',
         })
         self.assertEqual(settings, {
             'EL_MODEM_WINDOWS_TIMER_RESOLUTION_MS': '1',
             'EL_MODEM_TIMING_TRACE': '1',
             'V34_EQUALIZER_BACKEND': 'python',
+            'V34_GAP_RECOVERY': '1',
             'V32_NUMPY_METRICS': '1',
         })
 
@@ -38,6 +44,47 @@ class TimingTraceTests(unittest.TestCase):
             session.stop()
         self.assertIn(session.link_stats()['windows_timer_resolution']['status'],
                       ('released','unsupported_platform'))
+    def test_receive_timing_trace_separates_thread_cpu_from_wall_time(self):
+        session=object.__new__(OnlineAudioSession)
+        session._rx_deaf_samples=0
+        session._bell212_char_bits=10
+        session._capture=None
+        session._v22=SimpleNamespace(connected=False)
+        session._rx_arrival=None
+        session._rtp_jitter_samples=0
+        session._rx_context={'sequence':7}
+        session._dsp_capture_pending=False
+        def delayed_receive(pcm):
+            time.sleep(.03)
+            return b''
+        session.receiver=SimpleNamespace(feed_pcm=delayed_receive)
+        session._v42_probe=False
+        session._negotiator=None
+        session._rx_switched=True
+        session.realtime=RealtimeStats()
+        session.timing_trace=TimingTrace()
+
+        self.assertEqual(session._receive_pcm(b'\xff'*320),b'')
+
+        event=session.timing_trace.report()['events']['rx_processing']['first']
+        self.assertEqual(event['row']['sequence'],7)
+        self.assertGreaterEqual(event['row']['thread_cpu_seconds'],0.0)
+        self.assertGreater(event['score'],0.02)
+        self.assertLess(event['row']['thread_cpu_seconds'],event['score']/2)
+
+    def test_link_stats_keeps_trace_when_automode_has_switched_from_v22(self):
+        sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        self.addCleanup(sock.close)
+        session=OnlineAudioSession(sock,('127.0.0.1',9),'originate','answer',line_mode='chain')
+        session._auto=SimpleNamespace(state='v34')
+        session.timing_trace=TimingTrace()
+        session.timing_trace.threshold('rx_processing',.025,dict(sequence=17))
+
+        stats=session.link_stats()
+
+        self.assertIn('timing_trace',stats)
+        self.assertEqual(stats['timing_trace']['events']['rx_processing']['worst']['row']['sequence'],17)
+
 
     def test_watchdog_captures_live_blocked_stage_and_preserves_packet(self):
         sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)

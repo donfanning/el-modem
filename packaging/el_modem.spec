@@ -5,12 +5,14 @@ import hashlib
 import importlib.util
 import json
 import os
+import runpy
 import sys
 import tempfile
 from pathlib import Path
 
 root = Path(SPECPATH).parent
 source = root / 'lab' / 'asterisk'
+compiled_at_utc = runpy.run_path(str(source / 'modem_build.py'))['compile_timestamp']()
 modules = {p.stem: p for p in list(source.glob('*.py')) + list((source / 'audio-peer').glob('*.py')) + list((root / 'packaging').glob('*.py'))}
 reachable = set()
 pending = ['el_modem']
@@ -49,7 +51,7 @@ if library_override:
 iax_extension = importlib.util.find_spec('el_modem_iax')
 if iax_extension is None or not iax_extension.origin:
     raise RuntimeError('the native IAX2 extension is required; build/install native/iax before packaging')
-manifest.write_text(json.dumps(dict(schema=1, local_modules={
+manifest.write_text(json.dumps(dict(schema=1, compiled_at_utc=compiled_at_utc, local_modules={
     str(modules[name].relative_to(root)): hashlib.sha256(modules[name].read_bytes()).hexdigest()
     for name in sorted(reachable)}, specification_sha256=hashlib.sha256(
         (root / 'packaging' / 'el_modem.spec').read_bytes()).hexdigest(),

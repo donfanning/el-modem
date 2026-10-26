@@ -37,7 +37,9 @@ def _centroid(h,span):
     return moment/(energy+1e-12)-span
 
 
-feedback=njit(cache=True)(_feedback) if njit else _feedback
+# This kernel mutates only the caller-owned tap array. Releasing the GIL lets
+# the media sender thread run while the fused per-symbol update executes.
+feedback=njit(cache=True,nogil=True)(_feedback) if njit else _feedback
 window_energy=njit(cache=True)(_window_energy) if njit else _window_energy
 centroid=njit(cache=True)(_centroid) if njit else _centroid
 

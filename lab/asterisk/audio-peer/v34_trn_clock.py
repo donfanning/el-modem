@@ -13,6 +13,30 @@ MAX_ROWS = 4096
 MIN_SLOPE_PER_1000 = 0.05
 
 
+def fit_validation_ranges(end):
+    """Return (fit_start, fit_stop, hold_start, hold_stop) for a TRN capture.
+
+    The normal layout keeps the established late fit/holdout windows. The
+    recorded short Phase-4 TRN does not contain enough rows for that layout.
+    For shorter captures, use a middle fit and final holdout of up to 500
+    symbols each, with 100-symbol warm-up/end guards and at least a 150-symbol
+    separation. The independent PCM-support check in after_feed() remains
+    authoritative; this index-space gap alone is not treated as proof of
+    independence.
+    """
+    if end >= 2400:
+        return end-1600, end-1100, end-600, end-100
+    # With shorter training, retain a 150-symbol separation and 100-symbol
+    # warm-up/end guards, reducing both blocks together only when necessary.
+    # Below 300 rows per block the four-parameter fit and block validation are
+    # too weak to use as an automatic correction.
+    count = min(500, (end-350)//2)
+    if count >= 300:
+        fit_start = max(100, end-(2*count+350))
+        return fit_start, fit_start+count, end-100-count, end-100
+    raise ValueError('insufficient guarded TRN')
+
+
 def decide(improvement, bounds, slope_per_symbol):
     """TRN-only acceptance of the fitted clock; returns (accepted, reason).
 
@@ -129,13 +153,16 @@ class TrnClock:
         started = time.monotonic()
         try:
             end = receiver.trn_end
-            if end < 2400:
-                raise ValueError('insufficient guarded TRN')
-            rows = [r for r in self.rows if end-1600 <= r['index'] < end-100]
+            try:
+                fit_start, fit_stop, hold_start, hold_stop = fit_validation_ranges(end)
+            except ValueError as error:
+                raise ValueError(f'{error} (end={end}, captured={len(self.rows)} rows)') from error
+            rows = [r for r in self.rows if fit_start <= r['index'] < hold_stop]
             ids = np.array([r['index'] for r in rows])
-            fit, hold = ids < end-1100, ids >= end-600
-            if (not np.array_equal(ids[fit], np.arange(end-1600, end-1100))
-                    or not np.array_equal(ids[hold], np.arange(end-600, end-100))):
+            fit = (ids >= fit_start) & (ids < fit_stop)
+            hold = (ids >= hold_start) & (ids < hold_stop)
+            if (not np.array_equal(ids[fit], np.arange(fit_start, fit_stop))
+                    or not np.array_equal(ids[hold], np.arange(hold_start, hold_stop))):
                 raise ValueError('missing guarded TRN symbols')
             source, positions, rotation, dt, original = [np.asarray([r[k] for r in rows])
                 for k in ('source', 'positions', 'rotation', 'dt', 'window')]
@@ -163,7 +190,7 @@ class TrnClock:
             result.update(accepted=accepted, accepted_by=accepted_by,
                           native_windows=os.environ.get('V34_TRN_CLOCK_NATIVE') == '1',
                           validation_improvement=improvement, benefit_block_bootstrap_1_99=bounds,
-                          fit_symbols=[end-1600,end-1100], validation_symbols=[end-600,end-100],
+                          fit_symbols=[fit_start,fit_stop], validation_symbols=[hold_start,hold_stop],
                           pcm_support_gap_samples=gap, uses_b1_symbols=False, uses_b1_errors=False)
             self.model, self.taps = result, candidate_h
         except (ValueError, np.linalg.LinAlgError) as error:

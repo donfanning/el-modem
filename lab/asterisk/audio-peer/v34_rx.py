@@ -7,6 +7,8 @@ Block oriented (works on a buffer of 8 kHz audio); the streaming caller calls it
 from __future__ import annotations
 
 import math
+import os
+import time
 from collections import deque
 from functools import lru_cache
 
@@ -19,14 +21,50 @@ from v34_transport import FeedbackValidity
 FS = 8000
 
 
-def phase4_equalizer_span() -> int:
-    """Opt-in longer answer-side training window; default remains qualified span.
+class _SymbolEqStepProfile:
+    """Bounded sampled timings for optional equalizer-stage attribution."""
+    _STAGES = ('window', 'pre_projection', 'projection', 'projection_dot',
+               'derotation', 'decision', 'feedback', 'timing_state', 'total')
 
-    Span 24 reduces hardware TRN/B1 error but does not yet decode hardware B1.
-    It needs sustained SIP qualification before replacing the default.
+    def __init__(self, capacity=4096):
+        self.capacity = capacity
+        self.rows = {name: deque(maxlen=capacity) for name in self._STAGES}
+        self.count = 0
+
+    def add(self, elapsed_ns):
+        self.count += 1
+        for name, value in zip(self._STAGES, elapsed_ns):
+            self.rows[name].append(value)
+
+    def report(self):
+        result = {'sample_count': self.count, 'sample_every_symbols': 256,
+                  'capacity': self.capacity, 'stages': {}}
+        for name, samples in self.rows.items():
+            ordered = sorted(samples)
+            if not ordered:
+                continue
+            n = len(ordered)
+            result['stages'][name] = {
+                'mean_us': sum(ordered) / n / 1000.0,
+                'p50_us': ordered[int(.50 * (n - 1))] / 1000.0,
+                'p95_us': ordered[int(.95 * (n - 1))] / 1000.0,
+                'p99_us': ordered[int(.99 * (n - 1))] / 1000.0,
+                'max_us': ordered[-1] / 1000.0,
+                'retained_samples': n,
+            }
+        return result
+
+
+def phase4_equalizer_span() -> int:
+    """Qualified Phase 4 equalizer support; span 12 remains a rollback option.
+
+    Span 24 reduced B1 errors on retained hardware captures, passed the local
+    independent-peer matrix in both roles at 24K and 33.6K, and showed no
+    measurable DSP-time increase. Keep the shorter span selectable for
+    diagnostics and rollback with ``V34_PHASE4_EQ_SPAN=12``.
     """
     import os
-    span = int(os.environ.get('V34_PHASE4_EQ_SPAN', '12'))
+    span = int(os.environ.get('V34_PHASE4_EQ_SPAN', '24'))
     if span not in (12, 24):
         raise ValueError('V34_PHASE4_EQ_SPAN must be 12 or 24')
     return span
@@ -742,6 +780,9 @@ class SymbolEq:
         self._rust_feedback=arithmetic.feedback if arithmetic is not None else None
         self._rust_centroid=arithmetic.centroid if arithmetic is not None else None
         self.arithmetic_backend='rust' if arithmetic is not None else 'legacy'
+        if (os.environ.get('V34_NATIVE_DECISION_FEEDBACK')=='1'
+                and self._rust_feedback is not None):
+            raise ValueError('V34_NATIVE_DECISION_FEEDBACK requires the legacy equalizer backend')
         # Clock correction can require a fresh sinc window every symbol.
         # Preserve the NumPy reference/default; warm this opt-in in the DCE.
         self._native_interp = False
@@ -759,6 +800,22 @@ class SymbolEq:
         # can keep the sampling window centred without the tap/phase gains walking into divergence.
         self.adapt_nlms = True
         self.slips = 0
+        # Rare-event trace for diagnosing large timing corrections. Disabled by
+        # default; when enabled it records only actual half-symbol slips.
+        self._timing_slip_trace = (deque(maxlen=256)
+                                   if os.environ.get('V34_TIMING_SLIP_TRACE') == '1'
+                                   else None)
+        self._timing_state_trace = (deque(maxlen=512)
+                                    if os.environ.get('V34_TIMING_SLIP_TRACE') == '1'
+                                    else None)
+        self._timing_anomaly_trace = (deque(maxlen=64)
+                                      if os.environ.get('V34_TIMING_SLIP_TRACE') == '1'
+                                      else None)
+        self._timing_low_power_trace = (deque(maxlen=64)
+                                       if os.environ.get('V34_TIMING_SLIP_TRACE') == '1'
+                                       else None)
+        self._timing_previous_tap_energy = None
+        self._timing_data_window_reference = None
         self.kff = float(os.environ.get('V34_KFF', 0.0))
         self.cf = 0.0
         self.cdead = float(os.environ.get('V34_CDEAD', 0.15))
@@ -783,8 +840,13 @@ class SymbolEq:
         # Opt-in: keep the batched interpolation grid valid while the timing NCO moves at a learned velocity.
         self._traj = os.environ.get('V34_TRAJECTORY_GRID') == '1'
         self._native_feedback = os.environ.get('V34_NATIVE_FEEDBACK') == '1'
+        self._native_decision_feedback = os.environ.get('V34_NATIVE_DECISION_FEEDBACK') == '1'
+        if self._native_decision_feedback and not self._native_feedback:
+            raise ValueError('V34_NATIVE_DECISION_FEEDBACK requires V34_NATIVE_FEEDBACK=1')
         self._native_feedback_kernel = None
         self._native_window_energy = None
+        self._step_profile = (_SymbolEqStepProfile()
+                              if os.environ.get('V34_EQ_STEP_PROFILE') == '1' else None)
         self._g_vel = 0.0
         self._dgrid = None
         self._g_traj = False
@@ -797,9 +859,14 @@ class SymbolEq:
         self._tj_dev = 0.0
         self._g_origin = 0
         self._g_zlen = -1
-        gap_mode=os.environ.get('V34_GAP_FEEDBACK','0')
-        erasure_mode=os.environ.get('V34_GAP_TRELLIS_ERASURE','0')
-        traceback_hold=os.environ.get('V34_GAP_TRELLIS_HOLD','0')
+        from v34_transport import gap_recovery_enabled
+        combined_recovery=gap_recovery_enabled()
+        if combined_recovery:
+            gap_mode,erasure_mode,traceback_hold='hold','1','1'
+        else:
+            gap_mode=os.environ.get('V34_GAP_FEEDBACK','0')
+            erasure_mode=os.environ.get('V34_GAP_TRELLIS_ERASURE','0')
+            traceback_hold=os.environ.get('V34_GAP_TRELLIS_HOLD','0')
         if erasure_mode not in ('0','1'):
             raise ValueError('V34_GAP_TRELLIS_ERASURE must be 0 or 1')
         if traceback_hold not in ('0','1'):
@@ -1001,6 +1068,12 @@ class SymbolEq:
         energy=abs(self.h)**2
         self.c0=float(np.dot(np.arange(self.L),energy)/max(float(energy.sum()),1e-30)-self.span)
         self.cf=0.
+        if self._timing_anomaly_trace is not None:
+            # Ignore the expected B1-refinement tap change; measure growth from
+            # the stable data-phase starting solution instead.
+            self._timing_previous_tap_energy = float(energy.sum())
+            initial_window = self.window(self.k)
+            self._timing_data_window_reference = float(np.vdot(initial_window, initial_window).real)
         if self.data_timing_mode == 'data-gradient':
             self.timing_mode='gradient'
             if not precoded:self.kp,self.ki=max(self.kp,.03),max(self.ki,5e-5)
@@ -1013,9 +1086,37 @@ class SymbolEq:
         return int(last)
 
     def step(self, desired: complex | None = None, decide=None, *, _window=None) -> complex:
+        profile = self._step_profile
+        sampled = profile is not None and self.k % 256 == 0
+        sampled_timing_state = self._timing_state_trace is not None and self.k % 1024 == 0
+        t0 = time.perf_counter_ns() if sampled else 0
         # The diagnostic observer may supply the window it just obtained for
         # this step, before any adaptation. Avoid interpolating it twice.
         w = self.window(self.k) if _window is None else _window
+        if (self._timing_low_power_trace is not None and
+                self._timing_data_window_reference is not None):
+            input_power = float(np.vdot(w, w).real)
+            if input_power < self._timing_data_window_reference * InputPowerGuard.ENTER_RATIO:
+                R = self.R
+                center = float(R.lag + (R.LEAD + self.k + R.delay) * R.spl + self.dt)
+                positions = center + (np.arange(self.L) - self.span) * R.spl / 2
+                origin = int(getattr(R, '_bb_origin', 0))
+                direct_window = self._interpolate(positions - origin)
+                direct_power = float(np.vdot(direct_window, direct_window).real)
+                lo = max(0, int(math.floor(positions[0] - origin)))
+                hi = min(len(R._z), int(math.ceil(positions[-1] - origin)) + 1)
+                buffered = R._z[lo:hi]
+                self._timing_low_power_trace.append(dict(
+                    symbol=int(self.k), input_window_power=input_power,
+                    data_reference_window_power=float(self._timing_data_window_reference),
+                    sample_position=center, window_sample_start=float(positions[0]),
+                    window_sample_end=float(positions[-1]), baseband_origin=origin,
+                    baseband_sample_end=origin + len(R._z),
+                    buffer_slice_power=float(np.vdot(buffered, buffered).real),
+                    direct_interpolated_power=direct_power,
+                    live_vs_direct_window_relative_error=float(np.linalg.norm(w-direct_window) /
+                        math.sqrt(max(input_power,direct_power,1e-30)))))
+        t1 = time.perf_counter_ns() if sampled else 0
         power = None
         held = False
         if self._input_guard is not None:
@@ -1045,13 +1146,29 @@ class SymbolEq:
         if hold_timing:self._gradient_rows=[]
         tracking = self.adapt and not held and not hold_carrier
         tracking_timing = self.adapt and not held and not hold_timing
+        t2 = time.perf_counter_ns() if sampled else 0
         y = complex(w @ self.h)
+        t3_dot = time.perf_counter_ns() if sampled else 0
         yr = y * complex(math.cos(-self.phase), math.sin(-self.phase))
-        d = desired if desired is not None else decide(yr)
+        t3 = time.perf_counter_ns() if sampled else 0
+        fused_decision_feedback=False
+        owner=getattr(decide,'__self__',None) if desired is None and decide is not None else None
+        gradient_update=(tracking_timing and self.timing_mode=='gradient' and self.k%2==0)
+        if (desired is None and tracking and self.adapt_nlms and self._native_decision_feedback
+                and not gradient_update and owner is not None
+                and hasattr(owner,'decide_and_feedback')):
+            known_energy=-1.0 if power is None else power
+            d,self.phase,self.freq=owner.decide_and_feedback(self,w,yr,self.phase,self.freq,known_energy)
+            fused_decision_feedback=True
+        else:
+            d = desired if desired is not None else decide(yr)
+        t4 = time.perf_counter_ns() if sampled else 0
         if tracking_timing and self.timing_mode == 'gradient' and self.k % 2 == 0:
             self._gradient_timing(yr,d)
         if tracking and self.adapt_nlms:
-            if self._rust_feedback is not None:
+            if fused_decision_feedback:
+                pass
+            elif self._rust_feedback is not None:
                 self.phase,self.freq=self._rust_feedback(self.h,w,yr,d,self.mu,self.kp,self.ki,self.phase,self.freq)
             elif self._native_feedback:
                 if self._native_feedback_kernel is None:
@@ -1070,6 +1187,43 @@ class SymbolEq:
                     self.phase += self.kp * perr + self.freq
         elif not tracking:
             self.phase += self.freq                          # keep rotating at the learned carrier offset
+        decision_error = (float(abs(d - yr) ** 2 / max(abs(d) ** 2, 1e-30))
+                          if sampled_timing_state else None)
+        if self._timing_anomaly_trace is not None:
+            tap_energy = float(np.vdot(self.h, self.h).real)
+            previous_energy = self._timing_previous_tap_energy
+            if (previous_energy is not None and
+                    (not math.isfinite(tap_energy) or
+                     (previous_energy > 1e-30 and tap_energy > previous_energy * 10.0))):
+                input_power = float(np.vdot(w, w).real)
+                R = self.R
+                center = float(R.lag + (R.LEAD + self.k + R.delay) * R.spl + self.dt)
+                first = center - self.span * R.spl / 2
+                last = center + (self.L - 1 - self.span) * R.spl / 2
+                origin = int(getattr(R, '_bb_origin', 0))
+                positions = center + (np.arange(self.L) - self.span) * R.spl / 2
+                direct_window = self._interpolate(positions - origin)
+                direct_power = float(np.vdot(direct_window, direct_window).real)
+                compare_power = max(input_power, direct_power, 1e-30)
+                lo = max(0, int(math.floor(first - origin)))
+                hi = min(len(R._z), int(math.ceil(last - origin)) + 1)
+                buffered = R._z[lo:hi]
+                self._timing_anomaly_trace.append(dict(
+                    symbol=int(self.k), reason='tap_energy_jump',
+                    previous_tap_energy=float(previous_energy), tap_energy=tap_energy,
+                    input_window_power=input_power, output_power=float(abs(yr) ** 2),
+                    desired_power=float(abs(d) ** 2),
+                    decision_error_normalized=float(abs(d - yr) ** 2 / max(abs(d) ** 2, 1e-30)),
+                    carrier_phase=float(self.phase), carrier_frequency=float(self.freq),
+                    timing_offset_samples=float(self.dt), timing_velocity=float(self.vel),
+                    sample_position=center, window_sample_start=first, window_sample_end=last,
+                    baseband_origin=origin, baseband_sample_end=origin + len(R._z),
+                    buffer_slice_power=float(np.vdot(buffered, buffered).real),
+                    direct_interpolated_power=direct_power,
+                    live_vs_direct_window_relative_error=float(
+                        np.linalg.norm(w - direct_window) / math.sqrt(compare_power))))
+            self._timing_previous_tap_energy = tap_energy
+        t5 = time.perf_counter_ns() if sampled else 0
         if tracking_timing:
             # Timing recovery must keep running even when the NLMS tap update is frozen, otherwise a
             # sampling-clock offset drifts the window off the symbol over a long 4-point run.
@@ -1084,7 +1238,28 @@ class SymbolEq:
         self.dt += self.vel
         self.dt += self.kff * (self.freq * R.baud / (2 * math.pi)) / R.fc * R.spl
         if before is not None:transport.record(before,self,transport_held)
+        if sampled_timing_state:
+            energy = np.abs(self.h) ** 2
+            total_energy = max(float(energy.sum()), 1e-30)
+            centroid = float(np.dot(np.arange(self.L), energy) / total_energy - self.span)
+            edge = max(1, self.L // 4)
+            self._timing_state_trace.append(dict(
+                symbol=int(self.k), tap_centroid=centroid,
+                centroid_offset=float(centroid - (self.c0 or 0.0)),
+                filtered_centroid=float(self.cf), tap_energy=total_energy,
+                left_edge_energy_fraction=float(energy[:edge].sum() / total_energy),
+                right_edge_energy_fraction=float(energy[-edge:].sum() / total_energy),
+                decision_error_normalized=decision_error,
+                timing_offset_samples=float(self.dt), timing_velocity=float(self.vel),
+                grid_shift=int(self._g_shift), carrier_phase=float(self.phase),
+                carrier_frequency=float(self.freq),
+                sample_position=float(self.R.lag +
+                    (self.R.LEAD + self.k + self.R.delay) * self.R.spl + self.dt)))
+        t6 = time.perf_counter_ns() if sampled else 0
         self.k += 1
+        if sampled:
+            profile.add((t1-t0, t2-t1, t3-t2, t3_dot-t2, t3-t3_dot,
+                         t4-t3, t5-t4, t6-t5, t6-t0))
         return yr
 
     def _gradient_derivative(self) -> complex:
@@ -1141,28 +1316,53 @@ class SymbolEq:
         else:
             e = np.abs(self.h) ** 2
             c = float(np.sum(np.arange(self.L) * e) / (np.sum(e) + 1e-12)) - self.span
+        tap_centroid = float(c)
         if self.c0 is None:
             self.c0 = c                                       # the trained taps define the reference position
         c -= self.c0
+        centroid_offset = float(c)
         self.cf += self.calpha * (c - self.cf)                # the instantaneous centroid is noisy: low-pass it
+        filtered_centroid = float(self.cf)
         c = self.cf
         dead = self.cdead                                     # dead band: stay quiet unless the taps really moved
         c = 0.0 if abs(c) <= dead else c - math.copysign(dead, c)
+        deadband_error = float(c)
+        dt_before, vel_before = self.dt, self.vel
         half = self.R.spl / 2
         # c > 0 means the taps reach later than the window centre; the window must then move EARLIER (the equalizer
         # taps shift to follow the signal, and the loop pulls the window after them): negative feedback needs this sign
         self.vel -= self.kti * c * half
         self.dt -= self.ktp * c * half * 4                     # velocity advances every symbol
         if c > 1.5:
+            shift_before = self._g_shift
             self.h = np.concatenate([self.h[1:], [0j]])
             self.dt += half
             self._g_shift += 1
             self.slips += 1
+            if self._timing_slip_trace is not None:
+                self._timing_slip_trace.append(dict(
+                    symbol=int(self.k), direction='early', tap_centroid=tap_centroid,
+                    centroid_offset=centroid_offset, filtered_centroid=filtered_centroid,
+                    deadband_error=deadband_error, dt_before=float(dt_before),
+                    dt_after=float(self.dt), velocity_before=float(vel_before),
+                    velocity_after=float(self.vel), grid_shift_before=int(shift_before),
+                    grid_shift_after=int(self._g_shift), carrier_phase=float(self.phase),
+                    carrier_frequency=float(self.freq)))
         elif c < -1.5:
+            shift_before = self._g_shift
             self.h = np.concatenate([[0j], self.h[:-1]])
             self.dt -= half
             self._g_shift -= 1
             self.slips += 1
+            if self._timing_slip_trace is not None:
+                self._timing_slip_trace.append(dict(
+                    symbol=int(self.k), direction='late', tap_centroid=tap_centroid,
+                    centroid_offset=centroid_offset, filtered_centroid=filtered_centroid,
+                    deadband_error=deadband_error, dt_before=float(dt_before),
+                    dt_after=float(self.dt), velocity_before=float(vel_before),
+                    velocity_after=float(self.vel), grid_shift_before=int(shift_before),
+                    grid_shift_after=int(self._g_shift), carrier_phase=float(self.phase),
+                    carrier_frequency=float(self.freq)))
 
 
 def decide4(y: complex) -> complex:
@@ -1173,11 +1373,30 @@ def decide4(y: complex) -> complex:
 
 _C16_Q = [complex(*q) for q in tx.C16]                     # the four quarter-superconstellation points, unrotated
 # The 16 points in (quarter, rotation) order, q outer / n inner, so argmin's first-wins tie-break matches a
-# plain double loop. Slicing is on the per-symbol path (decide16 is the equalizer's decision callback), so the
-# nearest-point search is done with array arithmetic rather than 16 Python-level abs() calls.
+# plain double loop. The fixed constellation is also kept below as Python complex
+# values for the low-allocation per-symbol nearest-point scan.
 _C16_PTS = np.array([_C16_Q[q] * tx.ROT_CW[n] for q in range(4) for n in range(4)], dtype=np.complex128)
+_C16_PTS_TUPLE = tuple(complex(point) for point in _C16_PTS)
 _C16_QN = [(q, n) for q in range(4) for n in range(4)]
 _C16_MEAN_SQ = float(np.mean(np.abs(_C16_PTS) ** 2))         # the scale decide16 assumes (10.0)
+
+
+def _nearest16_index(y: complex) -> int:
+    """Return the first nearest point, matching NumPy argmin's tie rule.
+
+    This runs once or twice per received symbol. Building a NumPy temporary and
+    dispatching abs/argmin costs more here than a fixed 16-point scalar scan.
+    Keep the points as Python complex values so the loop avoids NumPy scalar
+    arithmetic as well.
+    """
+    best_index = 0
+    best_distance = abs(_C16_PTS_TUPLE[0] - y)
+    for index in range(1, 16):
+        distance = abs(_C16_PTS_TUPLE[index] - y)
+        if distance < best_distance:  # strict: preserve first-wins ties
+            best_index = index
+            best_distance = distance
+    return best_index
 
 
 def slice16(y: complex) -> tuple[int, int]:
@@ -1185,13 +1404,13 @@ def slice16(y: complex) -> tuple[int, int]:
 
     The 16 points are C16[q] for q in 0..3, each rotated by 0/90/180/270 degrees. Every symbol is read as one of
     those (q, n) pairs, so the slicer returns the closest one."""
-    k = int(np.argmin(np.abs(_C16_PTS - y)))
+    k = _nearest16_index(y)
     return _C16_QN[k]
 
 
 def decide16(y: complex) -> complex:
     """Nearest point of the 16-point training constellation (labels 0..3, each rotated by multiples of 90 degrees)."""
-    return _C16_PTS[int(np.argmin(np.abs(_C16_PTS - y)))]
+    return _C16_PTS_TUPLE[_nearest16_index(y)]
 
 
 class Phase4Receiver:
