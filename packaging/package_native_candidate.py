@@ -34,7 +34,12 @@ def assemble(executable,root,reports,notices,output,target,version,revision):
         files[name]=path.read_bytes()
     add('el-modem.exe' if actual.startswith('windows') else 'el-modem',executable)
     for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','packaging/serial/README.md','packaging/serial/build-driver.sh','packaging/serial/serialsim-flow.patch','packaging/serial/COPYING','packaging/com0com/README.md'):add(name,root/name)
-    add('docs/REDISTRIBUTION.md',root/'packaging/public/REDISTRIBUTION.md')
+    # The private tree keeps the reviewed template under packaging/public/;
+    # the curated public export materializes it at docs/REDISTRIBUTION.md.
+    redistribution = root/'docs/REDISTRIBUTION.md'
+    if not redistribution.is_file():
+        redistribution = root/'packaging/public/REDISTRIBUTION.md'
+    add('docs/REDISTRIBUTION.md',redistribution)
     for path in sorted(reports.glob('*')):
         if path.is_file():add('qualification/'+path.name,path)
     for path in sorted(notices.rglob('*')):

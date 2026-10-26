@@ -10,7 +10,7 @@ from package_native_candidate import assemble
 class CandidatePackageTests(unittest.TestCase):
     def fixture(self,root):
         (root/'packaging').mkdir();(root/'packaging/el_modem.spec').write_bytes(b'spec')
-        for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','packaging/public/REDISTRIBUTION.md','packaging/serial/README.md','packaging/serial/build-driver.sh','packaging/serial/serialsim-flow.patch','packaging/serial/COPYING','packaging/com0com/README.md'):
+        for name in ('LICENSE','NOTICE','CREDITS.md','docs/AT_COMMANDS.md','docs/DESKTOP.md','docs/SERIAL.md','docs/REDISTRIBUTION.md','packaging/public/REDISTRIBUTION.md','packaging/serial/README.md','packaging/serial/build-driver.sh','packaging/serial/serialsim-flow.patch','packaging/serial/COPYING','packaging/com0com/README.md'):
             p=root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('original documentation')
         exe=root/'el-modem';exe.write_bytes(b'executable')
         reports=root/'reports';reports.mkdir();notices=root/'notices';notices.mkdir()
@@ -45,5 +45,15 @@ class CandidatePackageTests(unittest.TestCase):
                 with self.assertRaises(ValueError):pack(root/'changed.zip')
                 exe.write_bytes(b'executable');(root/'NOTICE').write_bytes(b'changed source')
                 with self.assertRaises(ValueError):pack(root/'changed-source.zip')
+
+    def test_private_tree_redistribution_template_fallback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);exe,reports,notices=self.fixture(root)
+            (root/'docs/REDISTRIBUTION.md').unlink()
+            with patch('package_native_candidate.platform.system',return_value='Linux'),patch('package_native_candidate.platform.machine',return_value='x86_64'):
+                archive=root/'fallback.zip'
+                assemble(exe,root,reports,notices,archive,'linux-x86_64','0.1.0-rc1','a'*40)
+                with zipfile.ZipFile(archive) as data:
+                    self.assertEqual(data.read('el-modem-0.1.0-rc1-linux-x86_64/docs/REDISTRIBUTION.md'),b'original documentation')
 
 if __name__=='__main__':unittest.main()
