@@ -2,9 +2,12 @@
 """Controlled symbol-domain AWGN development probe; not independent live gates.
 
 Uses actual data mapping/trellis and expected transmit points only for scoring.
-The monitor receives only the detector's own accumulated cost. SNR is referred
-to this generated burst's mean complex-symbol power, before noise. No frontend,
-RTP, timing drift, nonlinear projection or precoder is exercised here.
+SNR is known injected symbol-domain AWGN referred to this generated burst's
+mean complex-symbol power, before noise. Reports nearest-point slicer and
+trellis outcomes against ground truth plus detector path-cost/survivor-gap
+statistics. This checks whether those diagnostics track controlled quality;
+it is not a live-SNR estimator. No frontend, RTP, timing drift, nonlinear
+projection or precoder is exercised here.
 """
 import argparse
 import json
@@ -32,6 +35,7 @@ def measure(rate, snr_db, seed, frames, backend):
     noise = rng.normal(0, sigma, len(signal)) + 1j*rng.normal(0, sigma, len(signal))
     observed = signal + noise
     detector = TrellisDetector(4*tx.M*2**tx.q, tx.J, tx.P, backend=backend)
+    detector.emit_metrics = True
     monitor = DataQuality(detector, SimpleNamespace(rate=rate, nonlinear=False), baud,
                           min_symbols=len(signal))
     for i in range(0, len(signal), 2):
@@ -40,11 +44,31 @@ def measure(rate, snr_db, seed, frames, backend):
     monitor.sample()
     detector.flush()
     decoded = np.asarray([s for pair in detector.decided for s in pair])
-    errors = int(np.count_nonzero(abs(decoded - signal) > 1e-9))
+    slicer = detector.pts[np.argmin(abs(observed[:, None] - detector.pts[None, :])**2, axis=1)]
+    trellis_errors = int(np.count_nonzero(abs(decoded - signal) > 1e-9))
+    slicer_errors = int(np.count_nonzero(abs(slicer - signal) > 1e-9))
+    disagreements = int(np.count_nonzero(abs(slicer - decoded) > 1e-9))
+    gaps = np.asarray([row['survivor_gap'] for row in detector.decided_metrics], dtype=float)
+    interval_errors = np.any((abs(decoded - signal) > 1e-9).reshape(-1, 2), axis=1)
+    if len(gaps) != len(interval_errors):
+        raise RuntimeError('survivor metrics do not align with decoded trellis intervals')
+    def gap_summary(values):
+        if not len(values):
+            return dict(intervals=0, p10=None, median=None, p90=None)
+        return dict(intervals=int(len(values)), p10=float(np.percentile(values, 10)),
+                    median=float(np.median(values)), p90=float(np.percentile(values, 90)))
     return dict(rate=rate, snr_db=snr_db, seed=seed, symbols=len(signal),
                 transmit_power_grid_squared=power, injected_noise_grid_squared=float(np.mean(abs(noise)**2)),
-                symbol_errors=errors, symbol_error_fraction=errors/len(signal),
-                quality=monitor.report()['path_cost_per_symbol'])
+                slicer_symbol_errors=slicer_errors,
+                slicer_symbol_error_fraction=slicer_errors/len(signal),
+                trellis_symbol_errors=trellis_errors,
+                trellis_symbol_error_fraction=trellis_errors/len(signal),
+                slicer_trellis_disagreements=disagreements,
+                slicer_trellis_disagreement_fraction=disagreements/len(signal),
+                survivor_gap_per_interval=gap_summary(gaps),
+                survivor_gap_correct_intervals=gap_summary(gaps[~interval_errors]),
+                survivor_gap_error_intervals=gap_summary(gaps[interval_errors]),
+                path_cost_per_symbol=monitor.report()['path_cost_per_symbol'])
 
 
 def main():

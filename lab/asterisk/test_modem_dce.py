@@ -57,6 +57,13 @@ SCRIPT = Path(__file__).with_name("modem_dce.py")
 
 
 class EnvironmentFlagTests(unittest.TestCase):
+    def test_escape_hold_reports_bytes_dropped_at_its_bound(self):
+        hold = EscapeHold()
+        self.assertEqual(hold.hold(b'a' * (hold.LIMIT + 17)), 17)
+        self.assertEqual(len(hold), hold.LIMIT)
+        self.assertEqual(hold.dropped, 17)
+        self.assertEqual(hold.flush(), b'a' * hold.LIMIT)
+
     def test_explicit_false_values_disable_modem_debug(self):
         for value in ("", "0", "false", "False", "no", "off"):
             with self.subTest(value=value), mock.patch.dict(os.environ, {"MODEM_DEBUG": value}):
@@ -1521,14 +1528,44 @@ class AtDceTests(unittest.TestCase):
         dce.attach_software_test_loop(lambda enabled: transitions.append(enabled) is None)
         self.assertEqual(dce.feed(b"AT&T1\r"), b"AT&T1\r\r\nCONNECT 300\r\n")
         self.assertTrue(dce.online)
-        self.assertIn(b"SOFTWARE TEST LOOP: SOFTWARE-AUDIO-LOOP",
+        self.assertIn(b"SOFTWARE AUDIO LOOP: SOFTWARE-AUDIO-LOOP",
                       dce.feed(b"ATI18\r"))
         self.assertIn(b"V.22/V.22bis, Bell 212A", dce.feed(b"ATI18\r"))
-        self.assertIn(b"not a physical V.54 loop", dce.feed(b"ATI18\r"))
+        self.assertIn(b"not a V.54 line loop", dce.feed(b"ATI18\r"))
         self.assertEqual(dce.feed(b"AT&T0\r"), b"AT&T0\r\r\nOK\r\n")
         self.assertFalse(dce.online)
         self.assertEqual(transitions, [True, False])
-        self.assertIn(b"SOFTWARE TEST LOOP: OFF", dce.feed(b"ATI18\r"))
+        self.assertIn(b"SOFTWARE AUDIO LOOP: OFF", dce.feed(b"ATI18\r"))
+
+    def test_local_digital_loop_control_is_distinct_from_v54_line_loop(self) -> None:
+        dce = AtDce()
+        transitions = []
+        dce.attach_local_digital_loop(lambda enabled: transitions.append(enabled) is None)
+        self.assertEqual(dce.feed(b"AT&T3\r"), b"AT&T3\r\r\nCONNECT 300\r\n")
+        dce.digital_test_loop_bytes = 4
+        report = dce.feed(b"ATI18\r")
+        self.assertIn(b"LOCAL DIGITAL LOOP (&T3): ACTIVE  BYTES 4", report)
+        self.assertIn(b"Physical V.54 remote/analog loop procedures are not implemented.", report)
+        self.assertEqual(dce.feed(b"AT&T0\r"), b"AT&T0\r\r\nOK\r\n")
+        self.assertEqual(transitions, [True, False])
+        self.assertIn(b"LOCAL DIGITAL LOOP (&T3): OFF", dce.feed(b"ATI18\r"))
+
+    def test_clip_setting_reports_first_ring_and_honors_restricted_identity(self) -> None:
+        dce = AtDce()
+        self.assertIn(b"+GCAP: +MS +FCLASS +CLIP", dce.feed(b"AT+GCAP\r"))
+        self.assertIn(b"+CLIP: (0,1)", dce.feed(b"AT+CLIP=?\r"))
+        self.assertTrue(dce.feed(b"AT+CLIP=1\r").endswith(b"OK\r\n"))
+        self.assertIn(b"+CLIP: 1", dce.feed(b"AT+CLIP?\r"))
+        dce.begin_incoming_call({"number": "+12025550100", "name": 'A "Caller"',
+                                 "presentation": "allowed"})
+        dce.notify_incoming_ring()
+        notification = dce.take_notifications()
+        self.assertLess(notification.index(b"RING"), notification.index(b"+CLIP:"))
+        self.assertIn(b'+CLIP: "12025550100",145,,,"A \\"Caller\\"",0', notification)
+        dce.begin_incoming_call({"number": "5551234", "name": "Secret", "presentation": "restricted"})
+        self.assertIn(b"NMBR=RESTRICTED\r\nNAME=RESTRICTED", "\r\n".join(dce._ati(15)).encode())
+        dce.notify_incoming_ring()
+        self.assertIn(b'+CLIP: "",128,,,"",1', dce.take_notifications())
 
     def test_oversized_command_is_rejected(self) -> None:
         dce = AtDce()
@@ -1760,6 +1797,25 @@ class AtDceTests(unittest.TestCase):
 
 
 class AtProfileTests(unittest.TestCase):
+    def test_s37_is_stored_but_at_ms_remains_the_speed_control(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profiles.json"
+            dce = AtDce()
+            dce.load_profiles(str(path))
+            self.assertTrue(dce.feed(b"AT+MS=V22B,0,1200,2400\r").endswith(b"OK\r\n"))
+            selected = dict(dce.ms)
+            self.assertTrue(dce.feed(b"ATS37=7\r").endswith(b"OK\r\n"))
+            self.assertEqual(dce.registers[37], 7)
+            self.assertEqual(dce.ms, selected)
+            self.assertTrue(dce.feed(b"AT&W\r").endswith(b"OK\r\n"))
+
+            restored = AtDce()
+            restored.load_profiles(str(path))
+            self.assertEqual(restored.registers[37], 7)
+            self.assertEqual(restored.ms, selected)
+
     def test_store_and_recall_profiles(self) -> None:
         import tempfile
         path = tempfile.mktemp(suffix=".json")
@@ -1921,8 +1977,10 @@ class AtiScreenTests(unittest.TestCase):
         from modem_pnp import identification
         self.assertIn(identification(), self.ati(dce, 9))
         out = self.ati(dce, 10)
-        self.assertIn("DIAL SECURITY ACCOUNT STATUS:", out)
-        self.assertIn("LOCAL ACCESS:   ENABLED", out)
+        self.assertIn("DIAL SECURITY STATUS:", out)
+        self.assertIn("STATUS:         NOT IMPLEMENTED", out)
+        self.assertIn("INBOUND ACCESS: NOT PASSWORD-PROTECTED BY MODEM", out)
+        self.assertNotIn("LOCAL ACCESS:   ENABLED", out)
         self.assertTrue(self.ati(dce, 14).endswith("ERROR\r\n"))
 
     def test_settings_screen_layout_and_stored_profiles(self) -> None:
@@ -1987,7 +2045,11 @@ class AtiScreenTests(unittest.TestCase):
         dce.take_notifications()
         self.assertIn("Not connected: Busy", self.ati(dce, 6))
         dce.connect_speed, dce.connect_suffix, dce.connect_modulation = 33600, "/LAPM", "V.34"
-        dce.link_stats = lambda: {"symbol_rate": 3429, "rx_dbm0": -18.25, "error_control": "V.42 LAPM",
+        dce.link_stats = lambda: {"symbol_rate": 3429, "rx_pcm_dbfs": -18.25, "rx_pcm_samples": 8000,
+                                  "fallback_events": [],
+                                  "retrain": {'attempts': 2, 'local_started': 1, 'peer_started': 1,
+                                              'completed': 1, 'failed': 1},
+                                  "error_control": "V.42 LAPM",
                                   "compression": "V.42BIS",
                                   "v34_rx_timing_slips": {"by_core": {"caller": 7}, "total": 7},
                                   "blocks": dict(i_tx=100, i_rx=90, i_resent=5, rej_tx=1, rej_rx=2, fcs_errors=3,
@@ -2003,7 +2065,7 @@ class AtiScreenTests(unittest.TestCase):
         self.assertIn("TECHNICAL SUPPORT REPORT - SECTION 1", live)
         self.assertIn("MODULATION: V.34", live)
         self.assertIn("SYMBOL RATE: 3429", live)
-        self.assertIn("RX LEVEL: -18.2 dBm0", live)
+        self.assertIn("RX PCM LEVEL: -18.2 dBFS RMS (8000 samples)", live)
         self.assertIn("SNR: N/A (NOT MEASURED)", live)                         # never invented
         self.assertIn("RETRANSMISSIONS / I-FRAME TX: 5.0%", live)
         section2 = self.ati(dce, 16)
@@ -2019,14 +2081,16 @@ class AtiScreenTests(unittest.TestCase):
         self.assertIn("El-Modem Link Diagnostics...", done)
         self.assertRegex(done, r"Chars sent\s+120\s+Chars received\s+340")
         self.assertRegex(done, r"Chars lost\s+N/A")
+        self.assertRegex(done, r"DTE RX bytes dropped\s+0")
         self.assertRegex(done, r"Blocks sent\s+100\s+Blocks received\s+90")
         self.assertRegex(done, r"Blocks resent\s+5")
         self.assertRegex(done, r"Last Tx rate\s+33600\s+Last Rx rate\s+33600")
         self.assertRegex(done, r"Modulation\s+V\.34\s+Protocol\s+V\.42")
 
         self.assertRegex(done, r"Compression\s+V\.42 bis\s+Line Conditioned\s+N/A")
-        self.assertRegex(done, r"Retrain attempts\s+N/A\s+Retrains completed\s+N/A")
-        self.assertRegex(done, r"Fallbacks\s+N/A")
+        self.assertRegex(done, r"Retrain attempts\s+2\s+Retrains completed\s+1")
+        self.assertRegex(done, r"Post-connect fallbacks\s+0")
+        self.assertRegex(done, r"Retrain local/peer\s+1/1\s+Failed\s+1")
 
         self.assertIn("Remote Hangup / No Carrier", done)
         self.assertIn("RESENT 5", self.ati(dce, 16))                            # frozen at the end of the call
@@ -2157,6 +2221,18 @@ class AtxLevelTests(unittest.TestCase):
 
 
 class MsSelectionTests(unittest.TestCase):
+    def test_v21_automode_is_v8_selectable_only_when_300_is_in_range(self) -> None:
+        from modem_dce import line_from_ms
+        from v8 import V8_MOD_V21, V8_MOD_V22
+
+        v21_only = line_from_ms({"mod": "V21", "auto": 1, "min": 300, "max": 300})
+        self.assertEqual(v21_only["line_mode"], "chain")
+        self.assertEqual(v21_only["chain"]["allow"], V8_MOD_V21)
+        mixed = line_from_ms({"mod": "V22", "auto": 1, "min": 300, "max": 1200})
+        self.assertEqual(mixed["chain"]["allow"], V8_MOD_V22 | V8_MOD_V21)
+        with self.assertRaisesRegex(ValueError, "V.21 automode supports 300"):
+            line_from_ms({"mod": "V21", "auto": 1, "min": 600, "max": 1200})
+
     def test_v34_rate_bounds_survive_direct_and_automode_selection(self) -> None:
         from modem_dce import line_from_ms
         from v8 import V8_MOD_V34
@@ -2194,7 +2270,7 @@ class MsSelectionTests(unittest.TestCase):
         self.assertEqual(chain_v22_only["allow"], 1 << 2)
         self.assertEqual(chain_v22_only["v32_rates"], ())
         chain_v22_max = line_from_ms({"mod": "V34", "auto": 1, "min": 300, "max": 1200})["chain"]
-        self.assertEqual(chain_v22_max["allow"], 1 << 2)
+        self.assertEqual(chain_v22_max["allow"], (1 << 2) | (1 << 1))
         with self.assertRaisesRegex(ValueError, "no supported modulation rate"):
             line_from_ms({"mod": "V32", "auto": 1, "min": 12000, "max": 14400})
         chain_32 = line_from_ms({"mod": "V32B", "auto": 1, "min": 4800, "max": 14400})["chain"]
@@ -2284,6 +2360,39 @@ class PtySmokeTests(unittest.TestCase):
                 os.write(fd, b"ATD123\r")
                 response = self._read_until(fd, b"NO CARRIER\r\n")
                 self.assertNotIn(b"CONNECT", response)
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=3)
+
+    def test_daemon_local_digital_loop_echoes_dte_payload(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="modem-ldt-") as directory:
+            link = Path(directory) / "modem0"
+            process = subprocess.Popen(
+                [sys.executable, str(SCRIPT), "--link", str(link)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            fd = -1
+            try:
+                deadline = time.monotonic() + 3
+                while not link.exists() and time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        self.fail(f"PTY daemon exited with status {process.returncode}")
+                    time.sleep(0.02)
+                self.assertTrue(link.exists(), "PTY symlink was not created")
+                fd = os.open(link, os.O_RDWR | os.O_NOCTTY)
+                tty.setraw(fd)
+                os.write(fd, b"ATE0\rAT&T3\r")
+                self.assertIn(b"CONNECT 300\r\n", self._read_until(fd, b"CONNECT 300\r\n"))
+                payload = b"local-digital-loop\x00payload"
+                os.write(fd, payload)
+                self.assertEqual(self._read_until(fd, payload)[-len(payload):], payload)
             finally:
                 if fd >= 0:
                     os.close(fd)
@@ -2626,6 +2735,149 @@ class V42BreakDteOrderTests(unittest.TestCase):
 
 
 class OnlineAudioSessionTests(unittest.TestCase):
+    def test_v8_lapm_advertisement_follows_error_control_and_supported_modulation(self) -> None:
+        from modem_dce import line_from_ms
+        from v8 import V8_PROTOCOL_LAPM_V42
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            v22 = line_from_ms({"mod": "V22B", "auto": 1, "min": 2400, "max": 2400})
+            v21 = line_from_ms({"mod": "V21", "auto": 1, "min": 300, "max": 300})
+            cases = (
+                (v22, {"v42": False}, 0),
+                (v22, {"v42": True}, V8_PROTOCOL_LAPM_V42),
+                (v22, {"mnp": True}, 0),
+                (v21, {"v42": True}, 0),
+            )
+            for selection, options, expected in cases:
+                with self.subTest(options=options, selection=selection["chain"]["allow"]):
+                    session = OnlineAudioSession(
+                        sock, ("127.0.0.1", 9), "originate", "answer", **selection, **options,
+                    )
+                    self.assertEqual(session._v8_local_protocols, expected)
+                    session.stop()
+        finally:
+            sock.close()
+
+    def test_v8_lapm_agreement_skips_detection_and_carries_exact_payload(self) -> None:
+        from modem_dce import line_from_ms
+        from v8 import V8_PROTOCOL_LAPM_V42
+
+        o_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        o_sock.bind(("127.0.0.1", 0))
+        a_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        a_sock.bind(("127.0.0.1", 0))
+        o_sock.settimeout(0.01)
+        a_sock.settimeout(0.01)
+        selection = line_from_ms({"mod": "V22B", "auto": 1, "min": 2400, "max": 2400})
+        originate = OnlineAudioSession(
+            o_sock, a_sock.getsockname(), "originate", "answer", **selection, v42=True,
+        )
+        answer = OnlineAudioSession(
+            a_sock, o_sock.getsockname(), "answer", "originate", **selection, v42=True,
+        )
+        payload_o = bytes((i * 31 + 3) & 0xff for i in range(128))
+        payload_a = bytes((i * 47 + 0x59) & 0xff for i in range(128))
+        originate_rx, answer_rx = bytearray(), bytearray()
+        sent = False
+        originate.start()
+        answer.start()
+        try:
+            deadline = time.monotonic() + 35
+            while time.monotonic() < deadline:
+                now = time.monotonic()
+                originate.poll(now)
+                answer.poll(now)
+                if (originate.negotiation_complete and answer.negotiation_complete
+                        and not sent):
+                    self.assertEqual((originate.line_speed, answer.line_speed), (2400, 2400))
+                    self.assertEqual(originate._negotiated_v8_protocols(), V8_PROTOCOL_LAPM_V42)
+                    self.assertEqual(answer._negotiated_v8_protocols(), V8_PROTOCOL_LAPM_V42)
+                    self.assertTrue(originate._v22._v42_direct)
+                    self.assertTrue(answer._v22._v42_direct)
+                    originate.feed_terminal_bytes(payload_o)
+                    answer.feed_terminal_bytes(payload_a)
+                    sent = True
+                for receiver, sock, out in (
+                    (answer, a_sock, answer_rx), (originate, o_sock, originate_rx),
+                ):
+                    try:
+                        packet, source = sock.recvfrom(2048)
+                    except socket.timeout:
+                        continue
+                    out.extend(receiver.handle_rtp_datagram(source, packet))
+                if sent and answer_rx == payload_o and originate_rx == payload_a:
+                    break
+            self.assertTrue(sent, "V.8 did not complete LAPM before CONNECT")
+            self.assertEqual(bytes(answer_rx), payload_o)
+            self.assertEqual(bytes(originate_rx), payload_a)
+        finally:
+            originate.stop()
+            answer.stop()
+            o_sock.close()
+            a_sock.close()
+
+    def test_v21_v8_automode_rtp_pair_delivers_exact_payload_both_roles(self) -> None:
+        from modem_dce import line_from_ms
+
+        o_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        o_sock.bind(("127.0.0.1", 0))
+        a_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        a_sock.bind(("127.0.0.1", 0))
+        o_sock.settimeout(0.01)
+        a_sock.settimeout(0.01)
+        selection = line_from_ms({"mod": "V21", "auto": 1, "min": 300, "max": 300})
+        originate = OnlineAudioSession(
+            o_sock, a_sock.getsockname(), "originate", "answer", **selection, v42=True,
+        )
+        answer = OnlineAudioSession(
+            a_sock, o_sock.getsockname(), "answer", "originate", **selection, v42=True,
+        )
+        payload_o = bytes((i * 29 + 7) & 0xff for i in range(96))
+        payload_a = bytes((i * 43 + 0x91) & 0xff for i in range(96))
+        originate_rx, answer_rx = bytearray(), bytearray()
+        sent = False
+        originate.start()
+        answer.start()
+        try:
+            deadline = time.monotonic() + 25
+            while time.monotonic() < deadline:
+                now = time.monotonic()
+                originate.poll(now)
+                answer.poll(now)
+                if (originate.negotiation_complete and answer.negotiation_complete
+                        and not sent):
+                    self.assertEqual((originate.line_speed, answer.line_speed), (300, 300))
+                    self.assertEqual((originate.modulation_name, answer.modulation_name),
+                                     ("V.21", "V.21"))
+                    originate.feed_terminal_bytes(payload_o)
+                    answer.feed_terminal_bytes(payload_a)
+                    sent = True
+                for receiver, sock, out in (
+                    (answer, a_sock, answer_rx), (originate, o_sock, originate_rx),
+                ):
+                    try:
+                        packet, source = sock.recvfrom(2048)
+                    except socket.timeout:
+                        continue
+                    out.extend(receiver.handle_rtp_datagram(source, packet))
+                if sent and answer_rx == payload_o and originate_rx == payload_a:
+                    break
+            self.assertTrue(sent, "V.8 did not negotiate the 300-bit/s V.21 profile")
+            self.assertEqual((originate._v8_local_protocols, answer._v8_local_protocols), (0, 0))
+            self.assertEqual(bytes(answer_rx), payload_o)
+            self.assertEqual(bytes(originate_rx), payload_a)
+            self.assertFalse(originate._v42_started)
+            self.assertFalse(answer._v42_started)
+        finally:
+            originate.stop()
+            answer.stop()
+            o_sock.close()
+            a_sock.close()
+
+        self.assertFalse(originate._thread.is_alive(), "originating RTP worker leaked after stop")
+        self.assertFalse(answer._thread.is_alive(), "answering RTP worker leaked after stop")
+
     def test_c_error_recovery_requires_explicit_v42bis_opt_in(self) -> None:
         class FakeLine:
             supports_v42 = True
@@ -2739,12 +2991,16 @@ class OnlineAudioSessionTests(unittest.TestCase):
         )
         session._rtp_frame_seconds = 0.02
         session._v23_detector_transitions = []
+        session._v8_local_protocols = 0
         session._timer_resolution_request = None
         session.realtime = types.SimpleNamespace(report=lambda: {})
         session.timing_trace = None
         session._want_mnp = False
         session._rtp_counts = {}
+        session._rx_pcm_sum_squares = 0
+        session._rx_pcm_samples = 0
         stats = session.link_stats()
+        self.assertEqual(stats["v8_protocols"]["local"], 0)
         self.assertEqual(stats["v34_rx_timing_slips"], {
             "by_core": {"caller": 5}, "total": 5,
         })
@@ -2766,15 +3022,19 @@ class OnlineAudioSessionTests(unittest.TestCase):
         )
         session._rtp_frame_seconds = 0.02
         session._v23_detector_transitions = []
+        session._v8_local_protocols = 0
         session._timer_resolution_request = None
         session.realtime = types.SimpleNamespace(report=lambda: {})
         session.timing_trace = None
         session._want_v42 = True
         session._want_mnp = False
         session._rtp_counts = {}
+        session._rx_pcm_sum_squares = 0
+        session._rx_pcm_samples = 0
 
         stats = session.link_stats()
 
+        self.assertEqual(stats["v8_protocols"]["local"], 0)
         self.assertEqual(stats["error_control"], "V.42 LAPM")
         self.assertEqual(stats["v42_session"], {
             "requested": "V.42 LAPM", "ever_established": True,
@@ -3431,7 +3691,7 @@ class OnlineAudioSessionTests(unittest.TestCase):
             session.stop()
             sock.close()
 
-    def test_bell212_session_establishes_lapm_and_exchanges_binary_data(self) -> None:
+    def test_bell212_session_negotiates_peer_n401_and_exchanges_binary_data(self) -> None:
         import socket
 
         o_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -3442,11 +3702,11 @@ class OnlineAudioSessionTests(unittest.TestCase):
         a_sock.settimeout(0.02)
         originate = OnlineAudioSession(
             o_sock, a_sock.getsockname(), "originate", "answer",
-            line_mode="bell212a", v42=True,
+            line_mode="bell212a", v42=True, v42_frame_size=32,
         )
         answer = OnlineAudioSession(
             a_sock, o_sock.getsockname(), "answer", "originate",
-            line_mode="bell212a", v42=True,
+            line_mode="bell212a", v42=True, v42_frame_size=64,
         )
         originate.start()
         answer.start()
@@ -3480,6 +3740,13 @@ class OnlineAudioSessionTests(unittest.TestCase):
             self.assertTrue(sent, "Bell 212A RTP sessions did not establish LAPM")
             self.assertEqual((originate._v22.v42_mode, answer._v22.v42_mode),
                              ("lapm", "lapm"))
+            # Initial XID N401 values are lower bounds, not caps: the answerer
+            # may select its requested 64-octet value in both directions.
+            self.assertEqual(
+                (originate._v22._v42.tx_n401, originate._v22._v42.rx_n401,
+                 answer._v22._v42.tx_n401, answer._v22._v42.rx_n401),
+                (64, 64, 64, 64),
+            )
             self.assertEqual(bytes(answer_rx), payload_o)
             self.assertEqual(bytes(originate_rx), payload_a)
 
@@ -4266,6 +4533,8 @@ class OnlineAudioSessionTests(unittest.TestCase):
         session = object.__new__(OnlineAudioSession)
         session._last_rtp_at = None
         session._receive_pcm = lambda pcm: pcm
+        session._rx_pcm_sum_squares = 0
+        session._rx_pcm_samples = 0
         result = session.handle_rtp_payload(bytes((0xFF,)) * 160)
         self.assertEqual(len(result), 320)
         self.assertIsNotNone(session._last_rtp_at)
@@ -5343,7 +5612,8 @@ class V22bisSessionTests(unittest.TestCase):
 class V21DceIntegrationTests(unittest.TestCase):
     def test_run_pty_originates_atd_and_receives_v25_plus_independent_v21(self) -> None:
         """Exercise ATD and the caller-side DCE against an independent V.21 answer waveform."""
-        shared = {"session": None, "output": bytearray(), "peer_errors": []}
+        shared = {"session": None, "output": bytearray(), "peer_errors": [],
+                  "sip_hungup": False}
         fixture = (Path(__file__).parent / "audio-peer" / "fixtures" /
                    "reference" / "independent-fsk" / "v21-answer.raw")
         if not fixture.is_file():
@@ -5433,6 +5703,7 @@ class V21DceIntegrationTests(unittest.TestCase):
 
             def hangup(self):
                 self.hungup = True
+                shared["sip_hungup"] = True
 
         serial = FakeSerial()
         stop_peer = threading.Event()
@@ -5488,6 +5759,7 @@ class V21DceIntegrationTests(unittest.TestCase):
 
         self.assertFalse(peer_thread.is_alive())
         self.assertTrue(serial.closed)
+        self.assertTrue(shared["sip_hungup"], "outgoing SIP call was not hung up")
         self.assertEqual(shared["peer_errors"], [])
         self.assertEqual(shared.get("dialed_number"), "1001")
         self.assertTrue(shared.get("dte_data_sent"))
@@ -5497,6 +5769,9 @@ class V21DceIntegrationTests(unittest.TestCase):
 
     def test_run_pty_answers_and_receives_independent_minimodem_waveform(self) -> None:
         """Exercise ATA, V.25 answer timing and V.21 RX through the live DCE loop."""
+        sys.path.insert(0, str(Path(__file__).parent / "audio-peer"))
+        from audio_path_impairment import AudioPathImpairment
+
         shared = {
             "session": None,
             "session_created": None,
@@ -5507,7 +5782,11 @@ class V21DceIntegrationTests(unittest.TestCase):
                    "reference" / "independent-fsk" / "v21-orig.raw")
         if not fixture.is_file():
             self.skipTest("optional independent audio fixture is not in the public export")
-        reference = struct.unpack(f"<{fixture.stat().st_size // 2}h", fixture.read_bytes())
+        # Keep amplitude headroom so this combined impairment models gain,
+        # offset and noise without turning the test into a clipping stress
+        # case. The source is still the independent minimodem bit waveform.
+        reference = tuple(round(sample * 0.15) for sample in struct.unpack(
+            f"<{fixture.stat().st_size // 2}h", fixture.read_bytes()))
         expected = b"ELMOD V21 ORIGINATE 0123456789\r"
         peer_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         peer_sock.bind(("127.0.0.1", 0))
@@ -5590,6 +5869,10 @@ class V21DceIntegrationTests(unittest.TestCase):
 
         serial = FakeSerial()
         stop_peer = threading.Event()
+        impairment = AudioPathImpairment(
+            gain_db=3, dc_offset=256, noise_rms=64,
+            clip_level=10000, seed=21026,
+        )
 
         def transmit_independent_vector():
             try:
@@ -5610,7 +5893,11 @@ class V21DceIntegrationTests(unittest.TestCase):
                 for offset in range(0, len(reference), 160):
                     if stop_peer.is_set():
                         return
-                    frame = list(reference[offset:offset + 160])
+                    # Impair only the V.21 data vector, after the answerer has
+                    # completed its V.25 prologue. This exercises the
+                    # production RTP/PCMU receive path without changing the
+                    # call-control detector's input.
+                    frame = impairment.process(reference[offset:offset + 160])
                     frame.extend([0] * (160 - len(frame)))
                     packet = struct.pack("!BBHII", 0x80, 0, sequence, timestamp, 0x56323131)
                     packet += bytes(linear_to_ulaw(sample) for sample in frame)
@@ -5650,11 +5937,14 @@ class V21DceIntegrationTests(unittest.TestCase):
         self.assertFalse(peer_thread.is_alive())
         self.assertEqual(shared["peer_errors"], [])
         self.assertTrue(serial.closed)
+        self.assertTrue(shared["sip_hungup"], "incoming SIP call was not hung up")
         self.assertTrue(serial.ata_sent)
         self.assertTrue(serial.data_sent)
         self.assertIn(b"CONNECT 300", output)
         self.assertIn(expected, output)
         self.assertEqual(shared["session"].modulation_name, "V.21")
+        self.assertEqual(impairment.samples, len(reference))
+        self.assertEqual(impairment.report()["clipped_samples"], 0)
 
 
 class V23SessionTests(unittest.TestCase):
@@ -5678,9 +5968,13 @@ class V23SessionTests(unittest.TestCase):
                                  (1, 2, 48000))
                 raw = wav.readframes(wav.getnframes())
             data_pcm = list(struct.unpack(f"<{len(raw) // 2}h", raw)[::6])
+            ans = [round(9000 * math.sin(
+                2 * math.pi * 2100 * n / 8000 + math.pi * (n // 3600)
+            )) for n in range(int(3.3 * 8000))]
             mark = [round(9000 * math.sin(2 * math.pi * 390 * n / 8000))
                     for n in range(8000)]
-            peer_pcm = mark + data_pcm + mark
+            peer_pcm = ([0] * (2 * 8000) + ans + [0] * 600
+                        + mark + data_pcm + mark)
 
             peer_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             peer_sock.bind(("127.0.0.1", 0))
@@ -5714,7 +6008,7 @@ class V23SessionTests(unittest.TestCase):
                         self.dte.sendall(dte_payload)
 
                 def service(self, readable, writable=()):
-                    if time.monotonic() - self.started > 14:
+                    if time.monotonic() - self.started > 22:
                         raise AssertionError(
                             f"V.23 caller timed out: output={bytes(shared['output'][-180:])!r}, "
                             f"captured={len(shared['captured_pcm'])} samples, "
@@ -5984,6 +6278,10 @@ class V23SessionTests(unittest.TestCase):
             real_session = OnlineAudioSession
 
             def track_session(*args, **kwargs):
+                # This test isolates the independent raw FSK waveform against
+                # the DCE decoder. Switched call control is qualified by the
+                # V.25 startup test and paired production RTP test.
+                kwargs["v23_switched_call_setup"] = False
                 session = real_session(*args, **kwargs)
                 shared["session"] = session
                 return session
@@ -6227,6 +6525,7 @@ class V23SessionTests(unittest.TestCase):
             answer = OnlineAudioSession(
                 rtp_tx, rtp_rx.getsockname(), "answer", "originate",
                 line_mode="v23", v23_rate=1200,
+                v23_switched_call_setup=False,
             )
             received = bytearray()
             sequence = timestamp = 0
@@ -6261,6 +6560,7 @@ class V23SessionTests(unittest.TestCase):
             originate = OnlineAudioSession(
                 session_sock, sink.getsockname(), "originate", "answer",
                 line_mode="v23", v23_rate=1200,
+                v23_switched_call_setup=False,
             )
             originate.feed_terminal_bytes(payload)
             transmitted_pcm = []
@@ -6317,7 +6617,7 @@ class V23SessionTests(unittest.TestCase):
                     payload_o = bytes(range(80))
                     payload_a = b"return at 75 baud"
                     sent = False
-                    deadline = time.monotonic() + 8
+                    deadline = time.monotonic() + 20
                     while time.monotonic() < deadline:
                         originate.poll(time.monotonic())
                         answer.poll(time.monotonic())
@@ -6422,7 +6722,7 @@ class V23SessionTests(unittest.TestCase):
                     def service(self, readable, writable=()):
                         if shared["sip_hungup"]:
                             raise KeyboardInterrupt
-                        if time.monotonic() - self.started > 8:
+                        if time.monotonic() - self.started > 22:
                             raise AssertionError(
                                 f"V.23 run_pty call timed out: output={bytes(self.output[-256:])!r}, "
                                 f"peer_up={peer._v22.connected}, "

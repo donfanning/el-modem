@@ -32,12 +32,13 @@ class V34ModemPairTests(unittest.TestCase):
     def test_dce_wrappers_exchange_asymmetric_lapm_payloads_exactly(self) -> None:
         from v34_answer_modem import V34AnswerModem
         from v34_modem import V34Modem
+        from v8 import V8_PROTOCOL_LAPM_V42
 
-        caller = V34Modem(data_rate=33600)
+        caller = V34Modem(data_rate=33600, v8_protocols=V8_PROTOCOL_LAPM_V42)
         # Emulate an answerer advertising a 12K transmit ceiling while
         # retaining its 33.6K receive offer, as in the captured asymmetry.
         with patch.dict('os.environ', {'V34_TEST_ANSWER_TX_RATE': '12000'}):
-            answerer = V34AnswerModem(data_rate=33600)
+            answerer = V34AnswerModem(data_rate=33600, v8_protocols=V8_PROTOCOL_LAPM_V42)
         caller_payload = bytes((i * 73 + 19) & 0xFF for i in range(16384))
         answer_payload = bytes((i * 151 + 7) & 0xFF for i in range(16384))
         caller_rx = bytearray()
@@ -57,9 +58,11 @@ class V34ModemPairTests(unittest.TestCase):
         self.assertTrue(answerer.connected, answerer.events[-8:])
         self.assertEqual((caller.bit_rate, caller.rx_bit_rate), (33600, 12000))
         self.assertEqual((answerer.bit_rate, answerer.rx_bit_rate), (12000, 33600))
+        self.assertEqual(caller._v8.result["protocols"], V8_PROTOCOL_LAPM_V42)
+        self.assertEqual(answerer._v8.result["protocols"], V8_PROTOCOL_LAPM_V42)
 
-        caller.start_v42(calling_party=True, rate=caller.bit_rate, frame_size=128)
-        answerer.start_v42(calling_party=False, rate=answerer.bit_rate, frame_size=128)
+        caller.start_v42(calling_party=True, rate=caller.bit_rate, frame_size=128, detect=False)
+        answerer.start_v42(calling_party=False, rate=answerer.bit_rate, frame_size=128, detect=False)
         for _ in range(750):
             tick()
             if caller.v42_mode == answerer.v42_mode == 'lapm':

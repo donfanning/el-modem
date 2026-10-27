@@ -1,10 +1,80 @@
 """Successive unstable retrains remain bounded; proven delivery renews them."""
 import unittest
 from types import SimpleNamespace as NS
+from unittest.mock import patch
 from v34_retrain_budget import RetrainBudget, observe
+from v34_modem import V34Modem
+from v34_answer_modem import V34AnswerModem
 
 
 class BudgetTests(unittest.TestCase):
+    class RetrainCore:
+        def __init__(self):
+            self.info0c = {}
+            self.started = 0
+
+        def begin_retrain(self, *_args):
+            self.started += 1
+
+        def respond_to_retrain(self, *_args):
+            self.started += 1
+
+    def test_v34_retrain_lifecycle_counts_accepted_local_and_peer_starts(self):
+        caller = V34Modem.__new__(V34Modem)
+        caller._retrains = 0
+        caller._retrain_counts = dict(local_started=0, peer_started=0,
+                                      automatic_started=0, completed=0, failed=0)
+        caller._retrain_budget = RetrainBudget()
+        caller._retraining = False
+        caller._t = 0
+        caller.fs = 8000
+        caller.state = 'data'
+        caller.events = []
+        caller._ev = lambda _text: None
+        core = self.RetrainCore()
+        caller._new_caller = lambda: core
+        caller.request_retrain()
+        self.assertEqual(caller.retrain_stats['local_started'], 1)
+        self.assertEqual(caller.retrain_stats['attempts'], 1)
+
+        caller._retraining = False
+        caller._answerer_retrain()
+        self.assertEqual(caller.retrain_stats['peer_started'], 1)
+        self.assertEqual(caller.retrain_stats['attempts'], 2)
+
+        automatic = V34Modem.__new__(V34Modem)
+        automatic._retrains = 0
+        automatic._retrain_counts = dict(local_started=0, peer_started=0,
+                                         automatic_started=0, completed=0, failed=0)
+        automatic._retrain_budget = RetrainBudget()
+        automatic._retraining = False
+        automatic._t = 0
+        automatic.fs = 8000
+        automatic.state = 'data'
+        automatic.events = []
+        automatic._ev = lambda _text: None
+        auto_core = self.RetrainCore()
+        automatic._new_caller = lambda: auto_core
+        with patch.dict('os.environ', {'V34_FREEZE_RETRAIN': '1'}):
+            automatic._carrier_stream_lost()
+        self.assertEqual(automatic.retrain_stats['automatic_started'], 1)
+
+        answerer = V34AnswerModem.__new__(V34AnswerModem)
+        answerer._retrains = 0
+        answerer._retrain_counts = dict(local_started=0, peer_started=0,
+                                       automatic_started=0, completed=0, failed=0)
+        answerer._retrain_budget = RetrainBudget()
+        answerer._retraining = False
+        answerer._t = 0
+        answerer.fs = 8000
+        answerer.state = 'data'
+        answerer.events = []
+        answerer._ev = lambda _text: None
+        answerer.answerer = self.RetrainCore()
+        answerer._new_answerer = lambda: self.RetrainCore()
+        answerer.request_retrain()
+        self.assertEqual(answerer.retrain_stats['local_started'], 1)
+
     def tick(self, b, core, **kw):
         args=dict(core=core,samples=8000,fs=8000,healthy=True,delivered=128,bad_frames=0)
         args.update(kw)

@@ -60,10 +60,12 @@ class V23Modem:
     v42_compression = None
 
     def __init__(self, calling_party: bool, *, forward_baud: int = 1200,
-                 amplitude: float = 12000.0, backward_channel: bool = True):
+                 amplitude: float = 12000.0, backward_channel: bool = True,
+                 switched_call_setup: bool = False):
         if forward_baud not in FORWARD_SPACE_HZ:
             raise ValueError("V.23 forward baud must be 600 or 1200")
         self.calling = bool(calling_party)
+        self.switched_call_setup = bool(switched_call_setup)
         self.forward_baud = forward_baud
         self.backward_channel_enabled = bool(backward_channel)
         self.tx_baud = forward_baud if self.calling else 75
@@ -79,6 +81,8 @@ class V23Modem:
         self._tx = Bell103StreamTransmitter(
             tx_standard_role, baud=self.tx_baud, frequencies=tx_freqs,
             amplitude=amplitude,
+            v25_call_sequence=(self.switched_call_setup and self.calling),
+            v25_answer=(self.switched_call_setup and not self.calling),
         )
         self._rx = Bell103Receiver(
             rx_standard_role, baud=self.rx_baud, frequencies=rx_freqs,
@@ -116,7 +120,17 @@ class V23Modem:
         return True
 
     def is_settled(self) -> bool:
-        return self.connected
+        return self.connected and self._tx.prologue_remaining == 0
+
+    @property
+    def prologue_remaining(self) -> int:
+        return self._tx.prologue_remaining
+
+    def stop_calling_tone(self) -> None:
+        self._tx.stop_calling_tone()
+
+    def release_call_sequence(self) -> None:
+        self._tx.release_call_sequence()
 
     def feed_bytes(self, data: bytes) -> None:
         if not self.calling and not self.backward_channel_enabled:

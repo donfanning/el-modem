@@ -23,7 +23,7 @@ def _sip_trace(event: str, **fields: object) -> None:
     print(f"SIPTRACE side=answerer event={event} {details}".rstrip(), file=sys.stderr, flush=True)
 
 
-def parse_caller(from_header: str) -> dict:
+def parse_caller(from_header: str, *, privacy: str = "") -> dict:
     """Caller ID from a SIP From header: ``"Name" <sip:number@host>;tag=x`` -> {'name': 'Name', 'number': 'number'}."""
     import re  # noqa: PLC0415
 
@@ -31,7 +31,13 @@ def parse_caller(from_header: str) -> dict:
     name = re.match(r'\s*"([^"]*)"', from_header)
     if not name:
         name = re.match(r'\s*([^<"]+?)\s*<', from_header)
-    return {"number": m.group(1) if m else "", "name": name.group(1).strip() if name else ""}
+    number = m.group(1) if m else ""
+    display = name.group(1).strip() if name else ""
+    restricted = "id" in {token.strip().lower() for token in re.split(r"[;,]", privacy)}
+    restricted = restricted or number.lower() in ("anonymous", "restricted", "unavailable")
+    if restricted:
+        return {"number": "", "name": "", "presentation": "restricted", "technology": "SIP"}
+    return {"number": number, "name": display, "presentation": "allowed", "technology": "SIP"}
 
 
 @dataclass
@@ -305,7 +311,7 @@ class SipIncomingCallServer:
                 ring_deadline=time.monotonic() + self.ring_interval,
             )
             self._invite = invite
-        self.last_caller = parse_caller(headers.get("from", ""))
+        self.last_caller = parse_caller(headers.get("from", ""), privacy=headers.get("privacy", ""))
         self.on_incoming()
         self.on_ring()
         self._send_response(invite, "100 Trying")

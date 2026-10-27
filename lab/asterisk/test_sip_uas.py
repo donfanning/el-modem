@@ -8,10 +8,20 @@ from unittest.mock import Mock
 import uuid
 
 from modem_dce import AtDce
-from sip_uas import SipIncomingCallServer, parse_message
+from sip_uas import SipIncomingCallServer, parse_caller, parse_message
 
 
 class SipIncomingCallTests(unittest.TestCase):
+    def test_caller_identity_and_sip_privacy(self) -> None:
+        caller = parse_caller('"Desk Phone" <sip:+12025550100@example.net>;tag=abc')
+        self.assertEqual(caller, {"number": "+12025550100", "name": "Desk Phone",
+                                  "presentation": "allowed", "technology": "SIP"})
+        for privacy in ("id", "user;id", "user,id"):
+            with self.subTest(privacy=privacy):
+                restricted = parse_caller('"Private" <sip:5551212@example.net>', privacy=privacy)
+                self.assertEqual(restricted["presentation"], "restricted")
+                self.assertEqual((restricted["number"], restricted["name"]), ("", ""))
+
     def setUp(self) -> None:
         self.client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.client.bind(("127.0.0.1", 0))
@@ -27,7 +37,7 @@ class SipIncomingCallTests(unittest.TestCase):
             0,
             "127.0.0.1",
             16000,
-            self.dce.begin_incoming_call,
+            lambda: self.dce.begin_incoming_call(self.server.last_caller),
             self.dce.notify_incoming_ring,
             lambda: self.dce.notify_call_progress("NO CARRIER"),
             ring_interval=0.2,
@@ -68,6 +78,17 @@ class SipIncomingCallTests(unittest.TestCase):
         self.assertIn("a=ptime:20\r\n", self.server._answer_sdp())
         self.server.packetization_ms = 10
         self.assertIn("a=ptime:10\r\n", self.server._answer_sdp())
+
+    def test_clip_uses_sip_from_identity_on_first_ring(self) -> None:
+        self.dce.feed(b"AT+CLIP=1\r")
+        self.client.sendto(self._invite(), self.target)
+        while True:
+            _, start = self._recv()
+            if start.startswith("SIP/2.0 180"):
+                break
+        notifications = self.dce.take_notifications()
+        self.assertIn(b"RING", notifications)
+        self.assertIn(b'+CLIP: "caller",129,,,"",0', notifications)
 
     def _recv(self) -> tuple[dict[str, str], str]:
         data, _ = self.client.recvfrom(65535)

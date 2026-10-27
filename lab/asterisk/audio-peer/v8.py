@@ -7,8 +7,10 @@ modulation modes and protocols), 3 ("non-v8-call") when the far end does not do 
 
 Implemented: ANSam with 15 Hz amplitude modulation and 450 ms phase reversals (§7.2); CM/JM/CJ with the §5-6 octet
 coding and 2-identical-sequences rules (§7.3, 7.4, 8); CI as an optional call signal (§7.1); the call function,
-modulation modes, protocol and PSTN access categories. Not implemented: the PCM modem availability and non-standard
-facility categories are carried through (V.90/V.92 flag) but not interpreted, T.66, V.92 quick-connect.
+modulation modes, protocol and PSTN access categories. LAPM is reported only when both peers indicate it. The DCE
+uses that common V.8 indication to bypass V.42 ODP/ADP detection and proceed to LAPM/XID; without it, V.42 detection
+remains the alternate negotiation path (§6.4 and §7.2.1 of V.8). Not implemented: the PCM modem availability and
+non-standard facility categories are carried through (V.90/V.92 flag) but not interpreted, T.66, V.92 quick-connect.
 
 Credit: the signal definitions are ITU-T's; the timings that real answerers tolerate (Te, 75 ms gaps) were checked against
 SpanDSP's v8.c (LGPL, Steve Underwood) and the Smart Link modem as black-box peers. No code was copied from either.
@@ -35,6 +37,7 @@ V8_MOD_V21, V8_MOD_V22, V8_MOD_V23, V8_MOD_V32 = 1 << 1, 1 << 2, 1 << 4, 1 << 9
 V8_MOD_V34, V8_MOD_V90 = 1 << 11, 1 << 12
 V8_CALL_V_SERIES = 6
 V8_PROTOCOL_NONE, V8_PROTOCOL_LAPM_V42 = 0, 1
+V8_LAPM_MODULATIONS = V8_MOD_V22 | V8_MOD_V32 | V8_MOD_V34
 def available() -> bool:
     return np is not None
 
@@ -235,6 +238,8 @@ class V8Negotiator:
                  ans_delay: float = 0.2):
         self.calling = calling_party
         self.mods, self.protocols, self.cf = modulations, protocols, call_function
+        if not (self.mods & V8_LAPM_MODULATIONS):
+            self.protocols &= ~V8_PROTOCOL_LAPM_V42
         self.send_ci = send_ci
         self.status = 0
         self.result: dict | None = None
@@ -302,8 +307,11 @@ class V8Negotiator:
                 self._set("cm")
             elif st == "cj_pending" and self._tx is not None and not self._tx.bits:
                 self._tx = None
-                self._finish()          # the caller's V.34 start-up supplies the 75 ms of silence; hand over at once
-                                        # so a fast answerer's first V.34 signal (INFO0a) is not missed
+                # V.8 §8.1.2 requires 75 ± 5 ms with no signal after CJ before
+                # the selected modulation's call signal. V.34 has its own
+                # startup timing, but lower-rate choices such as V.21 do not;
+                # keep the gap in V.8 so every selected modulation gets it.
+                self._set("post_cj")
             elif st == "post_cj" and self.t - self._stage_t >= int(0.075 * FS):
                 self._finish()
             elif st == "wait_ans" and self.send_ci and self._tx is None and self.t > FS:
@@ -416,8 +424,14 @@ class V8Negotiator:
 
     def _on_jm(self, octets: list[int]) -> None:
         cf = decode_call_function(octets[0])
-        mods = decode_modulations(octets[1:4])
-        prot = V8_PROTOCOL_LAPM_V42 if any((o & 0x1F) == 0x0A and (o >> 5) & 1 for o in octets) else 0
+        mods = decode_modulations(octets[1:4]) & self.mods
+        peer_protocols = V8_PROTOCOL_LAPM_V42 if any(
+            (o & 0x1F) == 0x0A and (o >> 5) & 1 for o in octets
+        ) else 0
+        # JM describes the common protocol set, not an independent peer offer.
+        # Never report LAPM unless this caller also placed it in its CM.
+        prot = (self.protocols & peer_protocols
+                if mods & V8_LAPM_MODULATIONS else V8_PROTOCOL_NONE)
         pcm = any((o & 0x1F) == 0x07 for o in octets)
         self.result = {"status": 2, "call_function": cf, "modulations": mods, "protocols": prot, "tone": 5,
                        "pcm": pcm}
@@ -456,6 +470,7 @@ class V8Negotiator:
         cm_mods = decode_modulations(octets[1:4])
         common = cm_mods & self.mods
         prot = V8_PROTOCOL_LAPM_V42 if (self.protocols & V8_PROTOCOL_LAPM_V42 and
+                                         common & V8_LAPM_MODULATIONS and
                                          any((o & 0x1F) == 0x0A and (o >> 5) & 1 for o in octets)) else 0
         self.result = {"status": 2, "call_function": cf, "modulations": common, "protocols": prot, "tone": 5,
                        "pcm": any((o & 0x1F) == 0x07 for o in octets)}

@@ -26,7 +26,9 @@ class V34Modem(V42Layer):
     is_v34 = True
     capture_detect_bits = False
 
-    def __init__(self, fs: int = FS, data_rate: int | None = None, min_data_rate: int = 2400, debug: bool = False, rms: float = 900.0, with_v8: bool = True):
+    def __init__(self, fs: int = FS, data_rate: int | None = None, min_data_rate: int = 2400,
+                 debug: bool = False, rms: float = 900.0, with_v8: bool = True,
+                 v8_protocols: int = 0):
         if fs != FS:
             raise ValueError("the V.34 engine runs at 8 kHz")
         from v8 import V8_MOD_V34, V8Negotiator
@@ -44,11 +46,13 @@ class V34Modem(V42Layer):
                                  info0=dict(rate2743=1, rate2800=1, rate3429=1, lo3000=1, hi3000=1, lo3200=1,
                                             hi3200=1, allow3429=1, power_reduction=1, pts1664=1))
         self._retrains = 0
+        self._retrain_counts = dict(local_started=0, peer_started=0, automatic_started=0,
+                                    completed=0, failed=0)
         self._retrain_budget = RetrainBudget(self.RETRAIN_MAX)
         self._retraining = False
         self._retrain_t0 = 0
         self.caller = self._new_caller()
-        self._v8 = V8Negotiator(True, modulations=V8_MOD_V34)
+        self._v8 = V8Negotiator(True, modulations=V8_MOD_V34, protocols=v8_protocols)
         self._phase = "v8"                                  # v8 -> p2 (V34Caller) -> failed
         if not with_v8:                                     # V.8 already done by the caller of this engine (autochain.py)
             self._v8, self._phase = None, "p2"
@@ -108,6 +112,7 @@ class V34Modem(V42Layer):
             return
         self._retrain_budget.take()
         self._retrains += 1
+        self._retrain_counts['automatic_started'] += 1
         self._ev(f"carrier stream lost: retrain {self._retrain_budget.used}/{self.RETRAIN_MAX} (total {self._retrains}) (the V.42 link stays up)")
         self._retraining, self._retrain_t0 = True, self._t
         self.caller = self._new_caller()
@@ -122,6 +127,7 @@ class V34Modem(V42Layer):
             return
         self._retrain_budget.take()
         self._retrains += 1
+        self._retrain_counts['local_started'] += 1
         self._ev(f'{reason}: retrain {self._retrain_budget.used}/{self.RETRAIN_MAX} (total {self._retrains}) (the V.42 link stays up)')
         self._retraining, self._retrain_t0 = True, self._t
         self.caller = self._new_caller()
@@ -135,6 +141,7 @@ class V34Modem(V42Layer):
             return
         self._retrain_budget.take()
         self._retrains += 1
+        self._retrain_counts['peer_started'] += 1
         self._ev(f"answerer initiated a retrain: answering it, retrain {self._retrain_budget.used}/{self.RETRAIN_MAX} (total {self._retrains}) (the V.42 link stays up)")
         self._retraining, self._retrain_t0 = True, self._t
         self.caller = self._new_caller()
@@ -148,6 +155,12 @@ class V34Modem(V42Layer):
     @property
     def failed_reason(self) -> str:
         return getattr(self, "_failed_reason", "")
+
+    @property
+    def retrain_stats(self) -> dict:
+        return dict(active=self._retraining, attempts=self._retrains,
+                    **self._retrain_counts, limit=self._retrain_budget.limit,
+                    budget=self._retrain_budget.report())
 
     def is_settled(self) -> bool:
         return self.connected
@@ -279,6 +292,7 @@ class V34Modem(V42Layer):
             if self._retraining:
                 if self.caller.stage == "data" and getattr(self.caller, "_rx_state", None) is not None:
                     self._retraining = False
+                    self._retrain_counts['completed'] += 1
                     self.bit_rate = self.caller.data_rate
                     self.rx_bit_rate = self.caller.rx_rate
                     self.set_v42_rate(self.bit_rate)
@@ -299,6 +313,9 @@ class V34Modem(V42Layer):
         return out
 
     def _fail(self, why: str) -> None:
+        if self._retraining:
+            self._retrain_counts['failed'] += 1
+            self._retraining = False
         self.state = "failed"
         self._phase = "failed"
         self._failed_reason = why
