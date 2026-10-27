@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import v8
 from autochain import V8Chain
-from v8 import V8_MOD_V22, V8_MOD_V32, V8_MOD_V34
+from v8 import V8_MOD_V21, V8_MOD_V22, V8_MOD_V32, V8_MOD_V34
 
 
 def loop(a, b, seconds, delay=40, until=None):
@@ -42,6 +42,19 @@ def exchange(a, b, seconds, delay=40):
 
 @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
 class ChainTests(unittest.TestCase):
+    def test_v8_selects_v21_and_exchanges_exact_payload_in_both_roles(self):
+        for calling in (True, False):
+            with self.subTest(calling=calling):
+                caller = V8Chain(calling, allow=V8_MOD_V21)
+                answer = V8Chain(not calling, allow=V8_MOD_V21)
+                ga, gb = exchange(caller, answer, 20)
+                self.assertEqual((caller.kind, answer.kind), ("v21", "v21"))
+                self.assertEqual((caller.bit_rate, answer.bit_rate), (300, 300))
+                self.assertEqual(gb, b"caller says hi\r\n")
+                self.assertEqual(ga, b"answerer says hi\r\n")
+                self.assertFalse(caller.supports_v42)
+                self.assertFalse(answer.supports_v42)
+
     def test_selected_v34_receive_does_not_block_transmit_but_close_waits(self):
         entered, release, transmitted, closed = (threading.Event() for _ in range(4))
         class Engine:
@@ -254,10 +267,15 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(ga, b"answerer says hi\r\n")
 
     def test_v32_beats_v22(self):
-        a = V8Chain(True, allow=V8_MOD_V32 | V8_MOD_V22, v32_rates=(9600,))
-        b = V8Chain(False, allow=V8_MOD_V32 | V8_MOD_V22, v32_rates=(9600,))
+        from v8 import V8_PROTOCOL_LAPM_V42
+        a = V8Chain(True, allow=V8_MOD_V32 | V8_MOD_V22, v32_rates=(9600,),
+                    protocols=V8_PROTOCOL_LAPM_V42)
+        b = V8Chain(False, allow=V8_MOD_V32 | V8_MOD_V22, v32_rates=(9600,),
+                    protocols=V8_PROTOCOL_LAPM_V42)
         ga, gb = exchange(a, b, 60)
         self.assertEqual((a.kind, b.kind), ("v32", "v32"))
+        self.assertEqual((a.negotiated_protocols, b.negotiated_protocols),
+                         (V8_PROTOCOL_LAPM_V42, V8_PROTOCOL_LAPM_V42))
         self.assertEqual(gb, b"caller says hi\r\n")
         self.assertEqual(ga, b"answerer says hi\r\n")
 

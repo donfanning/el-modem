@@ -53,6 +53,7 @@ PBX or provider; no service account or trunk credentials are supplied.
 
 [Desktop and Hayes settings](docs/DESKTOP.md) ·
 [AT command reference](docs/AT_COMMANDS.md) · [Serial interfaces](docs/SERIAL.md) ·
+[Asterisk telephony provisioning](docs/TELEPHONY_PROVISIONING.md) ·
 [Release OS/runtime requirements](docs/RUNTIME_REQUIREMENTS.md)
 
 For source development, install NumPy, Numba, `textual==0.89.1`, Rust/Cargo and

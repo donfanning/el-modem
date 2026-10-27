@@ -17,6 +17,7 @@ from v23 import (
     FORWARD_SPACE_HZ, DBM0_REFERENCE_POWER, V23Modem,
 )
 from v23 import V23SoftwareAudioLoop
+from v25 import V25CallerProcedure
 
 
 class V23Tests(unittest.TestCase):
@@ -200,6 +201,56 @@ class V23Tests(unittest.TestCase):
                          "forward FSK data must not look like loss of circuit 109")
         self.assertNotIn(("CARRIER_DOWN", -1), caller.events,
                          "backward FSK data must not look like loss of circuit 122")
+
+    def test_switched_v25_setup_then_v23_exchanges_exact_payload_both_ways(self):
+        caller = V23Modem(True, forward_baud=1200, switched_call_setup=True)
+        answerer = V23Modem(False, forward_baud=1200, switched_call_setup=True)
+        ans = V25CallerProcedure()
+        previous = ans.state
+        caller_rx = bytearray()
+        answerer_rx = bytearray()
+
+        # V.25 caller tone / answer sequence, then the V.23 starting signals.
+        for _ in range(700):  # 7 seconds at the production 10-ms V.23 cadence
+            caller_audio = caller.tx_samples(80)
+            answer_audio = answerer.tx_samples(80)
+            caller_pcm = struct.pack("<80h", *caller_audio)
+            answer_pcm = struct.pack("<80h", *answer_audio)
+            answerer_rx.extend(answerer.feed_pcm(caller_pcm))
+            caller_rx.extend(caller.feed_pcm(answer_pcm))
+            state = ans.feed_pcm(answer_pcm)
+            if previous == "waiting_answer" and state == "answer_tone":
+                caller.stop_calling_tone()
+            elif state == "complete":
+                caller.release_call_sequence()
+                break
+            previous = state
+
+        self.assertEqual(ans.state, "complete")
+        for _ in range(100):  # carrier 109/122 acquisition after V.25 ends
+            caller_audio = caller.tx_samples(80)
+            answer_audio = answerer.tx_samples(80)
+            answerer_rx.extend(answerer.feed_pcm(struct.pack("<80h", *caller_audio)))
+            caller_rx.extend(caller.feed_pcm(struct.pack("<80h", *answer_audio)))
+            if caller.is_settled() and answerer.is_settled():
+                break
+        self.assertTrue(caller.is_settled())
+        self.assertTrue(answerer.is_settled())
+
+        forward = b"switched V23 caller payload"
+        backward = b"V23 return data"
+        caller.feed_bytes(forward)
+        answerer.feed_bytes(backward)
+        for _ in range(500):  # enough for 75-baud return traffic
+            caller_audio = caller.tx_samples(80)
+            answer_audio = answerer.tx_samples(80)
+            answerer_rx.extend(answerer.feed_pcm(struct.pack("<80h", *caller_audio)))
+            caller_rx.extend(caller.feed_pcm(struct.pack("<80h", *answer_audio)))
+            if forward in answerer_rx and backward in caller_rx:
+                break
+
+        self.assertIn(forward, answerer_rx)
+        self.assertIn(backward, caller_rx)
 
     def test_carrier_loss_discards_partial_frame_and_reacquires_both_channels(self):
         """Neither FSK receive direction may join a pre-loss UART character to recovered data."""

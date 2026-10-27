@@ -31,6 +31,8 @@ class SelfTests(unittest.TestCase):
         bits = v8.build_message(6, v8.V8_MOD_V32)
         self.assertEqual(bits[:20], [1] * 10 + v8.SYNC_CM_JM)
         self.assertEqual(v8.parse_sequence(bits[20:]), [0xC1, 0x05, 0x11, 0x10])
+        bits_with_lapm = v8.build_message(6, v8.V8_MOD_V34, v8.V8_PROTOCOL_LAPM_V42)
+        self.assertEqual(v8.parse_sequence(bits_with_lapm[20:]), [0xC1, 0x45, 0x10, 0x10, 0x2A])
         self.assertEqual(v8.decode_modulations(v8.modulation_octets(v8.V8_MOD_V34 | v8.V8_MOD_V22)),
                          v8.V8_MOD_V34 | v8.V8_MOD_V22)
 
@@ -43,6 +45,31 @@ class SelfTests(unittest.TestCase):
         self.assertEqual(call.result["modulations"], v8.V8_MOD_V32)
         self.assertEqual(ans.result["modulations"], v8.V8_MOD_V32)
         self.assertEqual(call.result["call_function"], 6)
+        self.assertEqual(call.result["protocols"], v8.V8_PROTOCOL_NONE)
+        self.assertEqual(ans.result["protocols"], v8.V8_PROTOCOL_NONE)
+
+    @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
+    def test_lapm_is_a_mutual_protocol_and_is_reported_by_both_sides(self):
+        call = v8.V8Negotiator(True, modulations=v8.V8_MOD_V34,
+                               protocols=v8.V8_PROTOCOL_LAPM_V42)
+        ans = v8.V8Negotiator(False, modulations=v8.V8_MOD_V34,
+                              protocols=v8.V8_PROTOCOL_LAPM_V42)
+        loop(call, ans)
+        self.assertEqual((call.status, ans.status), (2, 2))
+        self.assertEqual(call.result["protocols"], v8.V8_PROTOCOL_LAPM_V42)
+        self.assertEqual(ans.result["protocols"], v8.V8_PROTOCOL_LAPM_V42)
+
+    @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
+    def test_lapm_is_not_reported_for_a_v21_only_common_modulation(self):
+        call = v8.V8Negotiator(True, modulations=v8.V8_MOD_V21 | v8.V8_MOD_V22,
+                               protocols=v8.V8_PROTOCOL_LAPM_V42)
+        ans = v8.V8Negotiator(False, modulations=v8.V8_MOD_V21,
+                              protocols=v8.V8_PROTOCOL_LAPM_V42)
+        loop(call, ans)
+        self.assertEqual((call.result["modulations"], ans.result["modulations"]),
+                         (v8.V8_MOD_V21, v8.V8_MOD_V21))
+        self.assertEqual((call.result["protocols"], ans.result["protocols"]),
+                         (v8.V8_PROTOCOL_NONE, v8.V8_PROTOCOL_NONE))
 
     @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
     def test_with_delay_and_noise(self):
@@ -51,6 +78,61 @@ class SelfTests(unittest.TestCase):
         loop(call, ans, delay=1200, noise=150)
         self.assertEqual((call.status, ans.status), (2, 2))
         self.assertEqual(call.result["modulations"], v8.V8_MOD_V34)
+
+    @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
+    def test_answerer_waits_at_least_200ms_before_ansam(self):
+        answer = v8.V8Negotiator(False, modulations=v8.V8_MOD_V21)
+        initial = [answer.tx(160) for _ in range(10)]
+        self.assertTrue(all(not any(frame) for frame in initial),
+                        "answerer must remain silent for the first 200 ms")
+        self.assertTrue(any(answer.tx(160)), "ANSam should begin after the 200 ms guard")
+
+    @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
+    def test_caller_sends_required_silence_after_cj_before_v21(self):
+        call = v8.V8Negotiator(True, modulations=v8.V8_MOD_V21)
+        answer = v8.V8Negotiator(False, modulations=v8.V8_MOD_V21)
+        te_silence_samples = 0
+        caller_silence = None
+        silence_samples = 0
+        answer_silence = None
+        answer_silence_samples = 0
+
+        # Drive the negotiated audio as 20 ms RTP frames, as the production
+        # DCE does. Capture the caller's samples after CJ completes and before
+        # the V.8 state becomes available for the selected V.21 engine.
+        for _ in range(14 * 50):
+            stage_before_tx = call._stage
+            answer_stage_before_tx = answer._stage
+            caller_pcm = call.tx(160)
+            answer_pcm = answer.tx(160)
+            if stage_before_tx == "te":
+                te_silence_samples += len(caller_pcm)
+                self.assertEqual(caller_pcm, [0] * len(caller_pcm))
+            if caller_silence is not None and stage_before_tx == "post_cj":
+                silence_samples += len(caller_pcm)
+                self.assertEqual(caller_pcm, [0] * len(caller_pcm))
+            elif call._stage == "post_cj":
+                caller_silence = call.t
+            if answer_silence is not None and answer_stage_before_tx == "post_cj":
+                answer_silence_samples += len(answer_pcm)
+                self.assertEqual(answer_pcm, [0] * len(answer_pcm))
+
+            call.rx(answer_pcm)
+            answer.rx(caller_pcm)
+            if answer_silence is None and answer._stage == "post_cj":
+                answer_silence = answer.t
+            if call.status == answer.status == 2:
+                break
+
+        self.assertEqual((call.status, answer.status), (2, 2))
+        self.assertGreaterEqual(te_silence_samples, int(0.5 * v8.FS))
+        self.assertIsNotNone(caller_silence)
+        # 75 ± 5 ms, quantized to the 20 ms media cadence, permits 80 ms.
+        self.assertGreaterEqual(silence_samples, int(0.070 * v8.FS))
+        self.assertLessEqual(silence_samples, int(0.080 * v8.FS))
+        self.assertIsNotNone(answer_silence)
+        self.assertGreaterEqual(answer_silence_samples, int(0.070 * v8.FS))
+        self.assertLessEqual(answer_silence_samples, int(0.080 * v8.FS))
 
     @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
     def test_answerer_reports_a_non_v8_call_when_no_cm_arrives(self):
@@ -126,6 +208,25 @@ def _ref():
 
 @unittest.skipUnless(_ref(), "libspandsp (reference implementation) not available")
 class InteropTests(unittest.TestCase):
+    def test_our_caller_with_the_reference_answerer_selects_v21(self):
+        import spandsp_v8
+        call = v8.V8Negotiator(True, modulations=v8.V8_MOD_V21)
+        ans = _ref()(False, modulations=spandsp_v8.V8_MOD_V21)
+        loop(call, ans)
+        self.assertEqual((call.status, ans.status), (2, 2), (call.status, ans.status))
+        self.assertEqual(call.result["modulations"], v8.V8_MOD_V21)
+        self.assertEqual(ans.result["modulations"], spandsp_v8.V8_MOD_V21)
+        self.assertEqual(call.result["call_function"], v8.V8_CALL_V_SERIES)
+
+    def test_reference_caller_with_our_answerer_selects_v21(self):
+        import spandsp_v8
+        call = _ref()(True, modulations=spandsp_v8.V8_MOD_V21)
+        ans = v8.V8Negotiator(False, modulations=v8.V8_MOD_V21)
+        loop(call, ans)
+        self.assertEqual((call.status, ans.status), (2, 2), (call.status, ans.status))
+        self.assertEqual(call.result["modulations"], spandsp_v8.V8_MOD_V21)
+        self.assertEqual(ans.result["modulations"], v8.V8_MOD_V21)
+
     def test_our_caller_with_the_reference_answerer(self):
         import spandsp_v8
         call = v8.V8Negotiator(True, modulations=v8.V8_MOD_V34 | v8.V8_MOD_V32)

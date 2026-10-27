@@ -11,12 +11,55 @@ import types
 from unittest.mock import patch
 
 import modem_build
-from modem_dce import AtDce
-from modem_diagnostics import line_metrics
+from modem_dce import AtDce, OnlineAudioSession, linear_to_ulaw, ulaw_to_linear
+from modem_diagnostics import line_metrics, pcm_dbfs, recorded_fallbacks
 from modem_pnp import HARDWARE_ID, COMPATIBLE_ID, identification
 
 
 class InformationTests(unittest.TestCase):
+    def test_pcm_dbfs_uses_full_scale_sine_reference(self):
+        import math
+        n = 800
+        samples = [round(32767 * math.sin(2 * math.pi * i / 80)) for i in range(n)]
+        power = sum(value * value for value in samples)
+        self.assertAlmostEqual(pcm_dbfs(power, n), 0.0, delta=0.001)
+        self.assertAlmostEqual(pcm_dbfs(power / 100, n), -20.0, delta=0.001)
+        self.assertIsNone(pcm_dbfs(0, n))
+        self.assertIsNone(pcm_dbfs(1, 0))
+
+    def test_online_session_accumulates_decoded_media_pcm_before_dsp(self):
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        session._rx_pcm_sum_squares = 0
+        session._rx_pcm_samples = 0
+        session._last_pcm = b''
+        session._receive_pcm = lambda _pcm: b'ok'
+        payload = bytes([linear_to_ulaw(8000)] * 12)
+        self.assertEqual(session.handle_rtp_payload(payload), b'ok')
+        decoded = ulaw_to_linear(payload[0])
+        self.assertEqual(session._rx_pcm_sum_squares, 12 * decoded * decoded)
+        self.assertEqual(session._rx_pcm_samples, 12)
+
+    def test_retrain_metrics_and_recorded_fallbacks_are_explicit(self):
+        engine = SimpleNamespace(
+            retrain_stats={'attempts': 2, 'active': False, 'local_started': 1,
+                           'peer_started': 1, 'automatic_started': 0,
+                           'completed': 1, 'failed': 1},
+            bell103_fallback=False,
+        )
+        stats = line_metrics(engine)
+        self.assertEqual(stats['retrain']['peer_started'], 1)
+        self.assertEqual(stats['retrain_attempts'], 2)
+        self.assertEqual(recorded_fallbacks(engine), [])
+        self.assertEqual(recorded_fallbacks(SimpleNamespace()), None)
+        fallbacks = recorded_fallbacks(SimpleNamespace(bell103_fallback=True))
+        self.assertEqual(fallbacks[0]['kind'], 'bell212a-to-bell103')
+        online = recorded_fallbacks(SimpleNamespace(is_v34=True), {
+            'transactions': [{'status': 'fallback-retrained', 'initial_tx_rate': 33600,
+                              'tx_rate': 28800}]})
+        self.assertEqual(online, [{'kind': 'online-control-fallback-retrain',
+                                   'from_rate': 33600, 'to_rate': 28800,
+                                   'source': 'online-control'}])
+
     def test_all_supported_pages_fit_80_columns_with_long_values(self):
         dce = AtDce()
         dce.echo = False
@@ -182,12 +225,14 @@ class DspInformationTests(unittest.TestCase):
 
     def test_report_displays_measured_facts_and_freezes_them_at_disconnect(self):
         dce = AtDce()
-        stats = dict(tx_rate=33600, rx_rate=28800, probe_snr_db=28.5, rx_dbm0=-18.2,
+        stats = dict(tx_rate=33600, rx_rate=28800, probe_snr_db=28.5,
+                     rx_pcm_dbfs=-18.2, rx_pcm_samples=8000,
                      line_state='data', v32_retrain={'attempts':2, 'active':False,
                                                    'events':[{'completed_seconds':3}]},
                      v32_echo={'enabled':True, 'input_power':12.5, 'output_power':3.0,
                                'detected_delay':40, 'delay_units':'T/2 samples'},
                      v34_data_quality={'path_cost_per_symbol':0.125, 'symbols':1024, 'windows':2},
+                     rx_qualification={'held_out_nmse':0.0025},
                      rtp={'received_packets':100, 'decoded_packets':98,
                           'late_or_duplicate_packets':2, 'concealed_samples':160},
                      realtime={'measurements':{'data_rx_seconds':{'mean':0.002, 'maximum':0.005}}})
@@ -195,11 +240,17 @@ class DspInformationTests(unittest.TestCase):
         dce.connect_speed = 33600
         dce.feed(b'ATDT123\r')
         dce.notify_call_progress('CONNECT')
+        dce.count_chars(sent=12, received=34)
+        dce.count_dte_rx_dropped(7)
         live = '\n'.join(dce._ati(11))
-        for fact in ('TX 33600  RX 28800', 'RX LEVEL: -18.2 dBm0', 'PROBE SNR: 28.5 dB',
+        for fact in ('TX 33600  RX 28800', 'RX PCM LEVEL: -18.2 dBFS RMS (8000 samples)',
+                     'not calibrated analog line level/dBm0', 'PROBE SNR: 28.5 dB',
                      'STARTUP ESTIMATE, NOT LIVE DATA SNR', 'RETRAIN ATTEMPTS: 2',
                      'EC BASEBAND POWER: IN 12.5 OUT 3', 'PATH COST / SYMBOL: 0.125',
-                     'CONCEALED SAMPLES: 160', 'RX DSP: MEAN 2.000 ms MAX 5.000 ms'):
+                     'V.34 B1 HOLDOUT RESIDUAL: 5.00% RMS OF REFERENCE',
+                     'Includes noise/model error; not live SNR or BER.',
+                     'CONCEALED SAMPLES: 160', 'RX DSP: MEAN 2.000 ms MAX 5.000 ms',
+                     'DATA OCTETS: TX 12  RX 34'):
             self.assertIn(fact, live)
         self.assertIn('SNR: N/A (NOT MEASURED)', live)
         dce.call_ended('NO CARRIER')
@@ -208,9 +259,12 @@ class DspInformationTests(unittest.TestCase):
         final = '\n'.join(dce._ati(11))
         self.assertIn('RETRAIN ATTEMPTS: 2', final)
         self.assertIn('CONCEALED SAMPLES: 160', final)
+        self.assertIn('DATA OCTETS: TX 12  RX 34', final)
+        self.assertRegex(final, r'CALL DURATION: \d+ seconds')
         summary = '\n'.join(dce._ati(6))
         self.assertRegex(summary, r'Retrain attempts\s+2\s+Retrains completed\s+1')
         self.assertRegex(summary, r'Chars lost\s+N/A')
+        self.assertRegex(summary, r'DTE RX bytes dropped\s+7')
         self.assertRegex(summary, r'Last Tx rate\s+33600\s+Last Rx rate\s+28800')
 
     def test_missing_or_nonfinite_measurements_do_not_become_good_line_claims(self):
@@ -218,6 +272,8 @@ class DspInformationTests(unittest.TestCase):
             probe_result={'snr_db':float('nan')}))))
         lines = AtDce._dsp_report({'v34_data_quality':{'path_cost_per_symbol':float('inf')}})
         self.assertEqual(lines, [])
+        lines = AtDce._dsp_report({'rx_qualification':{'held_out_nmse':float('nan')}})
+        self.assertNotIn('B1 HOLDOUT RESIDUAL', '\n'.join(lines))
 
 
 if __name__ == '__main__':

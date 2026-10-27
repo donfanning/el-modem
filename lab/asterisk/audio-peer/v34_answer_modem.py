@@ -21,7 +21,9 @@ class V34AnswerModem(V42Layer):
     is_v34 = True
     capture_detect_bits = False
 
-    def __init__(self, fs: int = FS, data_rate: int | None = None, min_data_rate: int = 2400, debug: bool = False, rms: float = 900.0, with_v8: bool = True):
+    def __init__(self, fs: int = FS, data_rate: int | None = None, min_data_rate: int = 2400,
+                 debug: bool = False, rms: float = 900.0, with_v8: bool = True,
+                 v8_protocols: int = 0):
         if fs != FS:
             raise ValueError("the V.34 engine runs at 8 kHz")
         from v8 import V8_MOD_V34, V8Negotiator
@@ -35,12 +37,14 @@ class V34AnswerModem(V42Layer):
         self._answerer_args = dict(rms=rms, data_rate=rate, min_data_rate=min_data_rate,
             symbol_rates=[int(x) for x in syms.split(",")] if syms else None)
         self._retrains = 0
+        self._retrain_counts = dict(local_started=0, peer_started=0, automatic_started=0,
+                                    completed=0, failed=0)
         self._retrain_budget = RetrainBudget(self.RETRAIN_MAX)
         self._retraining = False
         self._retrain_t0 = 0
         self._tone_b_run = 0
         self.answerer = self._new_answerer()
-        self._v8 = V8Negotiator(False, modulations=V8_MOD_V34)
+        self._v8 = V8Negotiator(False, modulations=V8_MOD_V34, protocols=v8_protocols)
         self._phase = "v8"
         if not with_v8:                                     # V.8 already done by the caller of this engine (autochain.py)
             self._v8, self._phase = None, "p2"
@@ -115,6 +119,7 @@ class V34AnswerModem(V42Layer):
             return
         self._retrain_budget.take()
         self._retrains += 1
+        self._retrain_counts['peer_started'] += 1
         self._retraining, self._retrain_t0 = True, self._t
         self._tone_b_run = 0
         self._ev(f'caller initiated a retrain: answering it, retrain {self._retrain_budget.used}/{self.RETRAIN_MAX} (total {self._retrains}) (the V.42 link stays up)')
@@ -134,6 +139,7 @@ class V34AnswerModem(V42Layer):
             return
         self._retrain_budget.take()
         self._retrains += 1
+        self._retrain_counts['local_started'] += 1
         self._retraining, self._retrain_t0 = True, self._t
         self._tone_b_run = 0
         self._ev(f'{reason}: retrain {self._retrain_budget.used}/{self.RETRAIN_MAX} (total {self._retrains}) (the V.42 link stays up)')
@@ -147,6 +153,12 @@ class V34AnswerModem(V42Layer):
     @property
     def failed_reason(self) -> str:
         return getattr(self, "_failed_reason", "")
+
+    @property
+    def retrain_stats(self) -> dict:
+        return dict(active=self._retraining, attempts=self._retrains,
+                    **self._retrain_counts, limit=self._retrain_budget.limit,
+                    budget=self._retrain_budget.report())
 
     def is_settled(self) -> bool:
         return self.connected
@@ -271,6 +283,7 @@ class V34AnswerModem(V42Layer):
             if self._retraining:
                 if self.answerer.stage == "data" and self.answerer._rx_state is not None:
                     self._retraining = False
+                    self._retrain_counts['completed'] += 1
                     self.bit_rate = self.answerer.data_rate
                     self.rx_bit_rate = self.answerer.rx_rate
                     self.set_v42_rate(self.bit_rate)
@@ -291,6 +304,9 @@ class V34AnswerModem(V42Layer):
         return out
 
     def _fail(self, why: str) -> None:
+        if self._retraining:
+            self._retrain_counts['failed'] += 1
+            self._retraining = False
         self.state = "failed"
         self._phase = "failed"
         self._failed_reason = why

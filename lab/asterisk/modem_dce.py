@@ -45,7 +45,7 @@ from iax_transport import IaxMediaSocket, IaxTransport  # noqa: E402
 from windows_timer import TimerResolutionRequest  # noqa: E402
 from modem_build import build_timestamp  # noqa: E402
 from modem_pnp import identification as pnp_identification  # noqa: E402
-from modem_diagnostics import finite, line_metrics  # noqa: E402
+from modem_diagnostics import finite, line_metrics, pcm_dbfs, recorded_fallbacks  # noqa: E402
 from modem_help import help_screen  # noqa: E402
 
 
@@ -406,11 +406,18 @@ class EscapeHold:
 
     def __init__(self) -> None:
         self._buf = bytearray()
+        self.dropped = 0
 
-    def hold(self, data: bytes) -> None:
+    def hold(self, data: bytes) -> int:
+        dropped = 0
         if data:
             self._buf += data
-            del self._buf[:-self.LIMIT]
+            excess = max(0, len(self._buf) - self.LIMIT)
+            if excess:
+                del self._buf[:excess]
+                self.dropped += excess
+                dropped = excess
+        return dropped
 
     def flush(self) -> bytes:
         data = bytes(self._buf)
@@ -419,6 +426,7 @@ class EscapeHold:
 
     def clear(self) -> None:
         self._buf.clear()
+        self.dropped = 0
 
     def __len__(self) -> int:
         return len(self._buf)
@@ -466,6 +474,20 @@ class _V22Transmitter:
 
     def samples(self, count: int) -> list[int]:
         return self._modem.tx_samples(count)
+
+    @property
+    def prologue_remaining(self) -> int:
+        return int(getattr(self._modem, "prologue_remaining", 0))
+
+    def stop_calling_tone(self) -> None:
+        stop = getattr(self._modem, "stop_calling_tone", None)
+        if stop is not None:
+            stop()
+
+    def release_call_sequence(self) -> None:
+        release = getattr(self._modem, "release_call_sequence", None)
+        if release is not None:
+            release()
 
     def set_tx_media_deadline(self, deadline: float) -> None:
         setter = getattr(self._modem, "set_tx_media_deadline", None)
@@ -530,6 +552,7 @@ class OnlineAudioSession:
         chain: dict | None = None,
         calling_tone: bool = False,
         v25_call_sequence: bool | None = None,
+        v23_switched_call_setup: bool = True,
         v23_backward_channel: bool = True,
         guard_tone: int = 0,
         v22_min_rate: int | None = None,
@@ -545,6 +568,7 @@ class OnlineAudioSession:
         self._send_addr = remote_addr
         self._rtp_peer = None
         self._rtp_candidate = []
+        self._rtp_source_last = None
         self._tx_role = tx_role
         self._rx_role = rx_role
         self._line_mode = line_mode
@@ -583,12 +607,15 @@ class OnlineAudioSession:
         self._rtp_counts=dict(received_packets=0,decoded_packets=0,late_or_duplicate_packets=0,
             concealed_samples=0,maximum_buffered_packets=0,
             deadline_drain_enabled=self._rtp_deadline_drain,deadline_released_packets=0)
+        self._rx_pcm_sum_squares = 0
+        self._rx_pcm_samples = 0
         self._rtp_latest: int | None = None
         self._rtp_ssrc: int | None = None
         self._v22_events_seen = 0
         self._last_auto_state = None
         self._want_v42 = v42 or mnp  # try V.42/LAPM (or MNP, V.42 Annex A) once the line is up
         self._want_mnp = mnp
+        self._v8_local_protocols = 0
         if line_mode == "v23" and self._want_v42:
             raise ValueError("V.23 currently supports raw asymmetric channels; V.42/MNP is not implemented")
         self._v42_started = False
@@ -612,8 +639,20 @@ class OnlineAudioSession:
         if line_mode == "chain":
             # V.8 first, then the best common modulation, else legacy V.22 (autochain.py).
             from autochain import V8Chain  # noqa: PLC0415
+            from v8 import (V8_MOD_V22, V8_MOD_V32, V8_MOD_V34,
+                            V8_PROTOCOL_LAPM_V42)  # noqa: PLC0415
 
-            self._v22 = V8Chain(tx_role == "originate", debug=self.debug, **(chain or {}))
+            chain_options = dict(chain or {})
+            # LAPM is an optional V.8 protocol capability. Do not offer it for
+            # MNP-only or raw sessions, nor when the configured automode menu
+            # contains no modulation on which this DCE implements V.42.
+            v8_allowed = chain_options.get("allow", V8_MOD_V22 | V8_MOD_V32 | V8_MOD_V34)
+            if v42 and not mnp and v8_allowed & (V8_MOD_V22 | V8_MOD_V32 | V8_MOD_V34):
+                chain_options["protocols"] = int(chain_options.get("protocols", 0)) | V8_PROTOCOL_LAPM_V42
+            else:
+                chain_options["protocols"] = int(chain_options.get("protocols", 0)) & ~V8_PROTOCOL_LAPM_V42
+            self._v8_local_protocols = int(chain_options["protocols"])
+            self._v22 = V8Chain(tx_role == "originate", debug=self.debug, **chain_options)
             self.transmitter = _V22Transmitter(self._v22)
             self.receiver = _V22Receiver(self._v22)
             self._dsp_capture_pending = _env_enabled('EL_MODEM_DSP_CAPTURE')
@@ -636,6 +675,10 @@ class OnlineAudioSession:
             negotiate = False
         elif line_mode == "v34":
             # Our V.34 caller and answerer: V.8, phase 2-4 start-up and data mode up to 33600 bit/s.
+            from v8 import V8_PROTOCOL_LAPM_V42  # noqa: PLC0415
+
+            v8_protocols = V8_PROTOCOL_LAPM_V42 if v42 and not mnp else 0
+            self._v8_local_protocols = v8_protocols
             if tx_role == "originate":
                 from v34_modem import V34Modem  # noqa: PLC0415
 
@@ -644,7 +687,8 @@ class OnlineAudioSession:
                 from v34_answer_modem import V34AnswerModem  # noqa: PLC0415
 
                 engine = V34AnswerModem
-            self._v22 = engine(fs=8000, data_rate=v34_rate, min_data_rate=v34_min_rate, debug=self.debug)
+            self._v22 = engine(fs=8000, data_rate=v34_rate, min_data_rate=v34_min_rate,
+                               debug=self.debug, v8_protocols=v8_protocols)
             from v34_diagnostic import configured as diagnostic_capture
             self._dsp_capture = diagnostic_capture(self._v22)
             self.transmitter = _V22Transmitter(self._v22)
@@ -667,14 +711,17 @@ class OnlineAudioSession:
                 bell212_leased_line=self._bell212_leased_line,
             )
             if line_mode == "auto" and tx_role == "originate":
-                # Listen to the answerer, then respond in kind (V.22 or
-                # Bell 103); see autodetect.py.
+                # Listen to the answerer, then respond in kind (V.22, V.21,
+                # or Bell 103); see autodetect.py.
                 from autodetect import AutoCallerLine  # noqa: PLC0415
 
                 self._auto = AutoCallerLine(
                     self._v22,
                     lambda: Bell103StreamTransmitter(tx_role),
                     lambda: Bell103Receiver(rx_role),
+                    v21_tx_factory=lambda: Bell103StreamTransmitter(
+                        tx_role, standard="v21", v25_call_sequence=True),
+                    v21_rx_factory=lambda: Bell103Receiver(rx_role, standard="v21"),
                 )
                 self.transmitter = _V22Transmitter(self._auto)
                 self.receiver = _V22Receiver(self._auto)
@@ -688,7 +735,13 @@ class OnlineAudioSession:
             self._v22 = V23Modem(
                 calling_party=(tx_role == "originate"), forward_baud=v23_rate,
                 backward_channel=v23_backward_channel,
+                switched_call_setup=v23_switched_call_setup,
             )
+            if v23_switched_call_setup and tx_role == "originate":
+                from v25 import V25CallerProcedure  # noqa: PLC0415
+                self._v25_caller = V25CallerProcedure()
+            elif v23_switched_call_setup:
+                self._v25_answer = True
             self.transmitter = _V22Transmitter(self._v22)
             self.receiver = _V22Receiver(self._v22)
             negotiate = False
@@ -920,6 +973,18 @@ class OnlineAudioSession:
             and (self._auto is None or self._auto.state == "v22")
         )
 
+    def _negotiated_v8_protocols(self) -> int | None:
+        """Return V.8's common protocols; None means this call did not finish V.8."""
+        engine = self._v22
+        chain_protocols = getattr(engine, "negotiated_protocols", None)
+        if chain_protocols is not None:
+            return int(chain_protocols)
+        negotiator = getattr(engine, "_v8", None)
+        result = getattr(negotiator, "result", None) if negotiator is not None else None
+        if result and result.get("status") == 2:
+            return int(result.get("protocols", 0))
+        return None
+
     @property
     def link_lost(self) -> bool:
         """True if the line is gone for good after CONNECT (drop the call):
@@ -938,7 +1003,7 @@ class OnlineAudioSession:
     def _track_carrier(self) -> None:
         if self._v22 is None:
             return
-        up = self._v22.connected
+        up = self._auto.connected if self._auto is not None else self._v22.connected
         if up:
             self._was_up = True
             self._carrier_down_at = None
@@ -986,11 +1051,14 @@ class OnlineAudioSession:
             return "V.21"
         eng = self._auto.state if self._auto is not None else self._v22
         if isinstance(eng, str):
-            return {"v22": "V.22/V.22BIS", "bell103": "BELL 103"}.get(eng, eng.upper())
+            return {"v21": "V.21", "v22": "V.22/V.22BIS",
+                    "bell103": "BELL 103"}.get(eng, eng.upper())
         if eng is None:
             return {MODE_BELL103: "BELL 103", MODE_BELL212: "BELL 212A"}.get(self.mode, "FSK")
         eng = getattr(eng, "engine", None) or eng                      # V8Chain hands over to a real engine
         name = type(eng).__name__
+        if name == "Bell103Engine":
+            return "V.21" if getattr(eng, "standard", "bell103") == "v21" else "BELL 103"
         if name.startswith("V34"):
             return "V.34"
         if name.startswith("V32"):
@@ -1014,6 +1082,13 @@ class OnlineAudioSession:
 
         stats: dict = {"error_control": None, "compression": None,
                        "rtp": dict(self._rtp_counts), "realtime": self.realtime.report()}
+        stats["v8_protocols"] = {
+            "local": self._v8_local_protocols,
+            "negotiated": self._negotiated_v8_protocols(),
+            "lapm_direct_start": bool(getattr(self, "_v42_started_from_v8", False)),
+        }
+        stats['rx_pcm_samples'] = self._rx_pcm_samples
+        stats['rx_pcm_dbfs'] = pcm_dbfs(self._rx_pcm_sum_squares, self._rx_pcm_samples)
         stats["rtp_packetization_ms"] = self._rtp_frame_seconds * 1000
         stats["runtime_clock"] = dict(_RUNTIME_CLOCK_INFO)
         if self._v23_detector_transitions:
@@ -1052,7 +1127,8 @@ class OnlineAudioSession:
             stats['engine_events']=getattr(eng,'events',[])
         budget=getattr(eng,'_retrain_budget',None)
         if budget is not None:stats['v34_retrain_budget']=budget.report()
-        stats["rx_dbm0"] = getattr(eng, "rx_signal_power_dbm0", None)
+        if getattr(eng, 'is_v34', False):
+            stats['v34_retrain'] = eng.retrain_stats
         mode = getattr(eng, "v42_mode", "off")
         stats["v42_mode"] = mode
         # error_control is the negotiated call result (the protocol reported
@@ -1182,6 +1258,10 @@ class OnlineAudioSession:
                 received_chars=received,wire_acked=acknowledged,
                 source='delivered inbound bytes or valid advancing outbound LAPM acknowledgements',
                 activity_hold_seconds=.5)
+        stats['fallback_events'] = recorded_fallbacks(
+            eng, stats.get('online_control'))
+        if stats['fallback_events'] is not None:
+            stats['fallback_scope'] = 'retained post-connect transitions; startup rate selection is not classified'
         stats['rtp']=dict(self._rtp_counts)
         return stats
 
@@ -1342,7 +1422,15 @@ class OnlineAudioSession:
             print(f"[v42] detection failed; rx bits during detection (RLE): "
                   f"{self._v22.detect_bits_rle()}", file=sys.stderr, flush=True)
         if self._v42_active() and not self._v42_started and self._line_up():
-            self._v22.start_v42(
+            v8_protocols = self._negotiated_v8_protocols()
+            # V.8's mutually agreed LAPM protocol category permits skipping
+            # V.42 ODP/ADP detection. LAPM's XID exchange still negotiates
+            # link parameters. Without that agreement, retain ordinary V.42
+            # detection as an alternate negotiation path.
+            from v8 import V8_PROTOCOL_LAPM_V42  # noqa: PLC0415
+
+            v8_lapm = v8_protocols is not None and bool(v8_protocols & V8_PROTOCOL_LAPM_V42)
+            v42_options = dict(
                 calling_party=(self._tx_role == "originate"),
                 frame_size=self._v42_frame_size,
                 xid_fallback=self._v42_xid_fallback,
@@ -1352,10 +1440,15 @@ class OnlineAudioSession:
                 **({"protocol": "mnp"} if self._want_mnp else
                    {"compression": V42BIS_PARAMS} if self._v42bis else {}),
             )
+            if v8_lapm:
+                v42_options["detect"] = False
+            self._v22.start_v42(**v42_options)
             self._v42_started = True
+            self._v42_started_from_v8 = v8_lapm
             if self.debug:
                 print(f"[v42 +{time.monotonic() - self._created:5.2f}s] starting V.42 "
-                      f"detection at {self.line_speed} bps", file=sys.stderr, flush=True)
+                      f"{'LAPM directly from V.8 agreement' if v8_lapm else 'detection'} "
+                      f"at {self.line_speed} bps", file=sys.stderr, flush=True)
         if getattr(self, '_online_control', None) is not None:
             self._online_control.activate()
         negotiator = self._negotiator
@@ -1508,6 +1601,11 @@ class OnlineAudioSession:
         pcm = struct.pack(
             f"<{len(payload)}h", *(ulaw_to_linear(sample) for sample in payload)
         )
+        # Decoded PCMU input to the modem engine, before DSP-specific
+        # filtering; an audio-interface level, not analog loop dBm0.
+        for (sample,) in struct.iter_unpack("<h", pcm):
+            self._rx_pcm_sum_squares += sample * sample
+        self._rx_pcm_samples += len(payload)
         self._last_pcm = pcm
         return self._receive_pcm(pcm)
 
@@ -1798,13 +1896,15 @@ class OnlineAudioSession:
         """Admit PCMU from a qualified address/SSRC, returning buffered packets.
 
         Three consecutive sequence numbers from one endpoint within one second
-        establish the peer. After that, a different address/port is rejected;
-        a new SSRC from the established address/port must pass the same
-        probation before its audio is admitted. This permits legitimate RTP
-        source restarts without allowing an SSRC change to redirect the
-        transmitter. This is source probation, not authentication: deployments
-        must still restrict reachable RTP ports. Each returned tuple retains
-        its original arrival time/clock metadata.
+        establish the peer. After that, foreign addresses or SSRCs cannot
+        redirect the transmitter or inject samples. A same-address/port SSRC
+        restart is requalified only when sequence and timestamp continuity from
+        the previous packet is exact and three more consecutive packets pass
+        probation. This accommodates an RTP mixer/B2BUA replacing its SSRC
+        during an established call while rejecting unrelated endpoints and
+        discontinuous streams. This is source probation, not authentication;
+        deployments must still restrict reachable RTP ports.
+        Each returned tuple retains its original arrival time/clock metadata.
         """
         try:
             host, port = addr[0], int(addr[1])
@@ -1817,25 +1917,65 @@ class OnlineAudioSession:
         # CSRC/extension/padding layouts and interpret their bytes as audio.
         if len(packet) <= 12 or packet[0] != 0x80 or packet[1] & 0x7f != 0:
             return []
-        seq, ssrc = struct.unpack_from('!H', packet, 2)[0], packet[8:12]
+        seq, timestamp = struct.unpack_from('!H', packet, 2)[0], struct.unpack_from('!I', packet, 4)[0]
+        ssrc = packet[8:12]
         peer = ((host, port), ssrc)
         row = (packet, received_at, clock_context)
-        if self._rtp_peer is not None:
-            if peer[0] != self._rtp_peer[0]:
-                return []
-            if peer == self._rtp_peer:
-                return [row]
         now = time.monotonic() if received_at is None else received_at
+
+        if self._rtp_peer is not None and peer == self._rtp_peer:
+            # A packet from the established stream cancels any incomplete SSRC
+            # candidate. Track only forward sequence progress so reordering or
+            # duplicates do not move the continuity anchor backward.
+            self._rtp_candidate.clear()
+            previous = self._rtp_source_last
+            if previous is None or 0 < ((seq - previous[0]) & 0xffff) < 0x8000:
+                self._rtp_source_last = (seq, timestamp, len(packet) - 12)
+            return [row]
+
+        if self._rtp_peer is not None:
+            # The network endpoint is pinned for the call. An SSRC change from
+            # that endpoint is accepted only as a contiguous stream restart.
+            if peer[0] != self._rtp_peer[0]:
+                self._rtp_candidate.clear()
+                return []
+            if self._rtp_candidate:
+                old_peer, old_seq, old_timestamp, old_samples, old_at, _ = self._rtp_candidate[-1]
+                continuous = (peer == old_peer
+                              and seq == (old_seq + 1) & 0xffff
+                              and timestamp == (old_timestamp + old_samples) & 0xffffffff
+                              and 0 <= now - old_at <= 1)
+            else:
+                previous = self._rtp_source_last
+                continuous = (previous is not None
+                              and seq == (previous[0] + 1) & 0xffff
+                              and timestamp == (previous[1] + previous[2]) & 0xffffffff)
+            if not continuous:
+                self._rtp_candidate.clear()
+                return []
+            self._rtp_candidate.append(
+                (peer, seq, timestamp, len(packet) - 12, now, row)
+            )
+            if len(self._rtp_candidate) < 3:
+                return []
+            self._rtp_peer = peer
+            self._rtp_source_last = (seq, timestamp, len(packet) - 12)
+            accepted = [item[5] for item in self._rtp_candidate]
+            self._rtp_candidate.clear()
+            return accepted
+
         if self._rtp_candidate:
-            old_peer, old_seq, old_at, _ = self._rtp_candidate[-1]
+            old_peer, old_seq, _old_timestamp, _old_samples, old_at, _ = self._rtp_candidate[-1]
             if peer != old_peer or seq != (old_seq + 1) & 0xffff or not 0 <= now-old_at <= 1:
                 self._rtp_candidate.clear()
-        self._rtp_candidate.append((peer, seq, now, row))
+        self._rtp_candidate.append((peer, seq, timestamp, len(packet) - 12, now, row))
         if len(self._rtp_candidate) < 3:
             return []
         self._rtp_peer = peer
         self._send_addr = peer[0]
-        accepted = [item[3] for item in self._rtp_candidate]
+        last = self._rtp_candidate[-1]
+        self._rtp_source_last = (last[1], last[2], last[3])
+        accepted = [item[5] for item in self._rtp_candidate]
         self._rtp_candidate.clear()
         return accepted
 
@@ -1974,7 +2114,10 @@ class AtDce:
         self._online_action = None
         self._v42_break_action: Callable[..., bool] | None = None
         self._software_test_loop_action: Callable[[bool], bool] | None = None
+        self._local_digital_loop_action: Callable[[bool], bool] | None = None
         self.software_test_loop_state = "off"
+        self.digital_test_loop_state = "off"
+        self.digital_test_loop_bytes = 0
         self.online_return_pending = False
         self._input = bytearray()
         self._overflow = False
@@ -2061,6 +2204,9 @@ class AtDce:
         # Software-loop endpoint role: 0=caller (forward DTE TX),
         # 1=answerer (75-baud backward DTE TX).
         self.v23_software_loop_role = 0
+        # V.250 +CLIP defaults off; the last incoming identity remains
+        # available through ATI15 whether or not unsolicited reports are on.
+        self.clip_enabled = False
         # Project extension: allow a legacy peer that ignores XID to establish
         # LAPM with defaults, or require the XID exchange to complete.
         self.v42_xid_fallback = os.environ.get("V42_XID_FALLBACK", "1") != "0"
@@ -2153,6 +2299,7 @@ class AtDce:
         except (TypeError, ValueError):
             loop_role = 0
         self.v23_software_loop_role = loop_role if loop_role in (0, 1) else 0
+        self.clip_enabled = bool(getattr(self, "clip_enabled", False))
 
     def filter_ifc_input(self, data: bytes) -> bytes:
         """Apply DTE XON/XOFF for +IFC's DCE-output direction.
@@ -2259,6 +2406,10 @@ class AtDce:
             self.ring_count = min(255, self.ring_count + 1)
             self.registers[1] = self.ring_count
             self._notifications.put(self._result("RING"))
+            if self.ring_count == 1 and self.clip_enabled:
+                indication = self._clip_indication()
+                if indication:
+                    self._notifications.put(indication)
             auto_answer_rings = self.registers[0]
             if (
                 auto_answer_rings
@@ -2269,9 +2420,37 @@ class AtDce:
                 self._auto_answer_pending = True
                 threading.Thread(target=self._answer_automatically, daemon=True).start()
 
+    @staticmethod
+    def _clip_quote(value: object, limit: int = 40) -> str:
+        """Bound and quote SIP identity text before exposing it as an AT result."""
+        text = str(value or "").encode("ascii", "ignore").decode("ascii")
+        text = "".join(ch for ch in text if 32 <= ord(ch) < 127)
+        return text[:limit].replace("\\", "\\\\").replace('"', '\\"')
+
+    def _clip_indication(self) -> bytes:
+        caller = self.caller_id or {}
+        if caller.get("presentation") == "restricted":
+            number, name, number_type, validity = "", "", 128, 1
+        else:
+            raw_number = self._clip_quote(caller.get("number"))
+            international = raw_number.startswith("+")
+            number = raw_number[1:] if international else raw_number
+            name = self._clip_quote(caller.get("name"))
+            number_type = 145 if international else 129
+            validity = 0 if number else 2
+        # V.250's optional subaddress fields are empty; alpha and validity
+        # fields distinguish a withheld identity from unavailable caller ID.
+        return self._line(f'+CLIP: "{number}",{number_type},,,"{name}",{validity}')
+
     def begin_incoming_call(self, caller: dict | None = None) -> None:
         with self._lock:
-            self.caller_id = dict(caller or {}, wall=time.time())
+            identity = dict(caller or {})
+            raw_number = str(identity.get("number", "")).strip().lower()
+            restricted = (identity.get("presentation") == "restricted"
+                          or raw_number in ("anonymous", "restricted", "unavailable"))
+            if restricted:
+                identity.update(number="", name="", presentation="restricted")
+            self.caller_id = dict(identity, wall=time.time())
             self.incoming_ringing = True
             self.ring_count = 0
             self.registers[1] = 0
@@ -2314,6 +2493,11 @@ class AtDce:
         with self._lock:
             self._software_test_loop_action = action
 
+    def attach_local_digital_loop(self, action: Callable[[bool], bool]) -> None:
+        """Attach Hayes &T3's local DTE loop; this is not a V.54 line loop."""
+        with self._lock:
+            self._local_digital_loop_action = action
+
     def enter_online_command_mode(self) -> bool:
         """Return the DTE to command mode without releasing the active call."""
         with self._lock:
@@ -2349,7 +2533,8 @@ class AtDce:
                 self.online = True
                 self._call = {"start": time.monotonic(), "wall": time.time(), "speed": self.connect_speed,
                               "suffix": self.connect_suffix, "modulation": self.connect_modulation,
-                              "direction": self._direction, "number": self._number}
+                              "direction": self._direction, "number": self._number,
+                              "dte_rx_dropped": 0}
             else:
                 self.online = False
                 self.incoming_ringing = False
@@ -2414,7 +2599,7 @@ class AtDce:
 
     PROFILE_FIELDS = ("echo", "quiet", "verbose", "result_mode", "dtr_behavior", "flow_control", "break_control", "ifc", "icf", "error_control",
                       "compression", "carrier_detect", "auto_rate_mode", "bell212_char_bits", "bell212_parity", "bell212_line_type", "guard_tone", "v42_xid_fallback",
-                      "v23_backward_channel", "v23_software_loop_role")
+                      "v23_backward_channel", "v23_software_loop_role", "clip_enabled")
 
     def _profile_snapshot(self) -> dict:
         snap = {name: getattr(self, name) for name in self.PROFILE_FIELDS}
@@ -2521,6 +2706,11 @@ class AtDce:
             call["chars_sent"] = call.get("chars_sent", 0) + sent
             call["chars_received"] = call.get("chars_received", 0) + received
 
+    def count_dte_rx_dropped(self, count: int) -> None:
+        """Count modem-to-DTE bytes discarded by an observed local bounded queue."""
+        if count > 0 and self._call is not None:
+            self._call['dte_rx_dropped'] = self._call.get('dte_rx_dropped', 0) + int(count)
+
     def call_ended(self, reason: str, stats: dict | None = None) -> None:
         """Record the call that just ended (connected or not) for ATI6/ATI11. Safe to call more than once."""
         with self._lock:
@@ -2582,6 +2772,7 @@ class AtDce:
                 f"+BDF={get('bell212_char_bits')} +BPAR={get('bell212_parity')} "
                 f"+XID={int(get('v42_xid_fallback'))} +V23BC={int(get('v23_backward_channel'))} "
                 f"+V23DIR={get('v23_software_loop_role')} "
+                f"+CLIP={int(get('clip_enabled'))} "
                 f"\\N{get('error_control')} %C{get('compression')}")
 
     def _regs_text(self, regs: dict) -> str:
@@ -2604,6 +2795,7 @@ class AtDce:
                 f"  +XID={int(get('v42_xid_fallback'))}  (V.42 unanswered-XID compatibility fallback)",
                 f"  +V23BC={int(get('v23_backward_channel'))}  (V.23 75-baud backward channel)",
                 f"  +V23DIR={get('v23_software_loop_role')}  (software-loop role: 0 caller, 1 answerer)",
+                f"  +CLIP={int(get('clip_enabled'))}  (unsolicited incoming SIP caller identity)",
                 f"  %C{get('compression')}  \\N{get('error_control')}"]
 
     def _number_slots(self) -> list[str]:
@@ -2638,6 +2830,7 @@ class AtDce:
         # claim that the receive path detected no lost characters, which the
         # current byte-stream and modem engines cannot establish.
         lines.append(self._columns(("Chars lost", "N/A")))
+        lines.append(self._columns(("DTE RX bytes dropped", c.get('dte_rx_dropped', 0))))
 
         if b:
             lines.append(self._columns(("Octets sent", b["wire_out"]), ("Octets received", b["wire_in"])))
@@ -2652,12 +2845,23 @@ class AtDce:
         comp = "V.42 bis" if stats.get("compression") == "V.42BIS" else "None"
 
         lines.append(self._columns(("Compression", comp), ("Line Conditioned", 'N/A')))
-        retrain = stats.get('v32_retrain') or {}
+        retrain = stats.get('retrain') or stats.get('v32_retrain') or {}
         events = retrain.get('events', [])
-        completed = sum('completed_seconds' in event for event in events) if 'events' in retrain else 'N/A'
+        completed = retrain.get('completed',
+                                sum('completed_seconds' in event for event in events)
+                                if 'events' in retrain else 'N/A')
         lines.append(self._columns(("Retrain attempts", retrain.get('attempts', stats.get('retrain_attempts', 'N/A'))),
                                    ("Retrains completed", completed)))
-        lines.append(self._columns(("Fallbacks", stats.get('fallbacks', 'N/A'))))
+        if any(key in retrain for key in ('local_started', 'peer_started', 'failed')):
+            lines.append(self._columns(("Retrain local/peer", f"{retrain.get('local_started', 0)}/{retrain.get('peer_started', 0)}"),
+                                       ("Failed", retrain.get('failed', 0))))
+            lines.append(self._columns(("Retrain auto starts", retrain.get('automatic_started', 0)),
+                                       ("Completed", retrain.get('completed', completed))))
+        fallback_events = stats.get('fallback_events')
+        lines.append(self._columns(("Post-connect fallbacks", len(fallback_events)
+                                    if isinstance(fallback_events, list) else 'N/A')))
+        if isinstance(fallback_events, list):
+            lines.append("  Logged transitions only; startup rate selection is not counted.")
         lines.append(self._columns(("Disconnect Reason", self.DISCONNECT_REASONS.get(c["result"], c["result"]))))
 
         mins, secs = divmod(int(c["duration"]), 60)
@@ -2684,10 +2888,20 @@ class AtDce:
         if section == 1:
             tx_rate, rx_rate = stats.get('tx_rate') or c['speed'], stats.get('rx_rate') or c['speed']
             lines = [head, f"  MODULATION: {c.get('modulation') or 'UNKNOWN'}   TX {tx_rate}  RX {rx_rate}"]
+            lines.append(f"  DATA OCTETS: TX {c.get('chars_sent', 0)}  RX {c.get('chars_received', 0)}")
+            lines.append(f"  DTE RX BYTES DROPPED (LOCAL QUEUES): {c.get('dte_rx_dropped', 0)}")
+            duration = c.get('duration')
+            if duration is None and c.get('start') is not None:
+                duration = time.monotonic() - c['start']
+            if duration is not None:
+                lines.append(f"  CALL DURATION: {max(0, int(duration))} seconds")
             if stats.get("symbol_rate"):
                 lines.append(f"  SYMBOL RATE: {stats['symbol_rate']:.0f}")
-            level = stats.get("rx_dbm0")
-            lines.append("  RX LEVEL: " + (f"{level:.1f} dBm0" if finite(level) else "N/A"))
+            level = stats.get("rx_pcm_dbfs")
+            samples = stats.get('rx_pcm_samples', 0)
+            lines.append("  RX PCM LEVEL: " + (f"{level:.1f} dBFS RMS ({samples} samples)"
+                                                  if finite(level) else "N/A"))
+            lines.append("  Decoded PCMU media level; not calibrated analog line level/dBm0.")
             lines.append("  SNR: N/A (NOT MEASURED)   ECHO: N/A (NOT MEASURED)")
             probe_snr = stats.get('probe_snr_db')
             if finite(probe_snr):
@@ -2726,11 +2940,14 @@ class AtDce:
         lines = []
         if stats.get('line_state') is not None:
             lines.append(f"  DSP STATE: {stats['line_state']}")
-        retrain = stats.get('v32_retrain') or {}
+        retrain = stats.get('retrain') or stats.get('v32_retrain') or {}
         attempts = retrain.get('attempts', stats.get('retrain_attempts'))
         if attempts is not None:
             active = retrain.get('active', stats.get('retraining', False))
             lines.append(f"  RETRAIN ATTEMPTS: {attempts}   ACTIVE: {'YES' if active else 'NO'}")
+            if any(key in retrain for key in ('local_started', 'peer_started', 'failed')):
+                lines.append(f"  RETRAINS LOCAL/PEER/AUTO: {retrain.get('local_started', 0)}/{retrain.get('peer_started', 0)}/{retrain.get('automatic_started', 0)}"
+                             f"   COMPLETED/FAILED: {retrain.get('completed', 0)}/{retrain.get('failed', 0)}")
         echo = stats.get('v32_echo') or {}
         if echo:
             lines.append(f"  ECHO CANCELLER: {'ENABLED' if echo.get('enabled') else 'DISABLED'}")
@@ -2748,10 +2965,24 @@ class AtDce:
             lines.append(f"  V.34 DETECTOR PATH COST / SYMBOL: {cost:.6g}")
             lines.append('  Squared waveform-grid units; not SNR or bit error rate.')
             lines.append(f"  QUALITY SYMBOLS: {quality.get('symbols', 'N/A')}   WINDOWS: {quality.get('windows', 'N/A')}")
+        qualification = stats.get('rx_qualification') or {}
+        held_out_nmse = qualification.get('held_out_nmse') if isinstance(qualification, dict) else None
+        if finite(held_out_nmse) and held_out_nmse >= 0:
+            residual_pct = 100.0 * held_out_nmse ** 0.5
+            lines.append(f"  V.34 B1 HOLDOUT RESIDUAL: {residual_pct:.2f}% RMS OF REFERENCE")
+            lines.append('  Includes noise/model error; not live SNR or BER.')
         rtp = stats.get('rtp') or {}
         if rtp:
             lines.append(f"  RTP PACKETS: RX {rtp.get('received_packets', 'N/A')} DECODED {rtp.get('decoded_packets', 'N/A')}")
             lines.append(f"  RTP LATE/DUPLICATE: {rtp.get('late_or_duplicate_packets', 'N/A')}   CONCEALED SAMPLES: {rtp.get('concealed_samples', 'N/A')}")
+        fallbacks = stats.get('fallback_events')
+        if isinstance(fallbacks, list):
+            lines.append(f"  RECORDED FALLBACK EVENTS: {len(fallbacks)}")
+            lines.append("  " + stats.get('fallback_scope', 'Observed transitions only; not a full negotiation history.'))
+            for event in fallbacks[-4:]:
+                old, new = event.get('from_rate'), event.get('to_rate')
+                rates = f" {old}->{new} bit/s" if isinstance(old, int) and isinstance(new, int) else ""
+                lines.append(f"    {event.get('kind', 'unknown')}{rates}")
         measurements = (stats.get('realtime') or {}).get('measurements') or {}
         for name, label in (('data_rx_seconds', 'RX DSP'), ('data_tx_seconds', 'TX DSP'),
                             ('data_sender_lateness_seconds', 'TX SENDER LATENESS')):
@@ -2872,8 +3103,14 @@ class AtDce:
         if n == 9:
             return [pnp_identification(), ""]
         if n == 10:
-            return ["DIAL SECURITY ACCOUNT STATUS:", "LOCAL ACCESS:   ENABLED", "AUTOPASSWORD:   DISABLED",
-                    "DIALBACK:       DISABLED", "S53 REGISTER MAP: 000", ""]
+            # ATI10 is a Courier-specific security-account screen, not a
+            # generic Hayes status page. El-Modem has no account/password,
+            # DTMF-authentication, or dialback engine. Do not imply that
+            # local access is protected or that a security policy is active.
+            return ["DIAL SECURITY STATUS:", "STATUS:         NOT IMPLEMENTED",
+                    "INBOUND ACCESS: NOT PASSWORD-PROTECTED BY MODEM",
+                    "AUTOPASS:       NOT AVAILABLE", "DIALBACK:       NOT AVAILABLE",
+                    "DTMF SECURITY:  NOT AVAILABLE", ""]
         if n == 11:
             return self._support_report(1)
         if n == 12:
@@ -2883,16 +3120,21 @@ class AtDce:
             if not c:
                 return ["CALLER ID HISTORIC REGISTER:", "  EMPTY", ""]
             lt = time.localtime(c["wall"])
+            restricted = c.get("presentation") == "restricted"
+            number = "RESTRICTED" if restricted else c.get("number", "")
+            name = "RESTRICTED" if restricted else c.get("name", "")
             return ["CALLER ID HISTORIC REGISTER:", f"DATE={time.strftime('%m%d', lt)}", f"TIME={time.strftime('%H%M', lt)}",
-                    f"NMBR={c.get('number', '')}", f"NAME={c.get('name', '')}", ""]
+                    f"NMBR={number}", f"NAME={name}", ""]
         if n == 16:
             return self._support_report(2)
         if n == 17:
             return self._support_report(3)
         if n == 18:
-            return [f"SOFTWARE TEST LOOP: {self.software_test_loop_state.upper()}",
+            return [f"SOFTWARE AUDIO LOOP: {self.software_test_loop_state.upper()}",
+                    f"LOCAL DIGITAL LOOP (&T3): {self.digital_test_loop_state.upper()}  BYTES {self.digital_test_loop_bytes}",
                     "Bell 103, V.21, V.22/V.22bis, Bell 212A, V.23: paired DSP + PCMU",
-                    "Software audio test only; not a physical V.54 loop", ""]
+                    "&T3 loops DTE bytes locally; it is not a V.54 line loop.",
+                    "Physical V.54 remote/analog loop procedures are not implemented.", ""]
         return None
 
     def _view_config(self) -> bytes:
@@ -3009,12 +3251,25 @@ class AtDce:
                         self.software_test_loop_state = "software-audio-loop"
                         self.online = True
                         result = "CONNECT"
-                    elif mode == 0:
-                        action = self._software_test_loop_action
-                        if action is not None and not action(False):
+                    elif mode == 3:
+                        action = self._local_digital_loop_action
+                        if action is None or not action(True):
                             return self._result("ERROR")
-                        self.software_test_loop_state = "off"
-                        self.online = False
+                        self.digital_test_loop_state = "active"
+                        self.digital_test_loop_bytes = 0
+                        result = "CONNECT"
+                    elif mode == 0:
+                        if self.digital_test_loop_state == "active":
+                            action = self._local_digital_loop_action
+                            if action is None or not action(False):
+                                return self._result("ERROR")
+                            self.digital_test_loop_state = "off"
+                        else:
+                            action = self._software_test_loop_action
+                            if action is not None and not action(False):
+                                return self._result("ERROR")
+                            self.software_test_loop_state = "off"
+                            self.online = False
                     else:
                         return self._result("ERROR")
                 elif setting in "WYVSGPRMQ":
@@ -3168,7 +3423,7 @@ class AtDce:
                     output.extend(self._line(text))
             elif current == "+":
                 rest = command[index:]
-                m = re.match(r"(MS|GMI|GMM|GMR|GCAP|IPR|IFC|ICF|BDF|BPAR|XID|V23BC|V23DIR)(\?|=\?|=.*)?$", rest)
+                m = re.match(r"(MS|GMI|GMM|GMR|GCAP|IPR|IFC|ICF|BDF|BPAR|XID|V23BC|V23DIR|CLIP)(\?|=\?|=.*)?$", rest)
                 if not m:
                     return self._result("ERROR")
                 name, arg = m.group(1), m.group(2) or ""
@@ -3180,7 +3435,16 @@ class AtDce:
                 elif name == "GMR":
                     output.extend(self._line(VERSION))
                 elif name == "GCAP":
-                    output.extend(self._line("+GCAP: +MS +FCLASS"))
+                    output.extend(self._line("+GCAP: +MS +FCLASS +CLIP"))
+                elif name == "CLIP":
+                    if arg == "?":
+                        output.extend(self._line(f"+CLIP: {int(self.clip_enabled)}"))
+                    elif arg == "=?":
+                        output.extend(self._line("+CLIP: (0,1)"))
+                    elif arg in ("=0", "=1"):
+                        self.clip_enabled = arg == "=1"
+                    else:
+                        return self._result("ERROR")
                 elif name == "MS":
                     if arg == "?":
                         ms = self.ms
@@ -3411,13 +3675,17 @@ def sip_failure_result(reason: str) -> str:
 def line_from_ms(ms: dict) -> dict:
     """Turn an AT+MS selection (modulation, automode, min, max rate) into OnlineAudioSession arguments."""
     mod, hi = ms["mod"], ms["max"]
-    if ms.get("auto") and mod in ("V22", "V22B", "V32", "V32B", "V34"):
+    if ms.get("auto") and mod in ("V21", "V22", "V22B", "V32", "V32B", "V34"):
         # Automode: V.8 picks the best modulation both ends offer, no higher than the one selected here.
-        from v8 import V8_MOD_V22, V8_MOD_V32, V8_MOD_V34  # noqa: PLC0415
+        from v8 import V8_MOD_V21, V8_MOD_V22, V8_MOD_V32, V8_MOD_V34  # noqa: PLC0415
 
-        ceiling = {"V22": 1, "V22B": 1, "V32": 2, "V32B": 2, "V34": 3}[mod]
-        allow = V8_MOD_V22 | (V8_MOD_V32 if ceiling >= 2 else 0) | (V8_MOD_V34 if ceiling >= 3 else 0)
+        ceiling = {"V21": 0, "V22": 1, "V22B": 1, "V32": 2, "V32B": 2, "V34": 3}[mod]
+        allow = ((V8_MOD_V22 if ceiling >= 1 else 0)
+                 | (V8_MOD_V32 if ceiling >= 2 else 0)
+                 | (V8_MOD_V34 if ceiling >= 3 else 0))
         lo = int(ms["min"])
+        if lo <= 300 <= hi:
+            allow |= V8_MOD_V21
         supported_v22 = tuple(rate for rate in (2400, 1200) if lo <= rate <= hi)
         supported_v32 = tuple(
             rate for rate in (14400, 12000, 9600, 7200, 4800)
@@ -3432,6 +3700,8 @@ def line_from_ms(ms: dict) -> dict:
             allow &= ~V8_MOD_V32
         if not v34_in_range:
             allow &= ~V8_MOD_V34
+        if mod == "V21" and not (allow & V8_MOD_V21):
+            raise ValueError("V.21 automode supports 300 bit/s; requested range excludes it")
         if not allow:
             raise ValueError(f"{mod} automode range contains no supported modulation rate")
         if mod == "V22" and not supported_v22:
@@ -3694,6 +3964,7 @@ def run_pty(
         iax_registered = False      # drives the MR lamp on the IAX path
         online_session: OnlineAudioSession | None = None
         software_loop = None
+        local_digital_loop = False
         arq_session: ArqSession | None = None
         data_mode = False
         connect_pending = False
@@ -3729,6 +4000,8 @@ def run_pty(
             nonlocal remote_break_waiting, remote_break_post_data
             nonlocal break_transport_warning
             if online_session is not None:
+                dce.count_dte_rx_dropped(len(escaped) + len(ifc_output_hold)
+                                         + len(remote_break_post_data))
                 if not set_bell_dte_framing(False):
                     print("[dce] failed to restore command-mode DTE framing before retrain",
                           file=sys.stderr, flush=True)
@@ -3799,6 +4072,8 @@ def run_pty(
             connect_pending = False
             orderly_release.clear()
             iax_media_active = False
+            dce.count_dte_rx_dropped(len(escaped) + len(ifc_output_hold)
+                                     + len(remote_break_post_data))
             escaped.clear()
             ifc_output_hold.clear()
             local_break_requests.reset()
@@ -3902,7 +4177,8 @@ def run_pty(
             """The terminal program closed the port: what a DTR drop does on a real modem, per &D."""
             nonlocal data_mode
             mode = dce.dtr_behavior
-            busy = online_session is not None or dce.online or dce.outgoing_pending
+            busy = (online_session is not None or dce.online or dce.outgoing_pending
+                    or local_digital_loop or software_loop is not None)
             if mode == 0 or not busy and mode < 3:
                 return
             if mode == 1:
@@ -3939,7 +4215,7 @@ def run_pty(
 
         def unified_hangup() -> None:
             nonlocal active_outbound
-            nonlocal software_loop, data_mode
+            nonlocal software_loop, data_mode, local_digital_loop
             orderly_release.clear()
             try:
                 end_online_session()
@@ -3948,6 +4224,7 @@ def run_pty(
                 if close_loop is not None:
                     close_loop()
                 software_loop = None
+                local_digital_loop = False
                 data_mode = False
                 dce.software_test_loop_state = "off"
                 call=active_outbound
@@ -4111,6 +4388,7 @@ def run_pty(
         dce = new_dce()
         online_session = None
         software_loop = None
+        local_digital_loop = False
         arq_session = None
         data_mode = False
         iax_dial_pending = False
@@ -4123,6 +4401,21 @@ def run_pty(
         active_outbound = None
         connect_pending = False
         escape_detector = EscapeSequenceDetector()
+
+    def local_digital_loop_action(enabled: bool) -> bool:
+        nonlocal local_digital_loop, data_mode
+        if enabled:
+            if local_digital_loop or online_session is not None or software_loop is not None:
+                return False
+            local_digital_loop = True
+            data_mode = True
+            return True
+        local_digital_loop = False
+        data_mode = False
+        escape_detector.__init__()
+        return True
+
+    dce.attach_local_digital_loop(local_digital_loop_action)
     if control is not None:
         dce.control_settings = True
     print(slave_name, flush=True)
@@ -4186,6 +4479,7 @@ def run_pty(
         if remote_break_deadline > time.monotonic():
             if len(remote_break_post_data) + len(decoded) > ifc_output_hold_limit:
                 print("[v42] post-BREAK DTE queue exhausted; dropping call", file=sys.stderr, flush=True)
+                dce.count_dte_rx_dropped(len(remote_break_post_data) + len(decoded))
                 remote_break_post_data.clear()
                 unified_hangup()
                 dce.notify_call_progress("NO CARRIER")
@@ -4204,7 +4498,7 @@ def run_pty(
         if dce.online and not data_mode and online_session is not None:
             # Online command mode (after "+++" or &D1): hold the bytes instead
             # of scrolling them over the OK prompt. Counted on flush.
-            escaped.hold(delivered)
+            dce.count_dte_rx_dropped(escaped.hold(delivered))
             return
         rts_paused = False
         if data_mode and dce.ifc[0] == 2:
@@ -4215,6 +4509,7 @@ def run_pty(
         if data_mode and (dce.ifc_dte_paused or rts_paused or ifc_output_hold):
             if len(ifc_output_hold) + len(delivered) > ifc_output_hold_limit:
                 print("[modem] DTE receive-flow buffer exhausted; dropping call", file=sys.stderr, flush=True)
+                dce.count_dte_rx_dropped(len(ifc_output_hold) + len(delivered))
                 ifc_output_hold.clear()
                 unified_hangup()
                 dce.notify_call_progress("NO CARRIER")
@@ -4569,13 +4864,17 @@ def run_pty(
                         iax_media_active = False
                     dce.outgoing_pending = False
                     dce.notify_call_progress("NO CARRIER")
-                elif data_mode and (online_session is not None or software_loop is not None):
+                elif data_mode and (online_session is not None or software_loop is not None or local_digital_loop):
                     passthrough = escape_detector.feed(dce.filter_ifc_input(data), time.monotonic())
                     if passthrough:
                         if os.environ.get("MODEM_DEBUG") == "1":
                             print(f"[dce] terminal transmit bytes={len(passthrough)}", file=sys.stderr, flush=True)
                         if software_loop is not None:
                             software_loop.feed_bytes(passthrough)
+                        elif local_digital_loop:
+                            term_write(passthrough)
+                            dce.digital_test_loop_bytes += len(passthrough)
+                            dce.count_chars(sent=len(passthrough), received=len(passthrough))
                         elif arq_session is not None:
                             arq_session.feed_terminal_bytes(passthrough)
                             framed = arq_session.pump_outgoing(time.monotonic())
@@ -4610,7 +4909,7 @@ def run_pty(
                                   file=sys.stderr, flush=True)
             if (
                 data_mode
-                and (online_session is not None or software_loop is not None)
+                and (online_session is not None or software_loop is not None or local_digital_loop)
                 and escape_detector.poll(time.monotonic())
             ):
                 if online_session is not None and not set_bell_dte_framing(False):

@@ -14,18 +14,19 @@ characters are escaped. ATI9 is a machine-readable packet and is not reformatted
 | `ATI3` | banner, embedded UTC compilation timestamp, revision, project URL |
 | `ATI4` | active settings: S-register grid (7 per row), `&C &D &K E Q V X %C \N`, `+MS`, network registers |
 | `ATI5` | stored profiles (`AT&Wn`) and the four stored phone numbers |
-| `ATI6` | link diagnostics of the last call: characters, octets, blocks (sent/received/resent), FCS errors, rates, modulation, protocol, compression, disconnect reason |
+| `ATI6` | link diagnostics: local DTE/line byte counts, known local DTE RX queue drops, LAPM blocks/errors, rates, retrain lifecycle, retained post-connect fallback events, modulation, protocol, compression and disconnect reason; end-to-end lost characters remain N/A |
 | `ATI7` | configuration: options, Python/NumPy, platform, program size, NVRAM file, build date, transport and SIP settings |
 | `ATI8` | stored numbers (`AT&Zn=number`, `ATDSn`), redial (`ATDL`), black list |
 | `ATI9` | Serial PnP packet: project-local `ELM0001`, class `MODEM`, compatible ID `PNPC103`, description and checksum. The vendor ID is not registered. |
-| `ATI10` | dial security status (static: no dial security) |
+| `ATI10` | explicit status: modem-level dial security is not implemented; inbound access is not password-protected by the modem |
 
-| `ATI11` | live or last-call DSP/line report: directional rates, receive level, available startup probe SNR, retrain counters, echo-canceller observations, detector quality, RTP and processing timing |
+| `ATI11` | live or last-call DSP report: directional rates, DTE octets/drop count and duration, decoded PCMU input RMS in dBFS (not analog dBm0), separately labeled startup probe estimate, V.34 B1 held-out residual, retrain lifecycle, echo observations, detector quality, RTP and processing timing; live SNR/BER remain N/A |
 | `ATI16` | error-control counters and observed byte ratios |
 | `ATI17` | PCM / V.90 / V.92 support status (not implemented) |
 
 | `ATI12` | SIP and IAX settings |
-| `ATI15` | caller ID of the last incoming call (`DATE=MMDD TIME=HHMM NMBR= NAME=`) |
+| `ATI15` | identity of the last incoming SIP/IAX call (`DATE=MMDD TIME=HHMM NMBR= NAME=`); restricted SIP identity is masked |
+| `ATI18` | software audio-loop and local `&T3` DTE-loop status; explicitly distinguishes them from physical V.54 loops |
 
 Build timestamps are stamped by the PyInstaller specification and read from the
 embedded `el-modem-build.json`. They do not change when an executable is copied
@@ -35,10 +36,27 @@ say `unknown` rather than guessing from file modification times.
 DSP figures are reported only when available from the selected engine. The V.34
 startup probe SNR is labelled a startup estimate, not live data SNR. V.32 decision
 residual MSE and V.34 survivor path cost are not converted into SNR or BER.
+The V.34 B1 held-out residual is the RMS prediction error on the second half of
+the known B1 sequence after gain/energy calibration on the first half; ATI reports
+it as a percent of reference RMS. It includes noise and model/channel residual,
+so it is not line SNR or BER.
 Echo-canceller input/output power includes the remote signal and is not an
 echo-only loss measurement. Unmeasured character loss, line conditioning and
 fallback counts say `N/A`, not zero or "good". Last-call statistics are copied at
 disconnect so a later call cannot mutate the record.
+
+`AT+CLIP=1` enables a `+CLIP` indication on the first `RING` of an incoming
+call; `AT+CLIP=0` disables it, `AT+CLIP?` reads the setting, and `AT+CLIP=?`
+lists its values. The answerer currently obtains identity from SIP `From` and
+honors `Privacy: id`; withheld identities are not exposed through `+CLIP` or
+ATI15. IAX caller number is displayed when supplied by the IAX peer. This is
+VoIP signaling identity, not analog Bell 202/V.23 Caller ID FSK decoding.
+
+`AT&T3` starts a local DTE byte loopback and returns `CONNECT`; use `+++` then
+`AT&T0` to stop it. `ATI18` reports the byte count. This tests the DTE byte
+path only. It is not V.54 remote digital loopback, analog line loopback, or a
+claim of V.54 conformance. `AT&T1` remains the profile-specific paired DSP
+software audio loop.
 
 For Windows, the inbox **Standard 33600 bps Modem** profile is `MDMGEN336`, section
 `Gen336` in `mdmgen.inf`. This is not a seven-character serial PnP ID. The draft
@@ -69,6 +87,29 @@ IAX2 calling uses the configured IAX host, port, username and password, with G.7
 `ATX0-4` (X2/X4 report NO DIALTONE, X3/X4 BUSY), `AT&G0|1|2` (V.22 guard tone: off/550/1800 Hz), `AT&V`, `AT&Wn`, `ATZn`, `AT&Zn=number` (slots 0-3), `ATDSn`, `ATDL`,
 `AT+MS=mod,auto,min,max` (auto=1 runs V.8), `AT+GMI/GMM/GMR/GCAP`, `S2` (escape character) and `S12` (escape guard time, 1/50 s).
 
+When `\N3` requests V.42 and the selected V.8 menu includes V.22, V.32 or
+V.34, El-Modem advertises LAPM in CM/JM. If both peers agree, it skips V.42
+ODP/ADP detection and proceeds directly to LAPM/XID after modulation training.
+If V.8 is absent or LAPM is not common, the normal V.42 detection path remains
+available. Raw, MNP-only and V.21-only calls do not advertise V.8 LAPM.
+
+Bell and ITU modulation families are selected explicitly with `AT+MS` (for
+example, `B103` versus `V21`, or `B212` versus `V22B`). There is no global
+country/standards selector; a country code is not a substitute for choosing
+the modem waveform family. V.8 `auto=1` applies to the V-series modes that
+support this V.8 chain; `B103` and `B212` remain explicit selections. The
+separate caller-side `auto` listener detects an incoming V.22, V.21 or Bell
+103 signal; it is not a two-way Bell-versus-ITU negotiation and does not
+select Bell 212A.
+
+`AT+MS` is the supported modulation and connection-rate control. `S37` is
+currently retained in profiles but has no effect. Its rate table and interaction
+with `N` vary across modem command sets; Courier `&N`/`&U` are vendor-specific
+commands and are not implemented. `ATI10` reports that modem-level dial
+security is unavailable. It does not protect inbound calls; use SIP/IAX
+authentication and deployment network controls for access policy. Courier
+account passwords, DTMF security and dialback are not implemented.
+
 `AT\\K0`-`AT\\K5` select the BREAK handling policy (default `AT\\K5`). In
 online command mode, `AT\\B` or `AT\\Bn` requests a V.42/LAPM BREAK; the
 reliable-link duration is fixed at 300 ms, so the optional digit does not alter
@@ -80,11 +121,14 @@ after transmission/retry is reported in modem diagnostics.
 Raw-mode BREAK duration and transports without native BREAK signaling are not
 implemented.
 
-The preliminary V.23 raw profile is selected with `AT+MS=V23,0,300,1200`;
-setting the maximum to 600 selects its 600-baud forward mode. The calling
-station sends on the 600/1200-baud forward channel while the answering station
-uses the 75-baud return channel. This profile does not support V.8 automode,
-V.42 or MNP and is not yet qualified against an independent V.23 modem.
+The preliminary switched V.23 profile is selected with
+`AT+MS=V23,0,300,1200`; setting the maximum to 600 selects its 600-baud forward
+mode. Switched calls use the V.25 caller/answer setup before V.23 data. The
+calling station sends on the 600/1200-baud forward channel while the answering
+station uses the 75-baud return channel. This profile does not support V.8
+automode, V.42 or MNP. Local production-path exact-payload tests cover both
+forward rates; independent switched-call qualification remains blocked because
+the available SmartLink peer enters V.23 but sends no modem signal.
 
 `AT+IFC?`, `AT+IFC=?` and `AT+IFC=dce-output,dte-input` configure DTE flow
 control. Software XON/XOFF modes are available on byte-stream endpoints; RTS/

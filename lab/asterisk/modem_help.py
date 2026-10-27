@@ -20,6 +20,8 @@ PAGES = {
         ('&Gn', 'V.22 guard tone: 0 off, 1 550 Hz, 2 1800 Hz; high-channel answer only.'),
         ('&Cn', 'Carrier detect: 0 forced on, 1 follows carrier.'),
         ('&Dn', 'DTR drop: 0 ignore, 1 command mode, 2 hang up, 3 reset.'),
+        ('&T0 / &T1', 'Stop a test / start the profile-specific software audio-loop test.'),
+        ('&T3', 'Local DTE byte loopback test; not a remote or analog V.54 loop.'),
         ('&Kn', 'Flow control; 2,4-6 use XON/XOFF. Hardware lines depend on the serial backend.'),
         ('&F', 'Load factory defaults.'),
         ('&V', 'Display active and stored settings.'),
@@ -63,6 +65,7 @@ PAGES = {
         ('+MS? / +MS=?', 'Read the selection / list supported selections.'),
         ('+GMI / +GMM', 'Manufacturer / model identification.'),
         ('+GMR / +GCAP', 'Firmware revision / capability identification.'),
+        ('+CLIP=n / +CLIP?', 'Enable/disable or read unsolicited incoming SIP caller identity.'),
         ('+IPR / +IFC / +ICF', 'DTE compatibility settings; do not create physical line clocks or synchronous operation.'),
     ], 'AT+MS?; AT+GMR'),
 }

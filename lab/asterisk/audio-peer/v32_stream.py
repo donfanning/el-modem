@@ -299,6 +299,8 @@ class V32Modem(V42Layer):
         # deployments can disable it (0) or tune it to their media path.
         self._auto_loss_retrain_ms = max(0, int(os.environ.get("V32_AUTO_LOSS_RETRAIN_MS", "160")))
         self._retrain_history = deque(maxlen=8)
+        self._retrain_counts = dict(local_started=0, peer_started=0, automatic_started=0,
+                                    completed=0, failed=0)
         self._retrain_rx_hold = []
         self._event_offset = 0.0
         self.fs = fs
@@ -493,6 +495,7 @@ class V32Modem(V42Layer):
     @property
     def retrain_stats(self):
         return dict(active=self._retraining, attempts=self._retrain_attempts,
+                    **self._retrain_counts,
                     limit=self._retrain_budget.limit, timeout_seconds=45,
                     budget=self._retrain_budget.report(), events=list(self._retrain_history))
 
@@ -526,6 +529,9 @@ class V32Modem(V42Layer):
             self._fail('V32 full-retrain budget exhausted')
             self.connected = False
             return False
+        category = ('local_started' if reason == 'local request' else
+                    'peer_started' if reason == 'peer request' else 'automatic_started')
+        self._retrain_counts[category] += 1
         # Construct fresh line DSP, keeping the enclosing link, locks, files and
         # application queues. No V.8/ANS, capture-file reopening or link restart.
         kwargs = dict(self._retrain_kwargs, my_rates=rates, use_v8=False,
@@ -543,6 +549,7 @@ class V32Modem(V42Layer):
         keep.update({k:self.__dict__[k] for k in ('_line_lock','_cap_rx','_cap_tx',
             'events','_out','_blockbuf','_configured_rates','_retrain_kwargs',
             '_retrain_history','_retrain_budget','_retrain_untrusted_samples',
+            '_retrain_counts',
             '_rate_changes_enabled','_rate_change_history')})
         keep['v42_mode'] = self.v42_mode
         keep['_event_offset'] = self._event_offset+self._t/self.fs
@@ -586,6 +593,7 @@ class V32Modem(V42Layer):
             self.set_v42_rate(self.bit_rate)
             self._retrain_history[-1].update(completed_seconds=self._event_offset+self._t/self.fs,
                                              negotiated_rate=self.bit_rate)
+            self._retrain_counts['completed'] += 1
             self._ev('V32 full retrain complete at '+str(self.bit_rate))
             if self._rate_changes_enabled:
                 from v32_rate_session import RateSession
@@ -613,6 +621,7 @@ class V32Modem(V42Layer):
             self._rrp.active = False
         if self._retraining:
             self._retrain_history[-1]['failure'] = why
+            self._retrain_counts['failed'] += 1
             self._retraining = False
         self._ev("FAILED: " + why)
 

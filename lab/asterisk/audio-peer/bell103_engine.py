@@ -27,6 +27,7 @@ def _energy(block, freq):
 class Bell103Engine(V42Layer):
     is_v32 = False
     is_v22 = False
+    supports_v42 = False
     capture_detect_bits = False
     bit_rate = 300
 
@@ -38,9 +39,14 @@ class Bell103Engine(V42Layer):
         self.standard = standard
         self.events: list[tuple[str, int]] = []
         self.connected = False
+        # V.21 answer-channel transmitters send the 1800-Hz guard with the
+        # data carrier. V.25 answer sequencing is handled by OnlineAudioSession
+        # for direct calls; a V.8Chain hands over after V.8 has completed.
+        guard_hz, guard_amp = ((1800.0, 6000.0)
+                               if standard == "v21" and not calling_party else (0.0, 0.0))
         self._tx = Bell103StreamTransmitter(
             "originate" if calling_party else "answer", amplitude=amplitude,
-            standard=standard)
+            standard=standard, guard_hz=guard_hz, guard_amp=guard_amp)
         self._rx = Bell103Receiver("answer" if calling_party else "originate",
                                    standard=standard)
         self._peer = STANDARDS[standard]["answer" if calling_party else "originate"]

@@ -1,16 +1,18 @@
-"""Automatic line-mode selection (our own code): V.8 first, then common modulation or legacy V.32/V.22.
+"""Automatic line-mode selection (our own code): V.8 first, then common modulation or legacy fallback.
 
 ``V8Chain`` presents the same surface as the single engines (tx_samples, feed_pcm, feed_bytes, pending_bits, bit_rate,
-is_settled, v42_*...). It runs V.8 (ITU-T V.8) offering V.34 / V.32bis / V.22bis, and when the V.8 exchange finishes it
-builds the engine for the highest modulation both ends named and hands the line over to it, forwarding calls from then on.
-Legacy callers recognize V.32 AC or V.22 USB1. Legacy answerers probe V.32 AC
-for two seconds after V.8 times out, then fall back to V.22 when it is allowed. Bell 103 / V.21 legacy partners are not covered by the chain.
+is_settled, v42_*...). It runs V.8 (ITU-T V.8) offering V.34 / V.32bis / V.22bis / V.21, and when the V.8 exchange
+finishes it builds the engine for the highest modulation both ends named and hands the line over to it, forwarding calls
+from then on. Legacy callers recognize V.32 AC or V.22 USB1. Legacy answerers probe V.32 AC
+for two seconds after V.8 times out, then fall back to V.22 when it is allowed. The opt-in Bell 103 fallback is separate;
+legacy V.21 without a completed V.8 exchange is not selected by this chain.
 """
 import threading
 import os
 import time
 
-from v8 import V8_MOD_V22, V8_MOD_V32, V8_MOD_V34, V8Negotiator
+from v8 import (V8_MOD_V21, V8_MOD_V22, V8_MOD_V32, V8_MOD_V34,
+                V8_PROTOCOL_NONE, V8_PROTOCOL_LAPM_V42, V8Negotiator)
 from v8 import np
 from autodetect import AnsGate
 
@@ -72,7 +74,8 @@ class V8Chain:
     def __init__(self, calling_party: bool, v34_rate: int = 33600, v32_rates=(14400, 12000, 9600, 7200, 4800),
                  v22_rate: int = 2400, allow=(V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22), patience: float = 6.0,
                  debug: bool = False, b103_fallback: bool | None = None, v22_attempt_seconds: float | None = None,
-                 v22_min_rate: int = 1200, v34_min_rate: int = 2400):
+                 v22_min_rate: int = 1200, v34_min_rate: int = 2400,
+                 protocols: int = V8_PROTOCOL_NONE):
         self.calling = calling_party
         self.v34_rate, self.v34_min_rate, self.v32_rates, self.v22_rate = v34_rate, v34_min_rate, tuple(v32_rates), v22_rate
         self.v22_min_rate = v22_min_rate
@@ -80,6 +83,9 @@ class V8Chain:
         self.patience = patience
         self.debug = debug
         self.events: list = []
+        # None means V.8 has not completed (or was not used); zero means it
+        # completed and the peers did not negotiate a common protocol.
+        self.negotiated_protocols: int | None = None
         self.engine = None
         self._engine_events_seen = 0
         self.kind = "v8"
@@ -87,7 +93,7 @@ class V8Chain:
         self._rx_lock = threading.RLock()
         self._trace_tx = os.environ.get('EL_MODEM_TIMING_TRACE') == '1'
         self._tx_timing = None
-        self._v8 = V8Negotiator(calling_party, modulations=allow)
+        self._v8 = V8Negotiator(calling_party, modulations=allow, protocols=protocols)
         self._t = 0
         self._queued = bytearray()
         self._queued_bits: list = []
@@ -155,6 +161,10 @@ class V8Chain:
             from bell103_engine import Bell103Engine  # noqa: PLC0415
 
             self.engine = Bell103Engine(calling)
+        elif kind == "v21":
+            from bell103_engine import Bell103Engine  # noqa: PLC0415
+
+            self.engine = Bell103Engine(calling, standard="v21")
         else:
             from v22 import V22Modem  # noqa: PLC0415
 
@@ -169,7 +179,8 @@ class V8Chain:
 
     def _pick(self, mods: int) -> str | None:
         mods &= self.allow
-        for bit, kind in ((V8_MOD_V34, "v34"), (V8_MOD_V32, "v32"), (V8_MOD_V22, "v22")):
+        for bit, kind in ((V8_MOD_V34, "v34"), (V8_MOD_V32, "v32"),
+                          (V8_MOD_V22, "v22"), (V8_MOD_V21, "v21")):
             if mods & bit:
                 return kind
         return None
@@ -180,6 +191,7 @@ class V8Chain:
         # keeps listening (a V.32 answerer sends ANS, then AC) and V.22 waits for the patience timeout.
         plain_now = st == 0 and self._v8.plain_ans and self._ac is None
         if st == 2:
+            self.negotiated_protocols = int(self._v8.result.get("protocols", V8_PROTOCOL_NONE))
             kind = self._pick(self._v8.result["modulations"])
             self._log(f"V.8 complete: {self._v8.result}")
             if kind is not None:

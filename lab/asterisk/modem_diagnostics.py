@@ -30,8 +30,53 @@ def line_metrics(engine):
         if core is not None:
             # This is the startup line-probe estimate, not ongoing data SNR.
             stats['symbol_rate'] = getattr(core, 'call_baud', None)
-    if hasattr(engine, '_retrains'):
+    retrain = getattr(engine, 'retrain_stats', None)
+    if isinstance(retrain, dict):
+        stats['retrain'] = retrain
+        stats['retrain_attempts'] = retrain.get('attempts')
+        stats['retraining'] = bool(retrain.get('active', False))
+    elif hasattr(engine, '_retrains'):
         stats['retrain_attempts'] = engine._retrains
         stats['retraining'] = bool(getattr(engine, '_retraining', False))
     stats['line_state'] = getattr(engine, 'state', None)
     return copy.deepcopy(stats)
+
+
+def pcm_dbfs(sum_squares, samples):
+    """RMS level relative to a full-scale sine in decoded signed-16 PCM."""
+    if not samples or not finite(sum_squares) or sum_squares <= 0:
+        return None
+    reference = (32768.0 ** 2) / 2.0
+    return 10.0 * math.log10((sum_squares / samples) / reference)
+
+
+def recorded_fallbacks(engine, online_control=None):
+    """Return observed post-connect fallback events; never infer from negotiated rate alone."""
+    events = []
+    seen = set()
+    tracks_bell = hasattr(engine, 'bell103_fallback')
+    if tracks_bell and getattr(engine, 'bell103_fallback', False):
+        events.append(dict(kind='bell212a-to-bell103', source='engine-state'))
+    retrain = getattr(engine, 'retrain_stats', None)
+    tracks_v32 = bool(getattr(engine, 'is_v32', False) and isinstance(retrain, dict))
+    if tracks_v32:
+        for event in retrain.get('events', ()):
+            old, new = event.get('previous_rate'), event.get('negotiated_rate')
+            if isinstance(old, int) and isinstance(new, int) and new < old:
+                key = ('rate-downshift', old, new)
+                if key not in seen:
+                    events.append(dict(kind='retrain-rate-downshift', from_rate=old,
+                                       to_rate=new, source='retrain-history'))
+                    seen.add(key)
+    if isinstance(online_control, dict):
+        for event in online_control.get('transactions', ()):
+            if event.get('status') == 'fallback-retrained':
+                old, new = event.get('initial_tx_rate'), event.get('tx_rate')
+                key = ('rate-downshift', old, new)
+                if key not in seen:
+                    events.append(dict(kind='online-control-fallback-retrain',
+                                       from_rate=old, to_rate=new, source='online-control'))
+                    seen.add(key)
+    if tracks_bell or tracks_v32 or isinstance(online_control, dict):
+        return events
+    return None

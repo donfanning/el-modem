@@ -12,6 +12,34 @@ def serial_backend_choices(platform=None):
     if platform.startswith('linux'):return ('driver','pty','tcp','device')
     return ('pty','tcp','device')
 
+SETTING_LABELS={
+    'network.trunk':'Transport',
+    'sip.server':'Server','sip.port':'Port','sip.user':'User','sip.password':'Password',
+    'sip.registrar':'Registrar','sip.caller_number':'Caller ID','sip.contact_host':'Contact host',
+    'iax.server':'Server','iax.port':'Port','iax.user':'User','iax.password':'Password',
+    'iax.caller_number':'Caller ID','iax.register':'Register',
+    'sip.bind_host':'Bind address','sip.bind_port':'SIP port',
+    'sip.media_host':'Media address','sip.media_port':'RTP port',
+    'modem.modulation':'Standard','modem.automatic':'Automode',
+    'modem.min_rate':'Minimum rate','modem.max_rate':'Maximum rate',
+    'modem.error_control':'Error control','modem.compression':'Compression',
+    'recording.enabled':'Recording','recording.seconds':'Limit (seconds)',
+    'serial.backend':'Port type','serial.device':'Device','serial.tcp_port':'TCP port',
+    'serial.baud':'Baud rate','instance.name':'Name',
+}
+SIP_NETWORK_FIELDS={'sip.contact_host','sip.bind_host','sip.bind_port','sip.media_host','sip.media_port'}
+
+def setting_label(name):
+    if name in SETTING_LABELS:return SETTING_LABELS[name]
+    if name.startswith('dsp.') or name.startswith('runtime.'):
+        return name.split('.',1)[1].replace('_',' ').title()
+    if name.startswith('modem.'):
+        return name.split('.',1)[1].replace('_',' ').title()
+    if name.startswith('network.'):
+        return name.split('.',1)[1].replace('_',' ').title()
+    if name.startswith('s') and name[1:].isdigit():return f'S-register {name[1:]}'
+    return name.replace('_',' ').replace('.',' / ').title()
+
 class AsciiBuffer:
     def __init__(self,limit=1000): self.lines=[''];self.limit=limit
     def feed(self,data):
@@ -49,14 +77,14 @@ class InstanceDialog(ModalScreen):
     def compose(self):
         serial_options=serial_backend_choices()
         with Vertical(id='instance-window'):
-            yield Static('+-- INSTANCE / CONNECTION SETUP -------------------------------------+')
-            yield Static('The modem must be stopped before changing these values.')
+            yield Static(f'{self.spec.name.upper()}  /  CONNECTION',id='instance-title')
+            yield Static('Stop modem to edit endpoints.',id='instance-note')
+            labels={'name':'Name','sip_host':'SIP bind','sip_port':'SIP port',
+                    'media_host':'Media bind','media_port':'RTP port',
+                    'serial_port':'TCP port','serial_device':'Serial device','serial_baud':'Baud'}
             for name in ('name','sip_host','sip_port','media_host','media_port','serial_port','serial_device','serial_baud'):
-                # Label and field share a row: stacked at height 3 each, the
-                # eight fields pushed Save below the dialog's own bottom edge
-                # and the button could not be clicked at all.
                 with Horizontal(classes='field'):
-                    yield Label(name)
+                    yield Label(labels[name])
                     yield Input(str(getattr(self.spec,name,'')),id=name)
             current=self.spec.serial if self.spec.serial in serial_options else serial_options[0]
             with Horizontal(classes='field'):
@@ -64,7 +92,6 @@ class InstanceDialog(ModalScreen):
                 yield Select([(x,x) for x in serial_options],value=current,id='serial',allow_blank=False)
             yield Static('',id='error')
             with Horizontal():yield Button('Save',id='save');yield Button('Cancel',id='cancel')
-            yield Static('+-----------------------------------------------------------------------+')
     def on_button_pressed(self,event):
         event.stop()
         if event.button.id=='cancel':self.dismiss();return
@@ -77,20 +104,24 @@ class InstanceDialog(ModalScreen):
 
 class SettingsScreen(ModalScreen):
     BINDINGS=[('escape','back','Back')]
-    def __init__(self,ident):super().__init__();self.ident=ident;self.rows={}
+    def __init__(self,ident,category='modem'):super().__init__();self.ident=ident;self.rows={};self.visible_names=[];self.initial_category=category
     def compose(self):
         with Vertical(id='settings-window'):
-            yield Static('+-- MODEM CONFIGURATION ----------------------------------------------+')
-            yield Static('Settings are per modem. SIP and IAX2 share the modem DSP and data-link stack.')
-            yield Select([(x.title(),x) for x in ('all','modem','sip','iax','routing','advanced')],value='all',allow_blank=False,id='category')
+            yield Static(f'{self.ident.upper()}  /  SETTINGS',id='settings-title')
+            with Horizontal(id='settings-toolbar'):
+                yield Static('VIEW',id='category-label')
+                yield Select([('Modem','modem'),('SIP','sip'),('IAX2','iax'),
+                              ('Route','routing'),('Advanced','advanced')],
+                             value=self.initial_category,allow_blank=False,id='category')
             yield DataTable(id='settings')
-            yield Static('Select a row, edit the value below, then Apply. Save profile persists changes.')
-            yield Input(id='value',placeholder='Value (password fields never read back)')
+            with Horizontal(id='field-editor'):
+                yield Label('VALUE',id='value-label')
+                yield Input(id='value',placeholder='Select a setting')
+            yield Static('Choose a field',id='field-status')
             with Horizontal():
-                yield Button('Apply',id='apply');yield Button('Save profile',id='save');yield Button('Refresh',id='refresh');yield Button('Close [Esc]',id='back')
-            yield Static('+-----------------------------------------------------------------------+')
+                yield Button('Apply',id='apply');yield Button('Save profile',id='save');yield Button('Close',id='back')
     def on_mount(self):
-        self.query_one(DataTable).add_columns('Setting','Value','Active','Apply');self.query_one(DataTable).cursor_type='row';self.refresh_settings()
+        self.query_one(DataTable).add_columns('SETTING','VALUE');self.query_one(DataTable).cursor_type='row';self.refresh_settings()
     def refresh_settings(self):self.app.command(self.ident,'settings',self.load_rows)
     def load_rows(self,rows):self.rows={x['name']:x for x in rows};self.render_rows()
     def render_rows(self):
@@ -101,35 +132,360 @@ class SettingsScreen(ModalScreen):
         from textual.css.query import NoMatches
         try: table=self.query_one(DataTable)
         except NoMatches: return
+        selected_before=(self.visible_names[table.cursor_row]
+                         if table.row_count and table.cursor_row<len(self.visible_names) else None)
         table.clear()
+        self.visible_names=[]
         category=self.query_one('#category',Select).value
         for name,row in self.rows.items():
             if category=='modem' and not (name.startswith('modem.') or name.startswith('s') and name[1:].isdigit()):continue
-            if category in ('sip','iax') and not name.startswith(category+'.'):continue
+            if category=='sip' and (not name.startswith('sip.') or name in SIP_NETWORK_FIELDS):continue
+            if category=='iax' and not name.startswith('iax.'):continue
             if category=='routing' and name!='network.trunk':continue
-            if category=='advanced' and not name.startswith(('dsp.','runtime.','recording.')):continue
+            if category=='advanced' and not (name.startswith(('dsp.','runtime.','recording.','serial.','instance.'))
+                                             or name in SIP_NETWORK_FIELDS):continue
             shown=str(row['value'])
-            if name=='network.trunk':shown={'0':'0 (SIP)','1':'1 (IAX2)'} .get(shown,shown)
-            table.add_row(name,shown,str(row['active']),row['apply'],key=name)
+            if name=='network.trunk':shown={'0':'SIP','1':'IAX2'}.get(shown,shown)
+            if row['secret']:shown='SET' if row['value'] else 'NOT SET'
+            elif len(shown)>44:shown=shown[:41]+'...'
+            state='~ ' if str(row['active'])!=str(row['value']) else ''
+            table.add_row(setting_label(name),state+shown,key=name)
+            self.visible_names.append(name)
+        if table.row_count:
+            row=self.visible_names.index(selected_before) if selected_before in self.visible_names else 0
+            table.move_cursor(row=row)
+        else:
+            self.query_one('#value',Input).value=''
+            self.query_one('#field-status',Static).update('No settings in this view')
     def on_select_changed(self,event):
         if self.rows:self.render_rows()
     def selected(self):
         table=self.query_one(DataTable)
         if not table.row_count:raise ValueError('select a setting')
-        return str(table.get_row_at(table.cursor_row)[0])
+        return self.visible_names[table.cursor_row]
     def on_data_table_row_highlighted(self,event):
         name=str(event.row_key.value)
         if name in self.rows:
-            field=self.query_one('#value',Input);field.password=self.rows[name]['secret']
-            field.value='' if self.rows[name]['secret'] else str(self.rows[name]['value'])
+            row=self.rows[name]
+            field=self.query_one('#value',Input);field.password=row['secret']
+            field.placeholder='Enter new password' if row['secret'] else 'Enter value'
+            field.value='' if row['secret'] else str(row['value'])
+            active=str(row['active']);configured=str(row['value'])
+            timing={'immediate':'Now','idle':'When idle','restart':'After restart'}.get(row['apply'],row['apply'])
+            pending=' | pending' if active!=configured else ''
+            self.query_one('#value-label',Label).update(setting_label(name).upper())
+            self.query_one('#field-status',Static).update(f'{timing}{pending}')
     def on_button_pressed(self,event):
         event.stop()
         if event.button.id=='back':self.action_back()
-        elif event.button.id=='refresh':self.refresh_settings()
         elif event.button.id=='save':self.app.command(self.ident,'save',lambda _:self.app.notify('Profile saved'))
         elif event.button.id=='apply':
             try:self.app.command(self.ident,'set',lambda _:self.refresh_settings(),name=self.selected(),value=self.query_one('#value',Input).value)
             except ValueError as exc:self.app.notify(str(exc),severity='error')
+    def action_back(self):self.app.pop_screen()
+
+class TelephonySetupScreen(ModalScreen):
+    """Small per-modem Asterisk setup flow; account secrets stay in the profile."""
+    BINDINGS=[('escape','back','Back')]
+    FIELDS=(('host','PBX host'),('port','SIP port'),('context','Call context'),
+            ('transport','Transport'),('asterisk_dir','Asterisk config dir'))
+    def __init__(self,ident):super().__init__();self.ident=ident;self.account={}
+    def compose(self):
+        with Vertical(id='provision-window'):
+            yield Static(f'{self.ident.upper()}  /  ASTERISK SETUP',id='provision-title')
+            yield Static('Account credentials stay in this modem profile.',id='provision-note')
+            yield Static('Checking saved SIP account…',id='provision-account')
+            for name,label in self.FIELDS:
+                with Horizontal(classes='field'):
+                    yield Label(label)
+                    yield Input(id=name,placeholder=label)
+            with Horizontal():
+                yield Button('SIP settings',id='sip')
+                yield Button('Refresh',id='refresh')
+                yield Button('List contexts',id='contexts')
+                yield Button('Save map',id='save-map')
+                yield Button('Preview',id='preview')
+            with Horizontal():
+                yield Button('Apply to Asterisk',id='apply',variant='warning')
+                yield Button('Check link',id='check')
+                yield Button('Rollback last change',id='rollback')
+                yield Button('Close',id='close')
+            yield Static('Save SIP user, password and registrar in SIP Settings first.',id='provision-status')
+    def on_mount(self):
+        self.load_existing_map()
+        self.refresh_account()
+    def load_existing_map(self):
+        import json
+        from pathlib import Path
+        path=self.app.supervisor.path.parent/'telephony-map.json'
+        if not path.is_file():
+            defaults={'host':'','port':'5060','context':'','transport':'udp-transport','asterisk_dir':''}
+            for name,value in defaults.items():self.query_one('#'+name,Input).value=value
+            return
+        try:
+            saved=json.loads(path.read_text(encoding='utf-8'))
+            if not isinstance(saved,dict):raise ValueError('saved map must be an object')
+            pbx=saved.get('pbx',{})
+            if not isinstance(pbx,dict):raise ValueError('saved PBX settings must be an object')
+            values={'host':pbx.get('host',''),'port':str(pbx.get('port',5060)),
+                    'context':pbx.get('context','from-internal'),
+                    'transport':pbx.get('transport','udp-transport'),
+                    'asterisk_dir':pbx.get('config_dir','')}
+            for name,value in values.items():self.query_one('#'+name,Input).value=str(value)
+        except (OSError,ValueError,TypeError):
+            self.query_one('#provision-status',Static).update('Saved telephony map is unreadable; repair it before continuing.')
+    def refresh_account(self):
+        from modem_provisioning import read_saved_network_profile
+        profile_error=None
+        try:
+            net=read_saved_network_profile(self.app.supervisor.path,self.ident)
+        except ValueError as exc:
+            net={}
+            profile_error=str(exc)
+        user=str(net.get('102','')).strip()
+        registrar=str(net.get('104','')).strip()
+        password=str(net.get('103',''))
+        if profile_error:
+            state=profile_error
+        elif user and password and registrar:
+            state=f'Saved SIP account {user}  /  registrar {registrar}'
+        else:
+            state='SIP account incomplete. Set user, password and registrar in SIP Settings, then save profile.'
+        self.query_one('#provision-account',Static).update(state)
+        if registrar:
+            host,sep,port=registrar.rpartition(':')
+            self.query_one('#host',Input).value=host if sep and port.isdigit() else registrar
+            if sep and port.isdigit():self.query_one('#port',Input).value=port
+    def _mapping(self):
+        import json
+        from pathlib import Path
+        host=self.query_one('#host',Input).value.strip()
+        try:port=int(self.query_one('#port',Input).value)
+        except ValueError as exc:raise ValueError('SIP port must be a number from 1 to 65535') from exc
+        if not host or not 1<=port<=65535:raise ValueError('Enter a PBX host and SIP port')
+        context=self.query_one('#context',Input).value.strip()
+        if not context:raise ValueError('Enter an existing Asterisk dialplan context that you have reviewed')
+        transport=self.query_one('#transport',Input).value.strip()
+        config_dir=self.query_one('#asterisk_dir',Input).value.strip()
+        path=self.app.supervisor.path.parent/'telephony-map.json'
+        if path.is_file():
+            current=json.loads(path.read_text(encoding='utf-8'))
+            if not isinstance(current,dict):raise ValueError('Saved telephony map must contain an object')
+            if current.get('schema')!=1:raise ValueError('Unsupported telephony map version')
+            pbx=current.get('pbx',{})
+            bindings=current.get('bindings',[])
+            if not isinstance(pbx,dict):raise ValueError('Saved PBX settings are malformed')
+            if not isinstance(bindings,list) or any(not isinstance(item,dict) for item in bindings):
+                raise ValueError('Saved modem bindings are malformed')
+            new_pbx=dict(type='asterisk',host=host,port=port,context=context,transport=transport)
+            if config_dir:new_pbx['config_dir']=config_dir
+            if bindings and {k:pbx.get(k) for k in ('type','host','port','context','transport')} != {
+                    k:new_pbx.get(k) for k in ('type','host','port','context','transport')}:
+                raise ValueError('This map already targets another Asterisk setup; keep its binding and use a separate map for this PBX.')
+        else:
+            current={'schema':1,'pbx':{},'bindings':[]}
+            new_pbx=dict(type='asterisk',host=host,port=port,context=context,transport=transport)
+            if config_dir:new_pbx['config_dir']=config_dir
+            bindings=[]
+        bindings=list(current.get('bindings',[]))
+        if not any(item.get('modem')==self.ident for item in bindings):bindings.append({'modem':self.ident})
+        return path,dict(schema=1,pbx=new_pbx,bindings=bindings)
+    def save_map(self):
+        import tempfile
+        from pathlib import Path
+        from modem_storage import atomic_json
+        from modem_provision import adapter_for, build_provision_request
+        path,mapping=self._mapping()
+        # Validate the profile against this PBX target before replacing the
+        # durable map; the temporary map contains no secrets.
+        with tempfile.TemporaryDirectory(prefix='el-modem-map-',dir=path.parent) as tempdir:
+            temporary=Path(tempdir)/'map.json'
+            atomic_json(temporary,mapping)
+            adapter_for(mapping['pbx']['type'])
+            build_provision_request(self.app.supervisor.path,temporary)
+        atomic_json(path,mapping)
+        self.query_one('#provision-status',Static).update('Map saved privately. Preview or apply to update Asterisk.')
+        return mapping
+    async def plan_current_map(self):
+        import asyncio
+        import tempfile
+        from pathlib import Path
+        from modem_storage import atomic_json
+        from modem_provision import adapter_for, build_provision_request
+        path,mapping=self._mapping()
+        config_dir=self.query_one('#asterisk_dir',Input).value.strip()
+        target=Path(config_dir).expanduser().resolve() if config_dir else None
+        with tempfile.TemporaryDirectory(prefix='el-modem-map-',dir=path.parent) as tempdir:
+            temporary=Path(tempdir)/'map.json'
+            atomic_json(temporary,mapping)
+            adapter=adapter_for(mapping['pbx']['type'])
+            request=build_provision_request(self.app.supervisor.path,temporary,target)
+            plan=await asyncio.to_thread(adapter.plan,request)
+            if not self.is_mounted:return None
+            # Return only the safe summary/target outside the temporary map's
+            # lifetime. The secret-bearing plan artifacts are not needed here.
+            return mapping,plan.adapter_id,plan.target_id,plan.summary,plan.warnings
+    async def list_contexts(self):
+        import asyncio
+        from pathlib import Path
+        from modem_provision import _defined_dialplan_contexts
+        try:
+            directory_text=self.query_one('#asterisk_dir',Input).value.strip()
+            if not directory_text:raise ValueError('Enter the Asterisk config directory first')
+            dialplan=Path(directory_text).expanduser().resolve()/'extensions.conf'
+            self.query_one('#provision-status',Static).update('Reading statically included dialplan contexts…')
+            contexts=await asyncio.to_thread(_defined_dialplan_contexts,dialplan)
+            if not self.is_mounted:return
+            if not contexts:message='No static contexts found in extensions.conf or its includes.'
+            else:message='Review one of these existing contexts, then enter it above: '+', '.join(sorted(contexts))
+            self.query_one('#provision-status',Static).update(message)
+        except (ValueError,OSError,TypeError) as exc:
+            if self.is_mounted:self.query_one('#provision-status',Static).update(str(exc))
+    def apply_map(self):
+        import json
+        from pathlib import Path
+        from modem_storage import atomic_json
+        from modem_provision import adapter_for, build_provision_request
+        try:
+            config_dir=self.query_one('#asterisk_dir',Input).value.strip()
+            if not config_dir:raise ValueError('Enter the Asterisk config directory before applying')
+            directory=Path(config_dir).expanduser().resolve()
+            map_path=self.app.supervisor.path.parent/'telephony-map.json'
+            if map_path.is_symlink():raise ValueError('Telephony map must not be a symlink')
+            previous_map=json.loads(map_path.read_text(encoding='utf-8')) if map_path.is_file() else None
+            mapping=self.save_map()
+            adapter=adapter_for(mapping['pbx']['type'])
+            try:
+                plan=adapter.plan(build_provision_request(self.app.supervisor.path,map_path,directory))
+                backups=adapter.apply(plan)
+            except Exception as apply_error:
+                try:
+                    if previous_map is None:map_path.unlink(missing_ok=True)
+                    else:atomic_json(map_path,previous_map)
+                except (OSError,TypeError,ValueError) as restore_error:
+                    raise RuntimeError(
+                        f'PBX apply failed ({apply_error}); restoring the previous telephony map also failed '
+                        f'({restore_error}). Check both the map and Asterisk files before retrying.') from apply_error
+                if isinstance(apply_error,PermissionError):
+                    self.query_one('#provision-status',Static).update(
+                        'Asterisk config is not writable by this user. Previous map restored. Keep the TUI unprivileged; '
+                        'run the documented `el-modem provision apply` command with administrator rights.')
+                    return
+                raise
+            backup_text=(' Backups: '+', '.join(path.name for path in backups)) if backups else ''
+            self.query_one('#provision-status',Static).update(
+                'Asterisk files updated. Review, then reload PJSIP: asterisk -rx "pjsip reload".'+backup_text)
+        except (ValueError,OSError,TypeError,RuntimeError) as exc:
+            if self.is_mounted:self.query_one('#provision-status',Static).update(str(exc))
+    async def check_link(self):
+        import asyncio
+        import tempfile
+        from pathlib import Path
+        from modem_storage import atomic_json
+        from modem_provision import adapter_for, build_provision_request, load_plan_inputs
+        try:
+            map_path,mapping=self._mapping()
+            directory_text=self.query_one('#asterisk_dir',Input).value.strip()
+            if not directory_text:raise ValueError('Enter the Asterisk config directory before checking')
+            directory=Path(directory_text).expanduser().resolve()
+            adapter=adapter_for(mapping['pbx']['type'])
+            self.query_one('#provision-status',Static).update('Checking current form values against PBX; saved map will not change…')
+            with tempfile.TemporaryDirectory(prefix='el-modem-check-',dir=map_path.parent) as tempdir:
+                temporary=Path(tempdir)/'map.json'
+                atomic_json(temporary,mapping)
+                request=build_provision_request(self.app.supervisor.path,temporary,directory)
+                plan=await asyncio.to_thread(adapter.plan,request)
+                if not self.is_mounted:return
+                report=await asyncio.to_thread(adapter.check,plan,live=True)
+                if not self.is_mounted:return
+                details=['mapped PBX resources: '+('consistent' if report.consistent else 'inconsistent')]
+                details.extend(report.details)
+                details.extend([f'{modem}: {status}' for modem,status in report.registrations])
+                details.extend([f'{modem} loaded endpoint: {status}' for modem,status in report.runtime])
+                _,_,endpoints=load_plan_inputs(self.app.supervisor.path,temporary)
+                account=next(item for item in endpoints if item['modem']==self.ident)
+                registrations=dict(report.registrations)
+                runtime=dict(report.runtime)
+            if self.ident in self.app.supervisor.workers:
+                self.query_one('#provision-status',Static).update('Checking live modem account, PBX endpoint and contact…')
+                self.app.command(self.ident,'settings',
+                    lambda rows:self.finish_live_check(rows,details,registrations,runtime,account))
+            else:
+                details.append(f'{self.ident} modem worker is stopped; live modem registration unavailable')
+                self.query_one('#provision-status',Static).update('  |  '.join(details))
+        except (ValueError,OSError,TypeError) as exc:
+            if self.is_mounted:self.query_one('#provision-status',Static).update(str(exc))
+    def rollback_map(self):
+        from pathlib import Path
+        from modem_provision import adapter_for
+        from modem_provisioning import ProvisionTarget
+        try:
+            directory_text=self.query_one('#asterisk_dir',Input).value.strip()
+            if not directory_text:raise ValueError('Enter the Asterisk config directory before rollback')
+            directory=Path(directory_text).expanduser().resolve()
+            target=ProvisionTarget('asterisk',str(directory),{'config_dir':str(directory)})
+            try:
+                restored=adapter_for('asterisk').rollback(target)
+            except PermissionError:
+                self.query_one('#provision-status',Static).update(
+                    'Asterisk config is not writable by this user. Keep the TUI unprivileged; '
+                    'run `el-modem provision rollback` with administrator rights.')
+                return
+            if restored:
+                message='Restored '+', '.join(path.name for path in restored)+'. Review, then reload PJSIP.'
+            else:
+                message='No files needed restoring; the latest El-Modem transaction was already at its prior state.'
+            self.query_one('#provision-status',Static).update(message)
+        except (ValueError,OSError,TypeError) as exc:
+            self.query_one('#provision-status',Static).update(str(exc))
+    def finish_live_check(self,rows,details,registrations,runtime,account):
+        from textual.css.query import NoMatches
+        try:status=self.query_one('#provision-status',Static)
+        except NoMatches:return
+        active={item['name']:str(item['value']) for item in rows}
+        user_match=active.get('sip.user','')==account['username']
+        registrar_match=active.get('sip.registrar','').strip().casefold()==account['registrar'].strip().casefold()
+        password_set=bool(active.get('sip.password',''))
+        modem_registration=self.app.supervisor.states.get(self.ident,{}).get('registration','unknown')
+        pbx_registration=registrations.get(self.ident,'not queried')
+        pbx_runtime=runtime.get(self.ident,'not queried')
+        if user_match and registrar_match and password_set:
+            details.append(f'{self.ident} active SIP username/registrar match saved profile; password is set but masked, so value equality is not checked')
+        else:
+            details.append(f'{self.ident} active SIP username/registrar/password presence DIFFERS from saved profile')
+        details.append(f'{self.ident} modem: {modem_registration}; PBX: {pbx_registration}; loaded endpoint: {pbx_runtime}')
+        if (user_match and registrar_match and password_set and modem_registration=='registered'
+                and pbx_registration.startswith('registered contact present (')
+                and pbx_runtime=='runtime endpoint matches'):
+            details.append('saved profile, active SIP identity, loaded PBX endpoint, and registration states agree; password values remain masked and are not compared')
+        else:
+            details.append('end-to-end registration consistency is not confirmed')
+        status.update('  |  '.join(details))
+    async def preview_plan(self):
+        try:
+            planned=await self.plan_current_map()
+            if planned is None:return
+            mapping,adapter_id,target,summary,warnings=planned
+            self.query_one('#provision-status',Static).update(
+                f'Plan: {adapter_id} at {target or "config directory not set"}: '
+                + '  |  '.join(summary)+('  |  '+'  |  '.join(warnings) if warnings else ''))
+        except (ValueError,OSError,TypeError) as exc:
+            if self.is_mounted:self.query_one('#provision-status',Static).update(str(exc))
+    async def on_button_pressed(self,event):
+        event.stop()
+        if event.button.id=='close':self.action_back()
+        elif event.button.id=='refresh':self.refresh_account()
+        elif event.button.id=='sip':self.app.push_screen(SettingsScreen(self.ident,'sip'))
+        elif event.button.id=='save-map':
+            try:self.save_map()
+            except (ValueError,OSError,TypeError) as exc:self.query_one('#provision-status',Static).update(str(exc))
+        elif event.button.id=='preview':await self.preview_plan()
+        elif event.button.id=='contexts':await self.list_contexts()
+        elif event.button.id=='apply':
+            self.app.push_screen(Confirm('Update only El-Modem managed PJSIP resources?',self.apply_map))
+        elif event.button.id=='check':await self.check_link()
+        elif event.button.id=='rollback':
+            self.app.push_screen(Confirm('Restore the last El-Modem change if PBX files are unchanged?',self.rollback_map))
     def action_back(self):self.app.pop_screen()
 
 class TerminalScreen(Screen):
@@ -211,20 +567,36 @@ class ModemApp(App):
     #term-label { width: 7; height: 1; padding: 0 1; color: #f3c969; }
     #term-input { width: 1fr; height: 1; border: none; background: #101810; color: #f3c969; }
     ModalScreen { align: center middle; background: #000000 75%; }
-    #settings-window, #instance-window, #confirm-window { width: 90%; max-width: 110; max-height: 90%; padding: 1 2; border: ascii $warning; background: #101810; }
-    #settings-window DataTable { height: 1fr; }
+    #settings-window, #instance-window, #confirm-window, #provision-window { width: 86%; max-width: 96; max-height: 90%; padding: 1 2; border: ascii $warning; background: #101810; }
+    #settings-title, #instance-title { height: 1; color: #f3c969; text-style: bold; }
+    #settings-toolbar { height: 3; margin: 1 0 0 0; }
+    #category-label { width: 8; height: 3; content-align: left middle; color: #8fa17e; }
+    #category { width: 1fr; height: 3; }
+    #settings-window DataTable { height: 1fr; border: none; background: #101810; }
+    #settings-window DataTable > .datatable--header { color: #8fa17e; }
+    #field-editor { height: 3; margin-top: 1; }
+    #value-label { width: 18; height: 3; content-align: left middle; color: #f3c969; }
+    #settings-window #value { width: 1fr; }
+    #field-status { height: 1; color: #8fa17e; }
     # Textual's Input draws a tall border. At height 1 both rows are border and
     # the text has nowhere to render, so the field looked empty and untypable.
     # Keep the normal height and put the label beside the field instead, which
     # is what brings the dialog back inside its own window.
     #settings-window Input, #instance-window Input { height: 3; }
     #instance-window .field { height: 3; }
-    #instance-window .field Label { width: 16; content-align: left middle; }
+    #instance-note { height: 1; color: #8fa17e; }
+    #instance-window .field Label { width: 18; content-align: left middle; }
     #instance-window .field Input, #instance-window .field Select { width: 1fr; }
     #instance-window .field Select { height: 3; }
     #instance-window { overflow-y: auto; }
-    #settings-window Button, #instance-window Button, #confirm-window Button { margin: 0 1; }
-    #settings-window Select { width: 1fr; }
+    #provision-title { height: 1; color: #f3c969; text-style: bold; }
+    #provision-note, #provision-account { height: 1; color: #8fa17e; }
+    #provision-status { height: auto; max-height: 4; color: #8fa17e; }
+    #provision-window { overflow-y: auto; }
+    #provision-window .field { height: 3; }
+    #provision-window .field Label { width: 18; content-align: left middle; color: #f3c969; }
+    #provision-window .field Input { width: 1fr; height: 3; }
+    #provision-window Button, #settings-window Button, #instance-window Button, #confirm-window Button { margin: 0 1; }
     '''
     BINDINGS=[Binding('ctrl+c','interrupt',show=False,priority=True),('q','quit_checked','Quit'),('n','create','New modem'),('s','settings','Settings'),('t','terminal','Terminal'),('h','hangup','Hang up')]
     def __init__(self,supervisor):super().__init__();self.supervisor=supervisor;self.callbacks={}
@@ -349,8 +721,8 @@ class ModemApp(App):
         # needs the modem stopped. Distinct labels so they are not confusable.
         selected=self.visible_ids[min(self.modem_row,len(self.visible_ids)-1)] if self.visible_ids else None
         start_label='Stop' if selected in self.supervisor.workers else 'Start'
-        actions=(['Settings','Terminal','Statistics','Instance','Start / Stop','Hang up','Remove'],['Add modem','Save config','Load config','Background','Quit'])
-        actions=(['Settings','Terminal','Statistics','Instance',f'{start_label} modem','Hang up','Remove'],actions[1])
+        actions=(['Settings','Terminal','Statistics','Instance','Start / Stop','Hang up','Remove','Telephony setup'],['Add modem','Save config','Load config','Background','Quit'])
+        actions=(['Settings','Terminal','Statistics','Instance',f'{start_label} modem','Hang up','Remove','Telephony setup'],actions[1])
         labels=actions[0] if self.in_modem_menu() else actions[1]
         self.dashboard_widgets['context-title'].update(' MODEM ACTIONS' if self.in_modem_menu() else ' SYSTEM ACTIONS')
         # Only mark the pane that actually has the keyboard. Up/Down moves modem_row
@@ -394,11 +766,11 @@ class ModemApp(App):
             else:
                 self.activate_menu()
             self.tick()
-        elif self.focus_pane=='left' and event.character and event.character in '1234567':
+        elif self.focus_pane=='left' and event.character and event.character in '12345678':
             self.menu_row=int(event.character)-1;self.activate_menu()
     def menu_count(self):
         """How many entries the action menu currently offers."""
-        return 7 if self.in_modem_menu() else 5
+        return 8 if self.in_modem_menu() else 5
     def in_modem_menu(self):
         """True once Enter has moved from the system menu into the modem's actions."""
         return self.menu_level=='modem' and bool(self.visible_ids)
@@ -406,7 +778,7 @@ class ModemApp(App):
         if not self.in_modem_menu():
             (self.action_create,self.save_config,self.load_config,self.background,self.action_quit_checked)[self.menu_row]()
         else:
-            actions=(self.action_settings,self.action_terminal,self.show_statistics,self.configure_selected,self.toggle_selected,self.action_hangup,self.remove_selected)
+            actions=(self.action_settings,self.action_terminal,self.show_statistics,self.configure_selected,self.toggle_selected,self.action_hangup,self.remove_selected,self.action_telephony_setup)
             if self.visible_ids:actions[self.menu_row]()
     def selected(self):
         if not self.supervisor.specs:raise ValueError('create a modem first')
@@ -445,6 +817,7 @@ class ModemApp(App):
     def action_hangup(self):
         ident=self.selected();self.destructive(ident,lambda:self.command(ident,'hangup'))
     def action_settings(self):self.push_screen(SettingsScreen(self.selected()))
+    def action_telephony_setup(self):self.push_screen(TelephonySetupScreen(self.selected()))
     def action_terminal(self):
         ident=self.selected();self.command(ident,'terminal.open',lambda _:self.push_screen(TerminalScreen(ident)))
     def action_create(self):

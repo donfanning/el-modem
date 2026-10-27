@@ -7,6 +7,7 @@ import unittest
 
 import spandsp_v22
 from autodetect import AnsGate, AutoCallerLine, tone_fraction
+from audio_path_impairment import AudioPathImpairment
 from bell103 import Bell103Receiver, Bell103StreamTransmitter
 
 FRAME = 160
@@ -58,18 +59,22 @@ class ToneTests(unittest.TestCase):
         self.assertEqual(out, s[: len(out)])
 
 
-def make_line(rate=1200, **kw):
-    v22 = spandsp_v22.V22bisModem(calling_party=True, bit_rate=rate)
+def make_line(rate=1200, *, v22=None, **kw):
+    if v22 is None:
+        v22 = spandsp_v22.V22bisModem(calling_party=True, bit_rate=rate)
     return AutoCallerLine(
         v22,
         lambda: Bell103StreamTransmitter("originate"),
         lambda: Bell103Receiver("answer"),
+        v21_tx_factory=lambda: Bell103StreamTransmitter(
+            "originate", standard="v21", v25_call_sequence=True),
+        v21_rx_factory=lambda: Bell103Receiver("answer", standard="v21"),
         **kw,
     )
 
 
-@unittest.skipUnless(spandsp_v22.available(), "libspandsp not installed")
 class AutoCallerTests(unittest.TestCase):
+    @unittest.skipUnless(spandsp_v22.available(), "libspandsp not installed")
     def test_picks_v22_for_a_v22_answerer_after_answer_tone(self):
         line = make_line()
         answerer = spandsp_v22.V22bisModem(calling_party=False)
@@ -96,6 +101,7 @@ class AutoCallerTests(unittest.TestCase):
         self.assertEqual(line.bit_rate, 1200)
         self.assertTrue(rx.endswith(b"HELLO\r\n"), rx)
 
+    @unittest.skipUnless(spandsp_v22.available(), "libspandsp not installed")
     def test_ans_leading_edge_leak_does_not_commit_to_v22_during_the_tone(self):
         # The tone starts mid-frame (so its first frame is only partly tone and
         # slips past the gate) and answerer V.22 starts right as ANS ends, as
@@ -125,6 +131,7 @@ class AutoCallerTests(unittest.TestCase):
         self.assertEqual(line.state, "v22", line.reason)
         self.assertTrue(rx.endswith(b"READY\r\n"), rx)
 
+    @unittest.skipUnless(spandsp_v22.available(), "libspandsp not installed")
     def test_answer_tone_alone_does_not_connect(self):
         line = make_line()
         for f in frames(ans_tone(3.0)):
@@ -133,6 +140,7 @@ class AutoCallerTests(unittest.TestCase):
         self.assertFalse(line.connected)
         self.assertEqual(line.state, "listen")
 
+    @unittest.skipUnless(spandsp_v22.available(), "libspandsp not installed")
     def test_picks_bell103_when_answerer_sends_2225_mark(self):
         line = make_line()
         answerer = Bell103StreamTransmitter("answer")
@@ -166,6 +174,66 @@ class AutoCallerTests(unittest.TestCase):
         self.assertIn(b"Hi there", bytes(got))
         self.assertIn(b"ping", bytes(heard))
 
+    def test_picks_v21_after_v25_ans_and_exchanges_queued_payload(self):
+        class SilentV22Candidate:
+            def __init__(self):
+                self._lock = None
+                self.events = []
+                self.bit_rate = 1200
+                self.closed = False
+
+            def feed_pcm(self, pcm):
+                return b""
+
+            def feed_bytes(self, data):
+                pass
+
+            def tx_samples(self, count):
+                return [0] * count
+
+            def pending_bits(self):
+                return 0
+
+            def is_settled(self):
+                return False
+
+            def close(self):
+                self.closed = True
+
+        line = make_line(v22=SilentV22Candidate())
+        answerer = Bell103StreamTransmitter(
+            "answer", standard="v21", v25_answer=True,
+            guard_hz=1800.0, guard_amp=6000.0)
+        answer_rx = Bell103Receiver("originate", standard="v21")
+        answer_path = AudioPathImpairment(gain_db=-6.0, dc_offset=80.0,
+                                          noise_rms=400.0, seed=2101)
+        caller_path = AudioPathImpairment(gain_db=-6.0, dc_offset=-60.0,
+                                          noise_rms=400.0, seed=2102)
+        caller_payload = b"queued before V.21 selection\r\n"
+        answer_payload = b"V.21 answer payload\r\n"
+        line.feed_bytes(caller_payload)
+        caller_rx = bytearray()
+        answer_rx_data = bytearray()
+        sent_answer = False
+
+        for _ in range(50 * 12):
+            far = answer_path.process(answerer.samples(FRAME))
+            caller_rx.extend(line.feed_pcm(struct.pack("<160h", *far)))
+            ours = caller_path.process(line.tx_samples(FRAME))
+            answer_rx_data.extend(answer_rx.feed_pcm(struct.pack("<160h", *ours)))
+            if line.state == "v21" and not sent_answer:
+                answerer.feed_bytes(answer_payload)
+                sent_answer = True
+            if caller_payload in answer_rx_data and answer_payload in caller_rx:
+                break
+
+        self.assertEqual(line.state, "v21", line.reason)
+        self.assertEqual(line.bit_rate, 300)
+        self.assertTrue(sent_answer)
+        self.assertIn(caller_payload, answer_rx_data)
+        self.assertIn(answer_payload, caller_rx)
+
+    @unittest.skipUnless(spandsp_v22.available(), "libspandsp not installed")
     def test_silent_answerer_falls_back_to_bell103_after_timeout(self):
         line = make_line(fallback_seconds=2.0)
         for _ in range(50 * 4):

@@ -120,11 +120,16 @@ def main():
     if '--worker' in sys.argv:
         p=argparse.ArgumentParser();p.add_argument('--worker');p.add_argument('--control-fd',type=int)
         a=p.parse_args();worker(a.worker,a.control_fd);return
+    if len(sys.argv)>1 and sys.argv[1]=='provision':
+        from modem_provision import main as provision_main
+        raise SystemExit(provision_main(sys.argv[2:]))
     supervisor_flags={'--tui','--headless','--config','--modems','--serial-backend','--serial-device','--serial-baud','--help','-h'}
     if len(sys.argv)>1 and not any(x.split('=')[0] in supervisor_flags for x in sys.argv[1:]):
         from modem_dce import main as legacy
         legacy();return
-    p=argparse.ArgumentParser(prog='el-modem',description='EL-MODEM multi-modem dashboard and native DSP runtime')
+    p=argparse.ArgumentParser(prog='el-modem',
+        description='EL-MODEM multi-modem dashboard and native DSP runtime',
+        epilog='PBX provisioning: el-modem provision {plan,apply,check,rollback} --help')
     ui=p.add_mutually_exclusive_group();ui.add_argument('--tui',action='store_true');ui.add_argument('--headless',action='store_true')
     p.add_argument('--config',default=str(Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'el-modem'/'config.json'))
     from modem_serial import default_backend

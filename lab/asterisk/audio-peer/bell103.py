@@ -101,8 +101,8 @@ class Bell103StreamTransmitter:
         `calling_tone` (originate role only, opt-in like the commercial `^`
         dial modifier) prefixes that many V.25 calling-tone bursts — 1300 Hz
         for 0.6 s, silence for 1.75 s — then the normal mark idle. Like the
-        commercial toggle it is off unless asked. `v25_call_sequence` (V.21
-        originate only) repeats one such burst/interruption cycle until
+        commercial toggle it is off unless asked. `v25_call_sequence`
+        (originate role) repeats one such burst/interruption cycle until
         `stop_calling_tone()` is called; after the caller's ANS gate completes,
         `release_call_sequence()` starts the FSK data channel."""
         FREQUENCIES = STANDARDS[standard]
@@ -114,8 +114,8 @@ class Bell103StreamTransmitter:
             raise ValueError("the V.25 answer prologue is answer-role only")
         if calling_tone and role != "originate":
             raise ValueError("the V.25 calling tone is originate-role only")
-        if v25_call_sequence and (role != "originate" or standard != "v21"):
-            raise ValueError("the automatic V.25 call sequence is V.21 originate only")
+        if v25_call_sequence and role != "originate":
+            raise ValueError("the automatic V.25 call sequence is originate-role only")
         if v25_answer and calling_tone:
             raise ValueError("answer prologue and calling tone are exclusive")
         self.baud = baud

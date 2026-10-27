@@ -57,6 +57,46 @@ class SymmetricRtpTests(unittest.TestCase):
         finally:
             sock.close()
 
+    def test_requalifies_contiguous_ssrc_change_from_same_endpoint(self):
+        session, sock = make_session()
+        try:
+            addr = ("192.0.2.21", 10004)
+            for seq in range(3):
+                session.note_rtp_source(addr, self.packet(seq), 10.0 + seq * .02)
+            self.assertEqual(session._rtp_peer, (addr, struct.pack('!I', 1234)))
+
+            # PBX/B2BUA SSRC change: same source socket and uninterrupted RTP
+            # sequence/timestamp timeline. Buffer 3 packets, then admit them.
+            self.assertEqual(session.note_rtp_source(addr, self.packet(3, 5678), 10.06), [])
+            self.assertEqual(session.note_rtp_source(addr, self.packet(4, 5678), 10.08), [])
+            accepted = session.note_rtp_source(addr, self.packet(5, 5678), 10.10)
+            self.assertEqual([row[0] for row in accepted],
+                             [self.packet(seq, 5678) for seq in range(3, 6)])
+            self.assertEqual(session._rtp_peer, (addr, struct.pack('!I', 5678)))
+
+            # The port/address remains pinned after the SSRC transition.
+            for seq in range(6, 9):
+                self.assertEqual(session.note_rtp_source((addr[0], 10008),
+                                                         self.packet(seq, 5678),
+                                                         10.0 + seq * .02), [])
+        finally:
+            sock.close()
+
+    def test_ssrc_change_requires_contiguous_sequence_and_timestamp(self):
+        session, sock = make_session()
+        try:
+            addr = ("192.0.2.21", 10004)
+            for seq in range(3):
+                session.note_rtp_source(addr, self.packet(seq), 10.0 + seq * .02)
+            # Same endpoint and SSRC change alone are insufficient; a stream
+            # restart with discontinuous RTP clocks is not injected into DSP.
+            for seq in range(100, 106):
+                self.assertEqual(session.note_rtp_source(addr, self.packet(seq, 5678),
+                                                         11.0 + seq * .02), [])
+            self.assertEqual(session._rtp_peer, (addr, struct.pack('!I', 1234)))
+        finally:
+            sock.close()
+
     def test_rejects_garbage(self):
         session, sock = make_session()
         try:

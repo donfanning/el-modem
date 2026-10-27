@@ -6,6 +6,7 @@ from unittest.mock import patch
 from collections import deque
 from v32_stream import V32Modem
 from v32_answer import V32Answerer
+from v34_retrain_budget import RetrainBudget
 
 
 class Pair:
@@ -35,6 +36,33 @@ class Pair:
 
 
 class RetrainTests(unittest.TestCase):
+    def test_lifecycle_counters_survive_completion_and_failure(self):
+        modem = V32Modem.__new__(V32Modem)
+        modem._retraining = True
+        modem._retrain_attempts = 1
+        modem._retrain_counts = dict(local_started=1, peer_started=0,
+                                     automatic_started=0, completed=0, failed=0)
+        modem._rrp = None
+        modem._retrain_history = deque([dict(previous_rate=14400)], maxlen=8)
+        modem._retrain_budget = RetrainBudget()
+        modem._event_offset = 0.0
+        modem._t = 8000
+        modem.fs = 8000
+        modem.state = 'data'
+        modem.bit_rate = 9600
+        modem._rate_changes_enabled = False
+        modem.set_v42_rate = lambda _rate: None
+        modem._ev = lambda _text: None
+        modem._v42_setup = lambda: None
+        modem._retrain_completed()
+        self.assertEqual(modem.retrain_stats['completed'], 1)
+        self.assertFalse(modem.retrain_stats['active'])
+
+        modem._retraining = True
+        modem._fail('test timeout')
+        self.assertEqual(modem.retrain_stats['failed'], 1)
+        self.assertEqual(modem.retrain_stats['attempts'], 1)
+
     def test_concealed_media_uses_160ms_single_gap_threshold_only_in_lapm(self):
         with patch.dict('os.environ', {'V32_AUTO_LOSS_RETRAIN_MS': '160'}):
             m=V32Modem(use_v8=False,echo=False)
