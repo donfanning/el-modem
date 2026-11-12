@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """V.8: our negotiator against itself, with echo/noise, and against SpanDSP's V.8 as an independent reference."""
+import math
 import random
 import unittest
 
 import v8
+from g711 import linear_to_ulaw, ulaw_to_linear
 
 
 def loop(call, ans, seconds=14.0, delay=40, noise=0.0, seed=1):
@@ -35,6 +37,68 @@ class SelfTests(unittest.TestCase):
         self.assertEqual(v8.parse_sequence(bits_with_lapm[20:]), [0xC1, 0x45, 0x10, 0x10, 0x2A])
         self.assertEqual(v8.decode_modulations(v8.modulation_octets(v8.V8_MOD_V34 | v8.V8_MOD_V22)),
                          v8.V8_MOD_V34 | v8.V8_MOD_V22)
+
+    def test_pcm_role_message_coding_is_explicit_and_keeps_legacy_bool(self):
+        analog_cm = v8.build_message(6, v8.V8_MOD_V34,
+                                     pcm=v8.V8_PCM_ANALOG)
+        self.assertEqual(v8.parse_sequence(analog_cm[20:]),
+                         [0xC1, 0x65, 0x10, 0x10, 0x0D, 0x27])
+
+        digital_jm = v8.build_message(6, v8.V8_MOD_V34,
+                                      pcm=v8.V8_PCM_DIGITAL,
+                                      pstn_access_bits=v8.V8_PSTN_ACCESS_DIGITAL_NETWORK)
+        self.assertEqual(v8.parse_sequence(digital_jm[20:]),
+                         [0xC1, 0x65, 0x10, 0x10, 0x8D, 0x47])
+        self.assertEqual(v8.parse_sequence(v8.build_message(6, v8.V8_MOD_V34, pcm=True)[20:])[-1],
+                         0x27)
+
+    def test_pcm_availability_requires_v34_and_rejects_unknown_bits(self):
+        with self.assertRaises(ValueError):
+            v8.build_message(6, v8.V8_MOD_V32, pcm=v8.V8_PCM_ANALOG)
+        with self.assertRaises(ValueError):
+            v8.build_message(6, v8.V8_MOD_V34, pcm=1 << 4)
+        with self.assertRaises(ValueError):
+            v8.V8Negotiator(False, modulations=v8.V8_MOD_V32,
+                            pcm_availability=v8.V8_PCM_DIGITAL)
+
+    @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
+    def test_pcm_roles_negotiate_between_analog_caller_and_digital_answerer(self):
+        call = v8.V8Negotiator(
+            True, modulations=v8.V8_MOD_V34,
+            pcm_availability=v8.V8_PCM_ANALOG,
+            pstn_access_bits=v8.V8_PSTN_ACCESS_CALL_CELLULAR)
+        answer = v8.V8Negotiator(
+            False, modulations=v8.V8_MOD_V34,
+            pcm_availability=v8.V8_PCM_DIGITAL,
+            pstn_access_bits=v8.V8_PSTN_ACCESS_DIGITAL_NETWORK)
+        loop(call, answer)
+
+        self.assertEqual((call.status, answer.status), (2, 2))
+        self.assertTrue(call.result["pcm_negotiated"])
+        self.assertTrue(answer.result["pcm_negotiated"])
+        self.assertEqual(call.result["pcm_availability"], v8.V8_PCM_DIGITAL)
+        self.assertEqual(answer.result["pcm_availability"], v8.V8_PCM_ANALOG)
+        self.assertEqual(call.result["pcm_negotiated_bits"], v8.V8_PCM_ANALOG)
+        self.assertEqual(answer.result["pcm_negotiated_bits"], v8.V8_PCM_DIGITAL)
+        self.assertEqual(call.result["pstn_access_bits"],
+                         v8.V8_PSTN_ACCESS_CALL_CELLULAR | v8.V8_PSTN_ACCESS_DIGITAL_NETWORK)
+        self.assertEqual(answer.result["pstn_access_bits"], v8.V8_PSTN_ACCESS_CALL_CELLULAR)
+
+    @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
+    def test_pcm_is_not_negotiated_by_default_or_without_common_v34(self):
+        default_call = v8.V8Negotiator(True, modulations=v8.V8_MOD_V34)
+        default_answer = v8.V8Negotiator(False, modulations=v8.V8_MOD_V34)
+        loop(default_call, default_answer)
+        self.assertFalse(default_call.result["pcm_negotiated"])
+        self.assertFalse(default_answer.result["pcm_negotiated"])
+
+        no_v34_call = v8.V8Negotiator(True, modulations=v8.V8_MOD_V32)
+        no_v34_answer = v8.V8Negotiator(
+            False, modulations=v8.V8_MOD_V34,
+            pcm_availability=v8.V8_PCM_DIGITAL)
+        loop(no_v34_call, no_v34_answer)
+        self.assertFalse(no_v34_call.result["pcm_negotiated"])
+        self.assertFalse(no_v34_answer.result["pcm_negotiated"])
 
     @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
     def test_caller_and_answerer_negotiate_the_common_modulation(self):
@@ -141,6 +205,62 @@ class SelfTests(unittest.TestCase):
             ans.tx(160)
             ans.rx([0] * 160)
         self.assertEqual(ans.status, 3)
+
+
+@unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
+class AnsamDetectionTests(unittest.TestCase):
+    def test_caller_accepts_pcmu_ansam_with_off_tone_noise(self):
+        """The 2100 Hz + 15 Hz AM cue survives G.711 and substantial unrelated energy."""
+        import numpy as np
+
+        rng = random.Random(42)
+        call = v8.V8Negotiator(True, modulations=v8.V8_MOD_V34 | v8.V8_MOD_V22)
+        source = v8._AnsAm(2500.0)
+        detected_at = None
+        for tick in range(100):
+            frame = source.read(160)
+            pcmu = [
+                ulaw_to_linear(linear_to_ulaw(int(round(float(sample) + rng.gauss(0.0, 2000.0)))))
+                for sample in frame
+            ]
+            call.rx(pcmu)
+            if call.status == 1:
+                detected_at = tick * 0.020
+                break
+
+        self.assertIsNotNone(detected_at, "valid ANSam was missed after PCMU coding")
+        self.assertLessEqual(detected_at, 0.6)
+        self.assertEqual(call.status, 1)
+        self.assertFalse(call.plain_ans)
+
+        # Pin the regression to the former failure condition: the actual 2100 Hz
+        # concentration is below the old 0.70 tone gate while the AM is present.
+        buf = call._rx.buf[-40 * 80:]
+        n = np.arange(len(buf)) + call._rx.base + len(call._rx.buf) - len(buf)
+        z = buf * np.exp(-2j * math.pi * 2100.0 * n / v8.FS)
+        env = np.abs(z.reshape(-1, 80).sum(axis=1)) / 80 * 2
+        total = np.sqrt(np.mean(buf ** 2) * 2)
+        self.assertLess(float(np.median(env)) / total, 0.70)
+
+    def test_plain_ans_with_phase_reversals_is_not_misread_as_ansam(self):
+        """Noisy legacy 2100 Hz ANS still follows the no-V.8 path after PCMU."""
+        import numpy as np
+
+        rng = random.Random(42)
+        call = v8.V8Negotiator(True, modulations=v8.V8_MOD_V34 | v8.V8_MOD_V22)
+        for tick in range(200):
+            n = tick * 160 + np.arange(160)
+            reversal = (n // int(0.450 * v8.FS)) % 2
+            frame = 2500.0 * np.sin(2 * math.pi * 2100.0 * n / v8.FS + math.pi * reversal)
+            pcmu = [
+                ulaw_to_linear(linear_to_ulaw(int(round(float(sample) + rng.gauss(0.0, 2000.0)))))
+                for sample in frame
+            ]
+            call.rx(pcmu)
+
+        self.assertNotEqual(call.status, 1, "plain ANS must not be accepted as ANSam")
+        self.assertTrue(call.plain_ans, "unmodulated ANS must remain eligible for legacy fallback")
+        self.assertEqual(call._stage, "wait_ans")
 
 
 def _scripted_answerer_caller(jm_repeats, then_tone_a=True, seconds=9.0):

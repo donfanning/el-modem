@@ -507,6 +507,8 @@ class V34Answerer:
             self._try_info1c()
         elif st == "info1a_tx" and self._src.done and not self._queue:
             self._start_phase3()
+        elif st == "v90_v34_fallback_silence" and self._src.done:
+            self._start_phase3()
         elif st == "p3_tx":
             self._p3_poll()
         elif st in ("p4", "data"):
@@ -697,6 +699,40 @@ class V34Answerer:
         self._play(ArraySrc(sig), [Silence(int(0.070 * FS))])
         self.stage = "info1a_tx"
         self._ev(f"INFO1a sent: {nominal[best]} baud, ans carrier {self.ans_fc:.1f}, call carrier {self.call_fc:.1f}")
+
+    def begin_v90_v34_fallback(self, info1d: dict, symbol_rate_index: int) -> None:
+        """Enter V.34 answer-side Phase 3 after V.90 INFO1a selected V.34.
+
+        V.90 §9.2.2.1.9 has already supplied the mode-selection INFO1a, so
+        sending another V.34 INFO1a here would duplicate the negotiation. Seed
+        the chosen V.34 profile from the received INFO1d and begin the answer
+        Phase 3 sequence after its required 70 ms silence.
+        """
+        if self.stage != "silence75" or self.t != 0 or self.rx_t != 0:
+            raise RuntimeError("V.34 fallback must be selected before the answerer starts")
+        if not isinstance(info1d, dict) or len(info1d.get("blocks", ())) != 6:
+            raise ValueError("V.34 fallback requires a six-block INFO1d profile")
+        if isinstance(symbol_rate_index, bool) or symbol_rate_index not in range(6):
+            raise ValueError("V.34 fallback symbol-rate index must be in 0..5")
+        nominal = (2400, 2743, 2800, 3000, 3200, 3429)
+        block = dict(info1d["blocks"][symbol_rate_index])
+        if int(block.get("max_rate", 0)) <= 0:
+            raise ValueError("V.34 fallback selected an unoffered INFO1d block")
+        self.info1c = dict(info1d)
+        self.sym_ans = self.sym_call = int(symbol_rate_index)
+        self.call_baud = self.ans_baud = v34_tx.SYMBOL_RATES[symbol_rate_index]
+        self.ans_fc = v34_tx.CARRIERS[nominal[symbol_rate_index]][int(block.get("hi_carrier", 0))]
+        hi_call = 1 if nominal[symbol_rate_index] == 3429 else 0
+        self.call_fc = v34_tx.CARRIERS[nominal[symbol_rate_index]][hi_call]
+        if self.probe_result is None:
+            # The V.90 L2 probe has already informed the received INFO1d
+            # profile; do not invent a second quality estimate here.
+            self.probe_result = {"snr_db": 30.0}
+        self.ans_rate = min(
+            2400 * int(block["max_rate"]), self.data_rate)
+        self._play(Silence(int(0.070 * FS)))
+        self.stage = "v90_v34_fallback_silence"
+        self._ev(f"V.90 selected V.34: answer Phase 3 starts at {nominal[symbol_rate_index]} baud after 70 ms silence")
 
     # -- phase 3 ----------------------------------------------------------------------------------------------
     def _start_phase3(self) -> None:

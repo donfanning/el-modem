@@ -15,3 +15,6 @@ or third-party recordings without redistribution permission. For a modem issue,
 describe the OS, build revision, serial backend, engine/profile, transport,
 expected behavior and a local reproduction where possible. Remove credentials
 before attaching configuration or diagnostics.
+
+The current native V.90 qualification and its limits are recorded in
+[`docs/V90_QUALIFICATION.md`](docs/V90_QUALIFICATION.md).

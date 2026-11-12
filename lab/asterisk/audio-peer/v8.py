@@ -9,8 +9,9 @@ Implemented: ANSam with 15 Hz amplitude modulation and 450 ms phase reversals (�
 coding and 2-identical-sequences rules (§7.3, 7.4, 8); CI as an optional call signal (§7.1); the call function,
 modulation modes, protocol and PSTN access categories. LAPM is reported only when both peers indicate it. The DCE
 uses that common V.8 indication to bypass V.42 ODP/ADP detection and proceed to LAPM/XID; without it, V.42 detection
-remains the alternate negotiation path (§6.4 and §7.2.1 of V.8). Not implemented: the PCM modem availability and
-non-standard facility categories are carried through (V.90/V.92 flag) but not interpreted, T.66, V.92 quick-connect.
+remains the alternate negotiation path (§6.4 and §7.2.1 of V.8). PCM modem role availability (V.90/V.92 analogue and
+digital) is negotiated explicitly. The V.90 digital-answerer engine is wired through Phase 4; the analogue-caller
+prototype currently integrates Phase 2 only. T.66 and V.92 quick-connect remain unimplemented.
 
 Credit: the signal definitions are ITU-T's; the timings that real answerers tolerate (Te, 75 ms gaps) were checked against
 SpanDSP's v8.c (LGPL, Steve Underwood) and the Smart Link modem as black-box peers. No code was copied from either.
@@ -31,6 +32,8 @@ except ImportError:
 
 FS = 8000
 PLAIN_ANS_S = 2.0       # unmodulated 2100 Hz for this long is plain ANS, not ANSam (V.25 tone lasts 2.6 s or more)
+ANSAM_TONE_RATIO_MIN = 0.60  # allow a real AM answer tone with substantial off-tone energy after G.711/line capture
+ANSAM_15HZ_MOD_MIN = 0.10    # coherent envelope component; rejects random envelope scatter in noisy plain ANS
 BAUD = 300.0
 # modulation flags (kept equal to spandsp_v8's constants so the engines need no change)
 V8_MOD_V21, V8_MOD_V22, V8_MOD_V23, V8_MOD_V32 = 1 << 1, 1 << 2, 1 << 4, 1 << 9
@@ -38,6 +41,13 @@ V8_MOD_V34, V8_MOD_V90 = 1 << 11, 1 << 12
 V8_CALL_V_SERIES = 6
 V8_PROTOCOL_NONE, V8_PROTOCOL_LAPM_V42 = 0, 1
 V8_LAPM_MODULATIONS = V8_MOD_V22 | V8_MOD_V32 | V8_MOD_V34
+V8_PCM_ANALOG = 1 << 5
+V8_PCM_DIGITAL = 1 << 6
+V8_PCM_V91 = 1 << 7
+V8_PCM_MASK = V8_PCM_ANALOG | V8_PCM_DIGITAL | V8_PCM_V91
+V8_PSTN_ACCESS_CALL_CELLULAR = 1 << 5
+V8_PSTN_ACCESS_ANSWER_CELLULAR = 1 << 6
+V8_PSTN_ACCESS_DIGITAL_NETWORK = 1 << 7
 def available() -> bool:
     return np is not None
 
@@ -89,16 +99,59 @@ def decode_modulations(octets: list[int]) -> int:
     return mods
 
 
+def _normalize_pcm_availability(value: int | bool) -> int:
+    # Preserve the old convenience spelling pcm=True as analogue-modem
+    # availability; new callers should pass the explicit role bit constants.
+    if isinstance(value, bool):
+        value = V8_PCM_ANALOG if value else 0
+    if value < 0 or value & ~V8_PCM_MASK:
+        raise ValueError("PCM availability contains unknown V.8 bits")
+    return value
+
+
+def _pcm_response(local: int, peer: int | None) -> int:
+    """Return the locally supported role bits that pair with the peer's offer."""
+    if peer is None:
+        return 0
+    selected = 0
+    if local & V8_PCM_ANALOG and peer & V8_PCM_DIGITAL:
+        selected |= V8_PCM_ANALOG
+    if local & V8_PCM_DIGITAL and peer & V8_PCM_ANALOG:
+        selected |= V8_PCM_DIGITAL
+    if local & V8_PCM_V91 and peer & V8_PCM_V91:
+        selected |= V8_PCM_V91
+    return selected
+
+
+def _parse_pcm_availability(octets: list[int]) -> int | None:
+    for octet in octets:
+        if (octet & 0x1F) == 0x07:
+            return octet & V8_PCM_MASK
+    return None
+
+
+def _parse_pstn_access(octets: list[int]) -> int | None:
+    for octet in octets:
+        if (octet & 0x1F) == 0x0D:
+            return octet & 0xE0
+    return None
+
+
 def build_message(call_function: int, mods: int, protocols: int = 0, pstn_access: bool = False,
-                  pcm: int = 0) -> list[int]:
+                  pcm: int | bool = 0, pstn_access_bits: int = 0) -> list[int]:
     """One CM/JM sequence: 10 ones, the 10 synchronisation bits, then the information octets."""
-    octets = [call_function_octet(call_function)] + modulation_octets(mods, bool(pcm))
+    pcm_availability = _normalize_pcm_availability(pcm)
+    if pcm_availability and not mods & V8_MOD_V34:
+        raise ValueError("V.8 PCM modem availability requires V.34 availability")
+    if not 0 <= pstn_access_bits <= 0xE0 or pstn_access_bits & 0x1F:
+        raise ValueError("PSTN access bits must use only V.8 bits b5-b7")
+    octets = [call_function_octet(call_function)] + modulation_octets(mods, bool(pcm_availability))
     if protocols & V8_PROTOCOL_LAPM_V42:
         octets.append(0x0A | (1 << 5))                              # protocol category, LAPM (b5)
-    if pstn_access or pcm:
-        octets.append(0x0D | (0 << 5) | (0 << 6) | (0 << 7))        # PSTN access: analogue, not cellular
-    if pcm:
-        octets.append(0x07 | (1 << 5))                              # PCM modem availability: V.90/V.92 analogue
+    if pstn_access or pcm_availability or pstn_access_bits:
+        octets.append(0x0D | pstn_access_bits)                      # PSTN access category
+    if pcm_availability:
+        octets.append(0x07 | pcm_availability)                      # PCM modem availability category
     bits = list(PREAMBLE) + list(SYNC_CM_JM)
     for o in octets:
         bits += _octet_bits(o)
@@ -235,9 +288,16 @@ class _FskRx:
 class V8Negotiator:
     def __init__(self, calling_party: bool, modulations: int = V8_MOD_V32, protocols: int = V8_PROTOCOL_NONE,
                  send_ci: bool = False, call_function: int = V8_CALL_V_SERIES, amplitude: float = 2500.0,
-                 ans_delay: float = 0.2):
+                 ans_delay: float = 0.2, pcm_availability: int | bool = 0,
+                 pstn_access_bits: int = 0):
         self.calling = calling_party
         self.mods, self.protocols, self.cf = modulations, protocols, call_function
+        self.pcm_availability = _normalize_pcm_availability(pcm_availability)
+        if self.pcm_availability and not self.mods & V8_MOD_V34:
+            raise ValueError("PCM modem availability requires V.34 availability")
+        if not 0 <= pstn_access_bits <= 0xE0 or pstn_access_bits & 0x1F:
+            raise ValueError("PSTN access bits must use only V.8 bits b5-b7")
+        self.pstn_access_bits = pstn_access_bits
         if not (self.mods & V8_LAPM_MODULATIONS):
             self.protocols &= ~V8_PROTOCOL_LAPM_V42
         self.send_ci = send_ci
@@ -301,7 +361,9 @@ class V8Negotiator:
         if self.calling:
             if st == "te" and self.t - self._stage_t >= int(0.6 * FS):          # Te >= 0.5 s of silence (§8.1.1)
                 src = _Fsk(V21_L, self.amp)
-                msg = build_message(self.cf, self.mods, self.protocols)
+                msg = build_message(self.cf, self.mods, self.protocols,
+                                    pcm=self.pcm_availability,
+                                    pstn_access_bits=self.pstn_access_bits)
                 src.bits = msg * 400
                 self._tx = src
                 self._set("cm")
@@ -347,15 +409,21 @@ class V8Negotiator:
         z = x * np.exp(-2j * math.pi * 2100.0 * n / FS)
         env = np.abs(z[:len(z) // blk * blk].reshape(-1, blk).sum(axis=1)) / blk * 2
         tot = np.sqrt(np.mean(x ** 2) * 2) + 1e-9
-        tone = float(np.median(env)) / tot > 0.7 and tot > 40
+        tone = float(np.median(env)) / tot > ANSAM_TONE_RATIO_MIN and tot > 40
         if not tone:
             self._am_votes = 0
             return False, False
         depth = (float(np.percentile(env, 90)) - float(np.percentile(env, 10))) / (float(np.mean(env)) + 1e-9)
+        # Percentile spread alone mistakes broadband noise for modulation. Require energy at
+        # ANSam's defining 15 Hz envelope rate; six cycles fit in this 400 ms analysis window.
+        centered = env - float(np.mean(env))
+        t_env = np.arange(len(env), dtype=float) * (blk / FS)
+        mod_15 = 2.0 * abs(np.sum(centered * np.exp(-2j * math.pi * 15.0 * t_env))) / (
+            len(env) * (float(np.mean(env)) + 1e-9))
         # A window that straddles silence -> tone looks deeply modulated (p10 near zero) without being AM.
         # ANSam's envelope never falls near zero, so such a window is not a vote for AM.
         onset = float(np.percentile(env, 10)) < 0.3 * float(np.mean(env))
-        am_now = depth > 0.15 and not onset
+        am_now = depth > 0.15 and mod_15 > ANSAM_15HZ_MOD_MIN and not onset
         # ANSam keeps its 15 Hz AM for at least ~2.6 s; a momentary AM-like
         # swell on plain ANS must not trigger V.8. Require several consecutive
         # moderately-spaced positive windows before concluding "V.8 present".
@@ -432,12 +500,20 @@ class V8Negotiator:
         # Never report LAPM unless this caller also placed it in its CM.
         prot = (self.protocols & peer_protocols
                 if mods & V8_LAPM_MODULATIONS else V8_PROTOCOL_NONE)
-        pcm = any((o & 0x1F) == 0x07 for o in octets)
+        peer_pcm = _parse_pcm_availability(octets)
+        negotiated_pcm = (_pcm_response(self.pcm_availability, peer_pcm)
+                          if mods & V8_MOD_V34 else 0)
         self.result = {"status": 2, "call_function": cf, "modulations": mods, "protocols": prot, "tone": 5,
-                       "pcm": pcm}
+                       "pcm": peer_pcm is not None, "pcm_availability": peer_pcm,
+                       "pcm_negotiated": bool(negotiated_pcm),
+                       "pcm_negotiated_bits": negotiated_pcm,
+                       "pcm_local_availability": self.pcm_availability,
+                       "pstn_access_bits": _parse_pstn_access(octets)}
         # finish the octet in progress (§8.1.2), then CJ = 3 octets of zeros, then 75 ms of silence
         src = self._tx if isinstance(self._tx, _Fsk) else _Fsk(V21_L, self.amp)
-        msg_len = len(build_message(self.cf, self.mods, self.protocols))
+        msg_len = len(build_message(self.cf, self.mods, self.protocols,
+                                    pcm=self.pcm_availability,
+                                    pstn_access_bits=self.pstn_access_bits))
         pos = src.consumed % msg_len
         src.bits = src.bits[:0 if pos <= 20 else (10 - (pos - 20) % 10) % 10]
         src.bits += _octet_bits(0) * 3
@@ -472,10 +548,25 @@ class V8Negotiator:
         prot = V8_PROTOCOL_LAPM_V42 if (self.protocols & V8_PROTOCOL_LAPM_V42 and
                                          common & V8_LAPM_MODULATIONS and
                                          any((o & 0x1F) == 0x0A and (o >> 5) & 1 for o in octets)) else 0
+        peer_pcm = _parse_pcm_availability(octets)
+        response_pcm = (_pcm_response(self.pcm_availability, peer_pcm)
+                        if common & V8_MOD_V34 else 0)
+        peer_access = _parse_pstn_access(octets) or 0
+        # V.8 §7.4 requires the answer DCE to echo access0.b5 when the caller
+        # marked its connection as cellular. The remaining local bits describe
+        # the answer-side network access.
+        response_access = self.pstn_access_bits | (peer_access & V8_PSTN_ACCESS_CALL_CELLULAR)
         self.result = {"status": 2, "call_function": cf, "modulations": common, "protocols": prot, "tone": 5,
-                       "pcm": any((o & 0x1F) == 0x07 for o in octets)}
+                       "pcm": peer_pcm is not None, "pcm_availability": peer_pcm,
+                       "pcm_negotiated": bool(response_pcm),
+                       "pcm_negotiated_bits": response_pcm,
+                       "pcm_local_availability": self.pcm_availability,
+                       "pstn_access_bits": peer_access or None}
         src = _Fsk(V21_H, self.amp)
-        src.bits = build_message(cf, common, prot) * 400
+        src.bits = build_message(cf, common, prot,
+                                 pstn_access=bool(response_pcm or response_access),
+                                 pcm=response_pcm,
+                                 pstn_access_bits=response_access) * 400
         self._tx = src
         self.status = 1
         self._rx = _FskRx(V21_L)                                               # now listen for CJ

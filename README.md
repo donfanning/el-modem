@@ -6,6 +6,10 @@ or multiple independent modem processes with `--modems N`.
 
 Implemented modem families include V.21/Bell 103, V.22/V.22bis, V.32/V.32bis and
 V.34 up to 33,600 bit/s, with V.8 selection and V.42 LAPM error control.
+An experimental, default-off native V.90 caller and digital-answerer path is
+included. The caller has limited live-call qualification; independent
+digital-answerer interoperability and bulk V.90 payload qualification remain
+open. See [V.90 qualification](docs/V90_QUALIFICATION.md).
 The desktop factory profile requests LAPM and disables compression and echo
 cancellation. IAX2 calling is implemented over UDP with G.711 µ-law and
 automatic registration; configure a reachable IAX2 endpoint before selecting

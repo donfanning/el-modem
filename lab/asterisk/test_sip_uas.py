@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import uuid
 
 from modem_dce import AtDce
-from sip_uas import SipIncomingCallServer, parse_caller, parse_message
+from sip_uas import SipIncomingCallServer, parse_caller, parse_message, parse_remote_audio
 
 
 class SipIncomingCallTests(unittest.TestCase):
@@ -51,16 +51,17 @@ class SipIncomingCallTests(unittest.TestCase):
         self.server.close()
         self.client.close()
 
-    def _invite(self) -> bytes:
+    def _invite(self, codec: str = "pcmu") -> bytes:
         branch = "z9hG4bK" + uuid.uuid4().hex
+        payload_type, codec_name = (0, "PCMU") if codec == "pcmu" else (8, "PCMA")
         sdp = (
             "v=0\r\n"
             f"o=test 1 1 IN IP4 {self.client_ip}\r\n"
             "s=test\r\n"
             f"c=IN IP4 {self.client_ip}\r\n"
             "t=0 0\r\n"
-            f"m=audio {self.client_port} RTP/AVP 0\r\n"
-            "a=rtpmap:0 PCMU/8000\r\n"
+            f"m=audio {self.client_port} RTP/AVP {payload_type}\r\n"
+            f"a=rtpmap:{payload_type} {codec_name}/8000\r\n"
         )
         return (
             f"INVITE sip:modem@127.0.0.1:{self.server.port} SIP/2.0\r\n"
@@ -73,6 +74,80 @@ class SipIncomingCallTests(unittest.TestCase):
             "Content-Type: application/sdp\r\n"
             f"Content-Length: {len(sdp.encode())}\r\n\r\n{sdp}"
         ).encode()
+
+    def test_pcma_offer_is_answered_with_pcma_payload_type(self) -> None:
+        self.client.sendto(self._invite("pcma"), self.target)
+        while True:
+            _, start = self._recv()
+            if start.startswith("SIP/2.0 180"):
+                break
+        result = []
+        answer_thread = threading.Thread(target=lambda: result.append(self.server.answer()))
+        answer_thread.start()
+        response = b""
+        response_headers = {}
+        while not response.startswith(b"SIP/2.0 200"):
+            response, _ = self.client.recvfrom(65535)
+            _, response_headers, _ = parse_message(response)
+        text = response.decode()
+        self.assertIn("m=audio 16000 RTP/AVP 8", text)
+        self.assertIn("a=rtpmap:8 PCMA/8000", text)
+        self.assertEqual(self.server.negotiated_codec, "pcma")
+        ack = (
+            f"ACK sip:modem@127.0.0.1:{self.server.port} SIP/2.0\r\n"
+            f"Via: SIP/2.0/UDP {self.client_ip}:{self.client_port};branch=z9hG4bKack\r\n"
+            f"From: <sip:caller@127.0.0.1>;tag={self.from_tag}\r\n"
+            f"To: {response_headers['to']}\r\n"
+            f"Call-ID: {self.call_id}\r\nCSeq: {self.cseq} ACK\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        self.client.sendto(ack.encode(), self.target)
+        answer_thread.join(timeout=2)
+        self.assertFalse(answer_thread.is_alive())
+        self.assertEqual(result, [True])
+
+    def test_pcma_offer_is_rejected_when_only_pcmu_is_enabled(self) -> None:
+        self.server.supported_audio_codecs = ("pcmu",)
+        self.client.sendto(self._invite("pcma"), self.target)
+        while True:
+            _, start = self._recv()
+            if start.startswith("SIP/2.0 180"):
+                break
+        self.assertFalse(self.server.answer())
+        _, status = self._recv()
+        self.assertEqual(status, "SIP/2.0 488 Not Acceptable Here")
+
+    def test_parse_remote_audio_identifies_static_g711_payloads(self) -> None:
+        sdp = (
+            "v=0\r\nc=IN IP4 192.0.2.2\r\nt=0 0\r\n"
+            "m=audio 9000 RTP/AVP 8 0\r\n")
+        self.assertEqual(parse_remote_audio(sdp), (("192.0.2.2", 9000), ("pcma", "pcmu")))
+
+    def test_parse_remote_audio_does_not_mislabel_dynamic_payload(self) -> None:
+        sdp = (
+            "v=0\r\nc=IN IP4 192.0.2.2\r\nt=0 0\r\n"
+            "m=audio 9000 RTP/AVP 96\r\na=rtpmap:96 opus/48000/2\r\n")
+        self.assertEqual(parse_remote_audio(sdp), (("192.0.2.2", 9000), ()))
+        dynamic_pcma = (
+            "v=0\r\nc=IN IP4 192.0.2.2\r\nt=0 0\r\n"
+            "m=audio 9000 RTP/AVP 96\r\na=rtpmap:96 PCMA/8000\r\n")
+        self.assertEqual(parse_remote_audio(dynamic_pcma), (("192.0.2.2", 9000), ()))
+
+    def test_parse_remote_audio_rejects_static_payload_relabel(self) -> None:
+        sdp = (
+            "v=0\r\nc=IN IP4 192.0.2.2\r\nt=0 0\r\n"
+            "m=audio 9000 RTP/AVP 8\r\na=rtpmap:8 PCMU/8000\r\n")
+        self.assertEqual(parse_remote_audio(sdp), (("192.0.2.2", 9000), ()))
+
+    def test_parse_remote_audio_rejects_inactive_or_secure_media(self) -> None:
+        inactive = (
+            "v=0\r\nc=IN IP4 192.0.2.2\r\nt=0 0\r\n"
+            "m=audio 0 RTP/AVP 8\r\n")
+        secure = (
+            "v=0\r\nc=IN IP4 192.0.2.2\r\nt=0 0\r\n"
+            "m=audio 9000 RTP/SAVP 8\r\n")
+        self.assertEqual(parse_remote_audio(inactive), (None, ()))
+        self.assertEqual(parse_remote_audio(secure), (None, ()))
 
     def test_answer_sdp_uses_selected_packetization(self) -> None:
         self.assertIn("a=ptime:20\r\n", self.server._answer_sdp())

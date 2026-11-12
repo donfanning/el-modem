@@ -85,6 +85,22 @@ def build(rate, baud, role, shaping=False, precoder=(0,)*6,
     return _build(rate,baud,role,shaping,precoder,initial_state,trace,initial_rotation=initial_rotation)
 
 
+@lru_cache(maxsize=128)
+def _standard_sequences_cached(rate, baud, role, shaping, precoder,
+                               initial_state):
+    """Cache immutable standard sequences for receiver startup warmup."""
+    domains = _build(rate, baud, role, shaping, precoder, initial_state, False)
+    return tuple(domains["bits"]), tuple(domains["u"]), tuple(domains["x"])
+
+
+def standard_sequences(rate, baud, role, shaping=False, precoder=(0,)*6,
+                       initial_state=(0,)*4):
+    """Return cached immutable B1 sequences without changing diagnostic builds."""
+    return _standard_sequences_cached(
+        int(rate), float(baud), str(role), bool(shaping), tuple(precoder),
+        tuple(initial_state))
+
+
 def diagnostic_build(rate,baud,role,shaping=False,precoder=(0,)*6,
                      initial_state=(0,)*4,*,flip_bits=(),inversion_offset_4d=0):
     """Nonstandard sequence hypotheses; never used by the transmitter.

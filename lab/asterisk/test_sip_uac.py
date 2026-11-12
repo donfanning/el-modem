@@ -3,6 +3,7 @@
 
 import socket
 import threading
+import time
 import unittest
 from unittest.mock import Mock,patch
 
@@ -69,7 +70,8 @@ class SipOriginateCallTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.uas.close()
 
-    def _make_call(self, on_connected=None, on_failed=None, on_hangup=None) -> SipOriginateCall:
+    def _make_call(self, on_connected=None, on_failed=None, on_hangup=None,
+                   audio_codec="pcmu") -> SipOriginateCall:
         return SipOriginateCall(
             host="127.0.0.1",
             port=0,
@@ -80,13 +82,75 @@ class SipOriginateCallTests(unittest.TestCase):
             on_connected=on_connected or (lambda addr: None),
             on_failed=on_failed or (lambda reason: None),
             on_hangup=on_hangup or (lambda: None),
+            audio_codec=audio_codec,
         )
 
     def test_invite_sdp_uses_selected_packetization(self) -> None:
         call = self._make_call()
+        self.assertIn("m=audio 17500 RTP/AVP 0\r\n", call._invite_sdp())
+        self.assertIn("a=rtpmap:0 PCMU/8000\r\n", call._invite_sdp())
         self.assertIn("a=ptime:20\r\n", call._invite_sdp())
         call.packetization_ms = 10
         self.assertIn("a=ptime:10\r\n", call._invite_sdp())
+
+    def test_invite_sdp_can_offer_pcma(self) -> None:
+        call = SipOriginateCall(
+            host="127.0.0.1", port=0, target_host=self.uas.host,
+            target_port=self.uas.port, media_host="127.0.0.1", media_port=17500,
+            on_connected=lambda _addr: None, on_failed=lambda _reason: None,
+            on_hangup=lambda: None, audio_codec="pcma")
+        self.assertIn("m=audio 17500 RTP/AVP 8\r\n", call._invite_sdp())
+        self.assertIn("a=rtpmap:8 PCMA/8000\r\n", call._invite_sdp())
+
+    def test_invite_sdp_rejects_unknown_audio_codec(self) -> None:
+        with self.assertRaisesRegex(ValueError, "audio codec"):
+            SipOriginateCall(
+                host="127.0.0.1", port=0, target_host=self.uas.host,
+                target_port=self.uas.port, media_host="127.0.0.1", media_port=17500,
+                on_connected=lambda _addr: None, on_failed=lambda _reason: None,
+                on_hangup=lambda: None, audio_codec="g729")
+
+    def test_pcma_answer_is_recorded_as_negotiated_codec(self) -> None:
+        connected = []
+        call = self._make_call(on_connected=connected.append, audio_codec="pcma")
+        thread = threading.Thread(target=call.dial, args=("105",))
+        thread.start()
+        _, headers, source = self.uas.recv_invite()
+        self.uas.send("200 OK", headers, source, body=(
+            "v=0\r\no=uas 1 1 IN IP4 127.0.0.1\r\ns=uas\r\n"
+            "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+            "m=audio 17777 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n"))
+        ack, _, _ = self.uas.recv_any()
+        self.assertTrue(ack.startswith("ACK"), ack)
+        for _ in range(30):
+            if connected:
+                break
+            time.sleep(.01)
+        self.assertEqual(connected, [("127.0.0.1", 17777)])
+        self.assertEqual(call.negotiated_codec, "pcma")
+        call.hangup()
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+
+    def test_uac_rejects_answer_with_unoffered_g711_codec(self) -> None:
+        failures = []
+        connected = []
+        call = self._make_call(
+            on_connected=connected.append, on_failed=failures.append, audio_codec="pcma")
+        thread = threading.Thread(target=call.dial, args=("105",))
+        thread.start()
+        _, headers, source = self.uas.recv_invite()
+        self.uas.send("200 OK", headers, source, body=(
+            "v=0\r\no=uas 1 1 IN IP4 127.0.0.1\r\ns=uas\r\n"
+            "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+            "m=audio 17777 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\n"))
+        requests = [self.uas.recv_any()[0], self.uas.recv_any()[0]]
+        self.assertTrue(requests[0].startswith("ACK"), requests)
+        self.assertTrue(requests[1].startswith("BYE"), requests)
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(connected, [])
+        self.assertEqual(failures, ["sip g711 codec mismatch"])
 
     def test_ringing_then_answer_then_remote_bye(self) -> None:
         connected: list[tuple[str, int]] = []

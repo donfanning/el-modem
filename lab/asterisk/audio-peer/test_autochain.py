@@ -8,6 +8,8 @@ from unittest.mock import patch
 import v8
 from autochain import V8Chain
 from v8 import V8_MOD_V21, V8_MOD_V22, V8_MOD_V32, V8_MOD_V34
+from v8 import V8_PCM_ANALOG, V8_PCM_DIGITAL
+from g711 import linear_to_ulaw, ulaw_to_linear
 
 
 def loop(a, b, seconds, delay=40, until=None):
@@ -42,6 +44,274 @@ def exchange(a, b, seconds, delay=40):
 
 @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
 class ChainTests(unittest.TestCase):
+    def test_no_v8_falls_back_legacy_v34_then_v32_then_v22(self):
+        allow = V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22
+        for calling in (True, False):
+            with self.subTest(calling=calling):
+                chain = V8Chain(calling, allow=allow)
+                try:
+                    # Status 4 is the ANSam-seen, CM/JM-incomplete case;
+                    # only that case may enter legacy V.34 Phase 1.
+                    chain._v8.status = 4
+                    chain._t = 11 * 8000
+                    chain._step_v8()
+                    self.assertIsNone(chain.engine)
+                    self.assertEqual(chain.kind, "v8")
+
+                    chain._t = 12 * 8000
+                    chain._step_v8()
+                    self.assertEqual(chain.kind, "v34")
+                    self.assertEqual(chain._no_v8_legacy_next_at, 24 * 8000)
+
+                    chain._t = 24 * 8000
+                    chain._advance_no_v8_legacy_fallback()
+                    self.assertEqual(chain.kind, "v32")
+                    self.assertEqual(chain._no_v8_legacy_next_at, 36 * 8000)
+
+                    chain._t = 36 * 8000
+                    chain._advance_no_v8_legacy_fallback()
+                    self.assertEqual(chain.kind, "v22")
+                    self.assertEqual(chain._no_v8_legacy_stage, 0)
+                finally:
+                    chain.close()
+
+    def test_no_ansam_skips_legacy_v34_and_uses_v32_or_v22(self):
+        for calling, expected in ((True, "v22"), (False, "v32")):
+            with self.subTest(calling=calling):
+                chain = V8Chain(calling, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22)
+                try:
+                    chain._v8.status = 3  # no ANSam / no CM
+                    chain._t = 12 * 8000
+                    chain._step_v8()
+                    self.assertEqual(chain.kind, expected)
+                    self.assertNotEqual(chain.kind, "v34")
+                    if expected == "v32":
+                        self.assertEqual(chain._legacy_probe_at, chain._t)
+                finally:
+                    chain.close()
+
+    def test_plain_ans_uses_v22_after_ac_wait_and_gates_answer_tone(self):
+        chain = V8Chain(True, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22)
+        try:
+            chain._v8.status = 0
+            chain._v8.plain_ans = True
+            chain._t = int((chain.patience + .1) * 8000)
+            chain._step_v8()
+            self.assertEqual(chain.kind, "v22")
+            self.assertIsNotNone(chain._tone_gate)
+            self.assertEqual(chain._no_v8_legacy_stage, 0)
+        finally:
+            chain.close()
+
+    def test_real_plain_ans_after_pcmu_still_selects_legacy_v22(self):
+        import numpy as np
+
+        chain = V8Chain(True, allow=V8_MOD_V34 | V8_MOD_V22)
+        try:
+            for tick in range(400):
+                n = tick * 160 + np.arange(160)
+                reversal = (n // int(0.450 * v8.FS)) % 2
+                frame = 2500.0 * np.sin(2 * math.pi * 2100.0 * n / v8.FS + math.pi * reversal)
+                pcm = [ulaw_to_linear(linear_to_ulaw(int(round(float(sample))))) for sample in frame]
+                chain.feed_pcm(struct.pack("<160h", *pcm))
+                if chain.kind != "v8":
+                    break
+
+            self.assertEqual(chain.kind, "v22")
+            self.assertIsNotNone(chain.engine)
+            self.assertTrue(any("plain ANS (no V.8 partner)" in message
+                                for _, message in chain.events))
+        finally:
+            chain.close()
+
+    def test_late_legacy_v34_deadline_is_relative_to_actual_start(self):
+        chain = V8Chain(True, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22)
+        try:
+            chain._v8.status = 4
+            chain._t = 15 * 8000
+            chain._step_v8()
+            self.assertEqual(chain.kind, "v34")
+            self.assertEqual(chain._no_v8_legacy_next_at, 27 * 8000)
+        finally:
+            chain.close()
+
+    def test_ansam_with_missed_cm_does_not_skip_legacy_v34(self):
+        chain = V8Chain(True, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22)
+        try:
+            chain._v8.status = 4
+            chain._v8._stage = "cm"  # ANSam was recognized; JM/CM response was missed.
+            chain._t = 8 * 8000
+            chain._step_v8()
+            self.assertEqual(chain.kind, "v8")
+            self.assertIsNone(chain.engine)
+
+            chain._t = 12 * 8000
+            chain._step_v8()
+            self.assertEqual(chain.kind, "v34")
+            self.assertTrue(any("starting legacy V.34" in str(event)
+                                for event in chain.events))
+        finally:
+            chain.close()
+
+    def test_v8_pcm_role_requires_engine_before_it_can_be_advertised(self):
+        with self.assertRaisesRegex(ValueError, "requires a V.90 engine factory"):
+            V8Chain(False, pcm_availability=V8_PCM_DIGITAL)
+
+    def test_v90_digital_answerer_marks_digital_network_access(self):
+        for pcm, expected in ((V8_PCM_DIGITAL, v8.V8_PSTN_ACCESS_DIGITAL_NETWORK),
+                              (0, 0)):
+            with self.subTest(pcm=pcm):
+                chain = V8Chain(False, allow=V8_MOD_V34, pcm_availability=pcm,
+                                v90_engine_factory=(lambda **_kwargs: object())
+                                if pcm else None)
+                try:
+                    self.assertEqual(chain._v8.pstn_access_bits, expected)
+                finally:
+                    chain.close()
+
+    def test_v90_factory_must_supply_exact_raw_media_interfaces(self):
+        chain = V8Chain(False, allow=V8_MOD_V34,
+                        pcm_availability=V8_PCM_DIGITAL,
+                        v90_engine_factory=lambda **_kwargs: object())
+        chain._v8.status = 2
+        chain._v8.result = {
+            "modulations": V8_MOD_V34,
+            "protocols": 0,
+            "pcm_negotiated": True,
+            "pcm_negotiated_bits": V8_PCM_DIGITAL,
+        }
+        try:
+            with self.assertRaisesRegex(TypeError, "incomplete engine"):
+                chain._step_v8()
+        finally:
+            chain.close()
+
+    def test_v8_pcm_negotiation_selects_role_specific_engine(self):
+        class Engine:
+            events = []
+
+            def tx_samples(self, count):
+                return [0] * count
+
+            def feed_pcm(self, _pcm):
+                return b""
+
+            def feed_bytes(self, _data):
+                pass
+
+            def tx_g711(self, count, codec):
+                return bytes([0xff if codec == "pcmu" else 0xd5]) * count
+
+            def feed_g711(self, payload, _codec, _context):
+                return bytes(payload)
+
+            def feed_gap(self, _samples, _codec, _context):
+                return b""
+
+        for calling, local_pcm, negotiated_pcm, expected_role in (
+                (False, V8_PCM_DIGITAL, V8_PCM_DIGITAL, "digital-answerer"),
+                (True, V8_PCM_ANALOG, V8_PCM_ANALOG, "analogue-caller")):
+            with self.subTest(role=expected_role):
+                selected = []
+
+                def factory(*, role, negotiation, media_at, media_origin):
+                    selected.append((role, negotiation["pcm_negotiated_bits"],
+                                     media_at, media_origin))
+                    return Engine()
+
+                chain = V8Chain(calling, allow=V8_MOD_V34,
+                                pcm_availability=local_pcm,
+                                v90_engine_factory=factory)
+                chain._v8.status = 2
+                chain._v8.result = {
+                    "modulations": V8_MOD_V34,
+                    "protocols": 0,
+                    "pcm_negotiated": True,
+                    "pcm_negotiated_bits": negotiated_pcm,
+                }
+                chain._step_v8()
+                self.assertEqual(chain.kind, "v90")
+                self.assertEqual(selected[0][:3], (expected_role, negotiated_pcm, 0))
+                self.assertGreater(selected[0][3], 0.0)
+                self.assertEqual(chain.tx_g711(3, "pcmu"), bytes([0xff]) * 3)
+                self.assertEqual(chain.feed_g711(b"raw", "pcmu", {}), b"raw")
+                chain.close()
+
+    def test_v90_handoff_uses_rtp_transmit_media_cursor(self):
+        class Engine:
+            events = []
+            def tx_samples(self, count): return [0] * count
+            def feed_pcm(self, _pcm): return b""
+            def feed_bytes(self, _data): pass
+            def tx_g711(self, count, codec): return bytes([0xff]) * count
+            def feed_g711(self, payload, _codec, _context): return bytes(payload)
+            def feed_gap(self, _samples, _codec, _context): return b""
+
+        selected = []
+        chain = V8Chain(False, allow=V8_MOD_V34,
+                        pcm_availability=V8_PCM_DIGITAL,
+                        v90_engine_factory=lambda **kwargs: (selected.append(kwargs) or Engine()))
+        try:
+            chain.set_tx_media_deadline(50.0)
+            chain.tx_samples(160)
+            chain._v8.status = 2
+            chain._v8.result = {
+                "modulations": V8_MOD_V34,
+                "protocols": 0,
+                "pcm_negotiated_bits": V8_PCM_DIGITAL,
+            }
+            chain._step_v8()
+            self.assertEqual(selected[0]["media_at"], 160)
+            self.assertAlmostEqual(selected[0]["media_origin"], 50.02)
+        finally:
+            chain.close()
+
+    def test_v90_enabled_answerer_uses_v34_when_pcm_role_is_not_negotiated(self):
+        """An opt-in digital-answerer profile must preserve the V.34 fallback."""
+        factory_calls = []
+
+        def v90_factory(**kwargs):
+            factory_calls.append(kwargs)
+            raise AssertionError("V.90 engine must not start without a negotiated PCM role")
+
+        caller = V8Chain(True, allow=V8_MOD_V34, v34_rate=9600)
+        chain = V8Chain(False, allow=V8_MOD_V34,
+                        v34_rate=9600,
+                        pcm_availability=V8_PCM_DIGITAL,
+                        v90_engine_factory=v90_factory)
+        try:
+            caller_rx, answerer_rx = exchange(caller, chain, 90)
+
+            self.assertEqual(caller.kind, "v34")
+            self.assertEqual(chain.kind, "v34")
+            self.assertIsNotNone(chain.engine)
+            self.assertEqual(factory_calls, [])
+            self.assertEqual(caller_rx, b"answerer says hi\r\n")
+            self.assertEqual(answerer_rx, b"caller says hi\r\n")
+        finally:
+            caller.close()
+            chain.close()
+
+    def test_unavailable_negotiated_pcm_role_does_not_fall_back_to_v34(self):
+        """Never reinterpret a peer's already-negotiated digital PCM as voiceband."""
+        chain = V8Chain(False, allow=V8_MOD_V34)
+        try:
+            chain._v8.status = 2
+            chain._v8.result = {
+                "modulations": V8_MOD_V34,
+                "protocols": 0,
+                "pcm_negotiated": True,
+                "pcm_negotiated_bits": V8_PCM_DIGITAL,
+            }
+
+            chain._step_v8()
+
+            self.assertEqual(chain.kind, "v90-unavailable")
+            self.assertTrue(chain._failed)
+            self.assertIsNone(chain.engine)
+        finally:
+            chain.close()
+
     def test_v8_selects_v21_and_exchanges_exact_payload_in_both_roles(self):
         for calling in (True, False):
             with self.subTest(calling=calling):
@@ -170,7 +440,8 @@ class ChainTests(unittest.TestCase):
         from v32_answer import V32Answerer
         for calling in (True, False):
             with self.subTest(calling=calling):
-                chain = V8Chain(calling, v32_rates=(9600,))
+                chain = V8Chain(calling, allow=V8_MOD_V32 | V8_MOD_V22,
+                                v32_rates=(9600,))
                 peer = (V32Answerer if calling else V32Modem)(
                     fs=8000, my_rates=(9600,), use_v8=False)
                 a, b = (chain, peer) if calling else (peer, chain)
@@ -185,7 +456,8 @@ class ChainTests(unittest.TestCase):
         from v32_answer import V32Answerer
         for calling in (True, False):
             with self.subTest(calling=calling):
-                chain = V8Chain(calling, v32_rates=(14400,))
+                chain = V8Chain(calling, allow=V8_MOD_V32 | V8_MOD_V22,
+                                v32_rates=(14400,))
                 peer = (V32Answerer if calling else V32Modem)(
                     fs=8000, my_rates=(14400,), use_v8=False)
                 a, b = (chain, peer) if calling else (peer, chain)
@@ -248,7 +520,7 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(a.kind, "v32")
 
     def test_probe_preserves_queued_payload_on_v22_fallback(self):
-        a = V8Chain(False, patience=.1)
+        a = V8Chain(False, allow=V8_MOD_V32 | V8_MOD_V22, patience=.1)
         a.feed_bytes(b"queued before selection")
         for _ in range(120):
             a.tx_samples(160)
