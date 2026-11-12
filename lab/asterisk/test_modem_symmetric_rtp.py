@@ -127,8 +127,18 @@ class SymmetricRtpTests(unittest.TestCase):
                 result=session.handle_rtp_datagram(addr,self.packet(seq),10.+index*.02,{'index':index})
                 self.assertEqual(result,b'' if index<2 else b'output'*3)
             self.assertEqual(session.handle_rtp_packet.call_count,3)
+            local_address, local_port = sock.getsockname()
             for index,call in enumerate(session.handle_rtp_packet.call_args_list):
-                self.assertEqual(call.kwargs,dict(received_at=10.+index*.02,clock_context={'index':index}))
+                self.assertEqual(call.kwargs, dict(
+                    received_at=10. + index * .02,
+                    clock_context={
+                        'index': index,
+                        'source_address': addr[0],
+                        'source_port': addr[1],
+                        'local_address': local_address,
+                        'local_port': local_port,
+                    },
+                ))
             session.handle_rtp_datagram(('127.0.0.2',1234),self.packet(2))
             self.assertEqual(session.handle_rtp_packet.call_count,3)
             session.handle_rtp_datagram(addr,self.packet(2))
