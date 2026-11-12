@@ -164,8 +164,11 @@ def layouts(points):
 def warmup():
     if njit is None:raise RuntimeError('native trellis requires the optional Numba lab image')
     from v34_viterbi import TrellisDetector
-    d=TrellisDetector(16,8,15,backend='python')
-    labels=layouts(d.pts)
+    # Use the same shared, read-only geometry arrays as production detectors;
+    # compiling a mutable-label signature here would leave a first-use Numba
+    # compile on the real-time B1 callback after geometry caching is enabled.
+    d=TrellisDetector(16,8,15,backend='numba')
+    labels=d._native_labels
     advance(d,0j,0j,0,labels)
     advance_block(d,np.zeros((2,2),np.complex128),np.zeros(2,np.int64),labels)
     _traceback(np.zeros((25,16),np.int64),24,25,0)

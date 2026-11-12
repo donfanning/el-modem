@@ -24,6 +24,7 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
+import modem_dce as modem_dce_module
 from modem_dce import (
     AtDce,
     _env_enabled,
@@ -107,6 +108,21 @@ class V90DceProfileWiringTests(unittest.TestCase):
             "nominal_peak": 1200,
             "probe_rms": 300,
         }
+
+    def test_v90_profile_startup_prewarms_v34_receiver_tables(self) -> None:
+        """Both opt-in V.90 profiles must pass the DCE's B1 prewarm block."""
+        for selected in ("v90_digital_answerer_profile",
+                         "v90_analogue_caller_profile"):
+            with self.subTest(profile=selected):
+                args = types.SimpleNamespace(
+                    v90_digital_answerer_profile=None,
+                    v90_analogue_caller_profile=None)
+                setattr(args, selected, "profile.json")
+                with mock.patch(
+                        "v34_datarx.prewarm_v34_receive_tables") as prewarm:
+                    modem_dce_module._prewarm_v34_receiver_tables_for_v90_profiles(
+                        args)
+                    prewarm.assert_called_once_with()
 
     def test_analogue_caller_profile_is_explicit_and_outbound_only(self) -> None:
         source = {"line_mode": "chain", "chain": {}}

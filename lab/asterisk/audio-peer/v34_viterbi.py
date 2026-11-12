@@ -10,60 +10,90 @@ from __future__ import annotations
 
 import numpy as np
 import os
+from functools import lru_cache
 
 import v34_data as vd
+
+
+@lru_cache(maxsize=16)
+def _trellis_geometry(L: int):
+    """Build immutable constellation and transition tables once per size."""
+    pts, lab, par = [], [], []
+    for qi in range(L // 4):
+        for r in range(4):
+            point = vd.rotate_cw(vd.QUARTER[qi], r)
+            pts.append(point)
+            lab.append(vd.subset_label(point))
+            par.append(r & 1)
+    pts, lab, par = np.asarray(pts), np.asarray(lab), np.asarray(par)
+    cls = [[np.nonzero((lab == subset) & (par == parity))[0]
+            for parity in (0, 1)] for subset in range(8)]
+    order, starts, cls_ids = [], [], []
+    for subset in range(8):
+        for parity in (0, 1):
+            indices = cls[subset][parity]
+            if len(indices):
+                starts.append(len(order))
+                order.extend(indices)
+                cls_ids.append((subset, parity))
+    order, starts = np.asarray(order), np.asarray(starts)
+    cls_s = np.asarray([item[0] for item in cls_ids])
+    cls_p = np.asarray([item[1] for item in cls_ids])
+
+    next_states = np.zeros((16, 8, 8), dtype=int)
+    for state in range(16):
+        d1, d2, d3, d4 = ((state >> 3) & 1, (state >> 2) & 1,
+                          (state >> 1) & 1, state & 1)
+        for s0 in range(8):
+            for s1 in range(8):
+                nib = vd.TABLE13[s0][s1]
+                y2, y1 = (nib >> 1) & 1, nib & 1
+                next_states[state, s0, s1] = (
+                    (d4 << 3) | ((d1 ^ y2 ^ d4) << 2)
+                    | ((d2 ^ y2) << 1) | (d3 ^ y1))
+    flat_next = next_states.reshape(-1)
+    incoming = np.asarray([np.nonzero(flat_next == target)[0]
+                           for target in range(16)])
+    incoming_prev = incoming // 64
+    incoming_s0 = (incoming % 64) // 8
+    incoming_s1 = incoming % 8
+    y0 = np.arange(16, dtype=int) & 1
+
+    arrays = [pts, lab, par, order, starts, cls_s, cls_p, next_states,
+              incoming, incoming_prev, incoming_s0, incoming_s1, y0]
+    arrays.extend(indices for row in cls for indices in row)
+    for array in arrays:
+        array.setflags(write=False)
+    cls = tuple(tuple(row) for row in cls)
+    return (pts, lab, par, cls, tuple(cls_ids), order, starts, cls_s, cls_p,
+            next_states, incoming, incoming_prev, incoming_s0, incoming_s1,
+            y0)
+
+
+@lru_cache(maxsize=16)
+def _native_trellis_layouts(L: int):
+    """Cache the native kernel's immutable labels by constellation size."""
+    from v34_trellis_native import layouts
+    labels = layouts(_trellis_geometry(int(L))[0])
+    labels.setflags(write=False)
+    return labels
 
 
 class TrellisDetector:
     def __init__(self, L: int, J: int, P: int, depth: int = 24, start_state=(0, 0, 0, 0), m4_start: int = 0, precoder=None, w=1, nonlinear=False, energy=1.0, x_hist=None, trace=False, backend=None, erasure_hold=False):
         self.backend=backend or ('numba' if os.environ.get('V34_NATIVE_TRELLIS')=='1' else 'python')
         if self.backend not in ('python','numba'):raise ValueError('unknown trellis backend')
-        self.pts, self.lab, self.par = [], [], []
-        for qi in range(L // 4):
-            for r in range(4):
-                p = vd.rotate_cw(vd.QUARTER[qi], r)
-                self.pts.append(p)
-                self.lab.append(vd.subset_label(p))
-                self.par.append(r & 1)
-        self.pts = np.array(self.pts)
-        self.lab = np.array(self.lab)
-        self.par = np.array(self.par)
-        self.cls = [[np.nonzero((self.lab == s) & (self.par == p))[0] for p in (0, 1)] for s in range(8)]
-        # classes laid out contiguously so one reduceat gives the best distance of every (label, parity) class
-        order, starts, self.cls_ids = [], [], []
-        for s in range(8):
-            for p in (0, 1):
-                c = self.cls[s][p]
-                if len(c):
-                    starts.append(len(order))
-                    order += list(c)
-                    self.cls_ids.append((s, p))
-        self._order = np.array(order)
-        self._starts = np.array(starts)
-        self._cls_s = np.array([c[0] for c in self.cls_ids])
-        self._cls_p = np.array([c[1] for c in self.cls_ids])
+        (self.pts, self.lab, self.par, self.cls, self.cls_ids,
+         self._order, self._starts, self._cls_s, self._cls_p,
+         self.next, self._cand, self._cand_prev, self._cand_s0,
+         self._cand_s1, self.y0) = _trellis_geometry(int(L))
         self.J, self.P = J, P
         self._inv = vd.INVERSION[J]
         self.inv_offset = 2 * J - 2
         self.m4 = m4_start
         self.depth = depth
-        # state = (d1, d2, d3, d4) as a 4-bit integer d1<<3 | d2<<2 | d3<<1 | d4
-        self.next = np.zeros((16, 8, 8), dtype=int)
-        for st in range(16):
-            d = [(st >> 3) & 1, (st >> 2) & 1, (st >> 1) & 1, st & 1]
-            for s0 in range(8):
-                for s1 in range(8):
-                    nib = vd.TABLE13[s0][s1]
-                    y2, y1 = (nib >> 1) & 1, nib & 1
-                    d1, d2, d3, d4 = d
-                    n = [d4, d1 ^ y2 ^ d4, d2 ^ y2, d3 ^ y1]
-                    self.next[st, s0, s1] = (n[0] << 3) | (n[1] << 2) | (n[2] << 1) | n[3]
-        flat_next = self.next.reshape(-1)
-        self._cand = np.array([np.nonzero(flat_next == n)[0] for n in range(16)])   # (16, 64) transitions into each state
-        self._cand_prev = self._cand // 64
-        self._cand_s0 = (self._cand % 64) // 8
-        self._cand_s1 = self._cand % 8
-        self.y0 = np.array([st & 1 for st in range(16)])
+        # State tables are immutable and shared; survivor and metric state below
+        # remains private to this detector instance.
         s0 = (start_state[0] << 3) | (start_state[1] << 2) | (start_state[2] << 1) | start_state[3]
         self.metric = np.full(16, 1e18)
         self.metric[s0] = 0.0
@@ -90,7 +120,7 @@ class TrellisDetector:
         self.w, self.nonlinear, self.energy = w, nonlinear, energy
         self._layouts = {}
         if self.backend=='numba':
-            from v34_trellis_native import layouts, njit
+            from v34_trellis_native import njit
             if njit is None:raise RuntimeError('native trellis requires Numba')
             # The njit kernel reimplements the production detector (unprecode and its
             # x_hist update, label layout, distances, best-point selection) and never
@@ -104,7 +134,7 @@ class TrellisDetector:
             if overridden:
                 raise ValueError('native trellis cannot honour overridden detector methods: '
                                  +', '.join(overridden)+'; use backend=\'python\'')
-            self._native_labels=layouts(self.pts)
+            self._native_labels = _native_trellis_layouts(int(L))
             capacity = self._gap_hold_capacity if self.erasure_hold else self.depth + 1
             self._native_previous=np.empty((max(self.depth+1,capacity),16),np.int64)
 

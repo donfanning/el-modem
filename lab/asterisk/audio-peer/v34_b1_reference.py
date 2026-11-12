@@ -88,14 +88,18 @@ def build(rate, baud, role, shaping=False, precoder=(0,)*6,
 @lru_cache(maxsize=128)
 def _standard_sequences_cached(rate, baud, role, shaping, precoder,
                                initial_state):
-    """Cache immutable standard sequences for receiver startup warmup."""
+    """Immutable standard B1 sequences for receivers that need them repeatedly."""
     domains = _build(rate, baud, role, shaping, precoder, initial_state, False)
-    return tuple(domains["bits"]), tuple(domains["u"]), tuple(domains["x"])
+    return tuple(domains['bits']), tuple(domains['u']), tuple(domains['x'])
 
 
 def standard_sequences(rate, baud, role, shaping=False, precoder=(0,)*6,
                        initial_state=(0,)*4):
-    """Return cached immutable B1 sequences without changing diagnostic builds."""
+    """Return immutable standard B1 bit/mapper/waveform sequences.
+
+    This cache is separate from ``build`` so diagnostic callers continue to
+    receive fresh mutable dictionaries and traced builds are never cached.
+    """
     return _standard_sequences_cached(
         int(rate), float(baud), str(role), bool(shaping), tuple(precoder),
         tuple(initial_state))

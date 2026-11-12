@@ -8,7 +8,7 @@ import numpy as np
 
 from v34_rx import Phase3Rx, SymbolEq
 from v34_transport import (FeedbackValidity, feedback_support, gap_recovery_enabled,
-                           note_concealed, trellis_erasure_enabled, trellis_hold_enabled)
+                           note_concealed, register_concealed_ranges, trellis_erasure_enabled, trellis_hold_enabled)
 from v34_quality import DataQuality, observe
 from v34_streaming import update_data_baseband
 
@@ -150,11 +150,25 @@ class TransportFeedbackTests(unittest.TestCase):
         for args in ((-1,1),(0,0),(0,-1),(1.5,2)):
             with self.assertRaises(ValueError):guard.add(*args)
 
-    def test_core_registration_is_data_only_and_streaming_origin_is_absolute(self):
+    def test_concealed_gaps_cover_pre_b1_training_and_streaming_origin_is_absolute(self):
         eq=self.eq();core=SimpleNamespace(_rx_state=None,_p4rcv=SimpleNamespace(eq=eq))
-        note_concealed(core,10300,160);self.assertEqual(eq._transport_guard.registered_gaps,0)
-        core._rx_state={};note_concealed(core,10300,160)
+        # Phase-4 TRN runs before _rx_state exists. A concealed input window
+        # must still invalidate equalizer feedback that consumes it.
+        first,_=feedback_support(eq)
+        note_concealed(core,first,160)
         self.assertEqual(eq._transport_guard.registered_gaps,1)
+        eq.step(decide=lambda y:1+0j)
+        self.assertTrue(eq.last_transport_tainted)
+        # A gap may precede Phase-4 receiver construction. Retain it in RX
+        # coordinates and backfill it when the guard is installed.
+        core._p4rcv=None
+        pending=[(10300,160)]
+        self.assertEqual(register_concealed_ranges(core,pending),0)
+        core._p4rcv=SimpleNamespace(eq=eq)
+        self.assertEqual(register_concealed_ranges(core,pending),1)
+        self.assertEqual(eq._transport_guard.registered_gaps,2)
+        core._rx_state={};note_concealed(core,10460,160)
+        self.assertEqual(eq._transport_guard.registered_gaps,3)
         core._rx=np.ones(1000);core.rx_t=10500;core._rx_origin=9500
         R=Phase3Rx(3200,1800);R.update_baseband(core._rx,origin=0)   # production: the receiver already consumed PCM before the buffer was trimmed
         update_data_baseband(core,R,9000)

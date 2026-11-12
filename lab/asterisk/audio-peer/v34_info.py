@@ -196,11 +196,17 @@ class InfoDemodulator:
         return self.decode_many(x, (kind,))[kind]
 
     def decode_many(self, x: np.ndarray, kinds) -> dict[str, list[dict]]:
-        """Decode multiple INFO frame types from one shared baseband pass."""
+        """Decode several INFO frame kinds from one shared receive window.
+
+        The V.90 Phase 2 receiver searches for INFO0a and INFO1a on every
+        scan. They share the same carrier, baseband filter and symbol timing;
+        repeating those operations once per frame kind only doubles startup
+        work without adding an independent observation.
+        """
         return self.decode_baseband(self._baseband(np.asarray(x, dtype=float)), kinds)
 
     def decode_baseband(self, z: np.ndarray, kinds) -> dict[str, list[dict]]:
-        """Decode INFO frames from already mixed and filtered complex samples."""
+        """Decode INFO frames from already mixed and low-pass filtered PCM."""
         kinds = tuple(kinds)
         if not kinds:
             return {}
@@ -232,16 +238,26 @@ class InfoDemodulator:
     @staticmethod
     def _scan(bits: list[int], kind: str, phase: int) -> list[dict]:
         n = FRAME_LENGTH[kind]
-        pat = list(FILL) + list(SYNC)
+        pat = np.asarray(tuple(FILL) + tuple(SYNC), dtype=np.uint8)
+        bits = np.asarray(bits, dtype=np.uint8)
+        last_start = len(bits) - n
+        if last_start < 0:
+            return []
+        # Sync is only 12 bits, but the old per-position Python slice compare
+        # ran for every sample phase and every INFO kind on every startup scan.
+        # Move that candidate search into NumPy; parse/CRC-check only hits.
+        windows = np.lib.stride_tricks.sliding_window_view(bits, len(pat))
+        candidates = np.flatnonzero(
+            np.all(windows[:last_start + 1] == pat, axis=1))
         out = []
-        for i in range(len(bits) - n + 1):
-            if bits[i:i + 12] == pat:
-                frame_bits = bits[i:i + n]
-                parsed = PARSERS[kind](frame_bits)
-                if parsed is not None:
-                    parsed["_bit_index"], parsed["_phase"] = i, phase
-                    parsed["_frame_bits"] = frame_bits
-                    out.append(parsed)
+        for candidate in candidates:
+            i = int(candidate)
+            frame_bits = bits[i:i + n].tolist()
+            parsed = PARSERS[kind](frame_bits)
+            if parsed is not None:
+                parsed["_bit_index"], parsed["_phase"] = i, phase
+                parsed["_frame_bits"] = frame_bits
+                out.append(parsed)
         return out
 
 

@@ -136,6 +136,7 @@ def _install_hooks():
             cap = _current()
             if cap is None:
                 return phase3(receiver, *args, **kwargs)
+            cap.hook_counts['phase3'] = cap.hook_counts.get('phase3', 0) + 1
             with cap.measure('phase3_feed'), cap.phase('phase3'):
                 return phase3(receiver, *args, **kwargs)
 
@@ -143,6 +144,7 @@ def _install_hooks():
             cap = _current()
             if cap is None:
                 return phase4(receiver, *args, **kwargs)
+            cap.hook_counts['phase4'] = cap.hook_counts.get('phase4', 0) + 1
             with cap.measure('phase4_feed'), cap.phase('phase4'):
                 result = phase4(receiver, *args, **kwargs)
             cap.phase4 = dict(k_trn=receiver.k_trn, trn_end=receiver.trn_end,
@@ -168,6 +170,7 @@ def _install_hooks():
             cap = _current()
             if cap is None:
                 return qualify(receiver, observed, trace=trace)
+            cap.hook_counts['qualify'] = cap.hook_counts.get('qualify', 0) + 1
             # Extra trace storage only; no second feed, calibration or flush.
             try:
                 with cap.measure('b1_qualify'):
@@ -218,6 +221,8 @@ class DspCapture:
         self.core._receive_trace = True
         self.groups = {}
         self.fits = []
+        self.feed_calls = 0
+        self.hook_counts = {}
         self.received = self.row_count = self.data_rows = 0
         self.errors = []
         self.truncated = self.closed = False
@@ -323,13 +328,24 @@ class DspCapture:
             self.stage = previous
 
     def feed(self, pcm, receiver):
+        return self.call(receiver.feed_pcm, pcm,
+                         sample_count=len(pcm)//2)
+
+    def call(self, function, *args, sample_count=0, **kwargs):
+        """Run any live V.34 receive entry point with hooks active.
+
+        V.8 chains use the raw G.711 path, bypassing OnlineAudioSession's
+        ordinary PCM receiver wrapper. This adapter keeps the same
+        thread-local diagnostics active around that codeword-preserving path.
+        """
         core = getattr(self.engine,'caller',None) or getattr(self.engine,'answerer',None)
         self.adopt_core(core)
-        self.received += len(pcm)//2
+        self.feed_calls += 1
+        self.received += max(0, int(sample_count))
         previous = _current()
         _active.capture = self
         try:
-            return receiver.feed_pcm(pcm)
+            return function(*args, **kwargs)
         finally:
             _active.capture = previous
             # The wrapper can replace its caller inside feed_pcm when retrain
@@ -411,7 +427,11 @@ class DspCapture:
         group['rows'].append(row)
 
     def report(self):
-        return dict(enabled=True, prefix=str(self.prefix), rows=self.row_count,
+        return dict(enabled=True, prefix=str(self.prefix),
+                    feed_samples=self.received,
+                    feed_calls=self.feed_calls,
+                    hook_counts=dict(self.hook_counts),
+                    rows=self.row_count,
                     training_stride=self.training_stride,
                     training_rows_skipped=self.training_rows_skipped,
                     sampling_scope='phase3/phase4 per equalizer execution; fit matrices, B1 and initial data retained in full',

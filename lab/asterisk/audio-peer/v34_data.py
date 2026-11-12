@@ -24,6 +24,28 @@ INVERSION = {7: [0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0], 8: [0, 1, 1, 1, 0, 1
 INVERSION[8] = [int(c) for c in "0111011111111010"]      # Table 12 (J = 8): 01 11 01 11 11 11 10 10
 INVERSION[7] = [int(c) for c in "01110111111110"]         # Table 12 (J = 7): 01 11 01 11 11 11 10
 
+# The measured two-frame estimate is a deferred optimization for one 12 kb/s,
+# 2400-baud profile. That profile was not exercised by the approved live-call
+# evidence, so retain the established 40-frame default. Experiments may select
+# a shorter estimate explicitly with V34_DATA_TX_POWER_ESTIMATE_FRAMES.
+REFERENCE_POWER_ESTIMATE_FRAMES = 40
+
+
+def _power_estimate_frames(rate: int, baud: float) -> int:
+    override = os.environ.get('V34_DATA_TX_POWER_ESTIMATE_FRAMES')
+    if override is not None:
+        try:
+            frames = int(override)
+        except ValueError as exc:
+            raise ValueError(
+                'V34_DATA_TX_POWER_ESTIMATE_FRAMES must be an integer') from exc
+        if not 1 <= frames <= REFERENCE_POWER_ESTIMATE_FRAMES:
+            raise ValueError(
+                'V34_DATA_TX_POWER_ESTIMATE_FRAMES must be between 1 and '
+                f'{REFERENCE_POWER_ESTIMATE_FRAMES}')
+        return frames
+    return REFERENCE_POWER_ESTIMATE_FRAMES
+
 
 def quarter_points(n: int = 416) -> list[complex]:
     """Quarter superconstellation of Figure 5, labelled 0..n-1: points (4i+1, 4j+1) ordered by magnitude, ties by
@@ -148,6 +170,30 @@ class ShellMapper:
         return [m00, m01, m10, m11, m20, m21, m30, m31]
 
 
+@lru_cache(maxsize=32)
+def _shell_mapper(M: int) -> ShellMapper:
+    """Reuse the read-only shell tables across TX, RX, and power estimators."""
+    return ShellMapper(M)
+
+
+def _warm_shell_mappers() -> None:
+    """Build every supported shell table during module startup, outside RTP timing."""
+    sizes = set()
+    for rate in range(2400, 33601, 2400):
+        for baud in FRAMING:
+            fp = frame_params(rate, baud)
+            for expanded in (False, True):
+                sizes.add(mapping_params(fp["b"], expanded)["M"])
+    for size in sorted(sizes):
+        _shell_mapper(size)
+
+
+# Phase-4 TX and RX can first need a shell table at MP/B1, while TX and RX share
+# a call-level lock. Prebuild the bounded set of tables at import/startup so
+# neither path pays that one-time cost on live RTP.
+_warm_shell_mappers()
+
+
 # -- trellis encoder (9.6.3) ------------------------------------------------------------------------------------
 TABLE13 = {  # [s(2m)][s(2m+1)] -> (Y4, Y3, Y2, Y1) as a 4-bit integer
     0: [0b0000, 0b0000, 0b0001, 0b0001, 0b1000, 0b1000, 0b1001, 0b1001],
@@ -253,56 +299,40 @@ def _round_complex(z: complex, step: float) -> complex:
     return complex(_round_half_to_smaller(z.real, step), _round_half_to_smaller(z.imag, step))
 
 
-REFERENCE_POWER_ESTIMATE_FRAMES = 40
-
-
-def _power_estimate_frames(rate: int, baud: float) -> int:
-    value = os.environ.get("V34_DATA_TX_POWER_ESTIMATE_FRAMES")
-    if value is None:
-        return REFERENCE_POWER_ESTIMATE_FRAMES
-    try:
-        frames = int(value)
-    except ValueError as exc:
-        raise ValueError("V34_DATA_TX_POWER_ESTIMATE_FRAMES must be an integer") from exc
-    if not 1 <= frames <= REFERENCE_POWER_ESTIMATE_FRAMES:
-        raise ValueError("V34_DATA_TX_POWER_ESTIMATE_FRAMES must be between 1 and 40")
-    return frames
-
-
 class _PowerEstimateAccumulator:
-    """Incremental deterministic DataTx simulation, advanced in bounded chunks."""
+    """Incremental deterministic power simulation, so media code can time-slice it."""
 
     def __init__(self, rate, baud, expanded, h, nonlinear, linear_power, trellis):
         import random
-        tx = DataTx.__new__(DataTx)
-        tx.baud = baud
+        t = DataTx.__new__(DataTx)
+        t.baud = baud
         self.rate = int(rate)
         self.baud = baud
         self._fp = frame_params(self.rate, self.baud)
         fp = frame_params(rate, baud)
-        tx.J, tx.P, tx.b = fp["J"], fp["P"], fp["b"]
-        tx.swp = swp_pattern(tx.P, fp["r"])
-        mp = mapping_params(tx.b, expanded)
-        tx.K, tx.M, tx.q = mp["K"], mp["M"], mp["q"]
-        tx.shell = ShellMapper(tx.M) if tx.K else None
-        tx.bits_per_data_frame = fp["N"]
-        tx.w = 1 if tx.b < 56 else 2
-        tx.z, tx.conv, tx.m4, tx._inv, tx.inv_offset = (
-            0, convolutional_encoder(trellis), 0, INVERSION[tx.J], 0)
-        tx.h, tx.x_hist = list(h) if h is not None else [0j, 0j, 0j], [0j, 0j, 0j]
-        tx.nonlinear, tx._linear_power = nonlinear, linear_power
-        self._tx = tx
+        t.J, t.P, t.b = fp["J"], fp["P"], fp["b"]
+        t.swp = swp_pattern(t.P, fp["r"])
+        mp = mapping_params(t.b, expanded)
+        t.K, t.M, t.q = mp["K"], mp["M"], mp["q"]
+        t.shell = _shell_mapper(t.M) if t.K else None
+        t.bits_per_data_frame = fp["N"]
+        t.w = 1 if t.b < 56 else 2
+        t.z, t.conv, t.m4, t._inv, t.inv_offset = 0, convolutional_encoder(trellis), 0, INVERSION[t.J], 0
+        t.h, t.x_hist = list(h) if h is not None else [0j, 0j, 0j], [0j, 0j, 0j]
+        t.nonlinear, t._linear_power = nonlinear, linear_power
+        self._tx = t
         self._random = random.Random(1)
         self._acc = 0.0
         self._symbols = 0
 
     def advance(self, frame_budget: int) -> int:
+        """Process at most ``frame_budget`` frames; return the number completed."""
         completed = 0
         for _ in range(max(0, int(frame_budget))):
-            symbols = self._tx.data_frame([
+            sy = self._tx.data_frame([
                 self._random.randrange(2) for _ in range(self._fp["N"])])
-            self._acc += sum(abs(value) ** 2 for value in symbols)
-            self._symbols += len(symbols)
+            self._acc += sum(abs(v) ** 2 for v in sy)
+            self._symbols += len(sy)
             completed += 1
         return completed
 
@@ -314,7 +344,7 @@ class _PowerEstimateAccumulator:
 
 
 class DataTxPowerEstimate:
-    """Exact deterministic DataTx power estimate advanced in bounded chunks."""
+    """Exact 40-frame ``DataTx`` estimate advanced in bounded media-sized chunks."""
 
     def __init__(self, rate: int, baud: int, expanded: bool = False, precoder=None,
                  nonlinear: bool = False, trellis: int = 0, estimate_frames: int = 40):
@@ -334,6 +364,7 @@ class DataTxPowerEstimate:
         self._avg_power = None
 
     def advance(self, frame_budget: int) -> bool:
+        """Advance by at most this many simulated frames and report completion."""
         budget = max(0, int(frame_budget))
         if self._linear_done < self.frames:
             used = min(budget, self.frames - self._linear_done)
@@ -366,11 +397,11 @@ class DataTxPowerEstimate:
             raise RuntimeError("power estimate is not complete")
         return self._linear_power, self._avg_power
 
-
 class DataTx:
     """Turn a stream of already scrambled primary-channel bits into 2D data-mode symbols."""
 
-    def __init__(self, rate: int, baud: int, expanded: bool = False, precoder=None, nonlinear: bool = False, trellis: int = 0, power_estimate=None):
+    def __init__(self, rate: int, baud: int, expanded: bool = False, precoder=None,
+                 nonlinear: bool = False, trellis: int = 0, power_estimate=None):
         """``precoder``: the three complex coefficients h(1..3) the receiver asked for (None = no precoding)."""
         self.baud = baud
         self.h = list(precoder) if precoder is not None else [0j, 0j, 0j]
@@ -380,7 +411,7 @@ class DataTx:
         self.swp = swp_pattern(self.P, fp["r"])
         mp = mapping_params(self.b, expanded)
         self.K, self.M, self.q = mp["K"], mp["M"], mp["q"]
-        self.shell = ShellMapper(self.M) if self.K else None
+        self.shell = _shell_mapper(self.M) if self.K else None
         self.bits_per_data_frame = fp["N"]
         self.w = 1 if self.b < 56 else 2                   # precoder quantization scale 2^w (9-29)
         self.z = 0                                         # differential encoder Z(m-1)
@@ -390,48 +421,40 @@ class DataTx:
         self.inv_offset = 2 * self.J - 2                   # B1 is treated as the last data frame of a superframe
         self.nonlinear = nonlinear
         if power_estimate is None:
-            self._linear_power = self._estimate_power(
-                rate, baud, expanded, self.h, trellis=trellis)
-            self.avg_power = (self._estimate_power(
-                rate, baud, expanded, self.h, nonlinear=True,
-                linear_power=self._linear_power, trellis=trellis)
-                if nonlinear else self._linear_power)
+            self._linear_power = self._estimate_power(rate, baud, expanded, self.h, trellis=trellis)
+            self.avg_power = (self._estimate_power(rate, baud, expanded, self.h, nonlinear=True,
+                                                 linear_power=self._linear_power, trellis=trellis)
+                              if nonlinear else self._linear_power)
         else:
             self._linear_power, self.avg_power = map(float, power_estimate)
 
     @staticmethod
-    def _estimate_power(rate: int, baud: int, expanded: bool, h=None, nonlinear=False, linear_power=1.0, trellis=0) -> float:
+    def _estimate_power(rate: int, baud: int, expanded: bool, h=None, nonlinear=False, linear_power=1.0, trellis=0, estimate_frames=None) -> float:
         # Fixed-seed simulation uses a private mapper and depends only on these
         # immutable parameters. Cache the scalar, never live encoder history.
         coefficients=tuple(h) if h is not None else (0j, 0j, 0j)
+        # A zero precoder performs no arithmetic on its scalar representation.
+        # Canonicalize it so the V.34 receiver and decoder share the same
+        # cached power estimate even if one supplied NumPy complex zeros.
+        if not any(coefficients):
+            coefficients = (0j, 0j, 0j)
+        if estimate_frames is None:
+            estimate_frames = _power_estimate_frames(rate, baud)
         return DataTx._estimate_power_cached(rate, baud, expanded,
-            coefficients, nonlinear, linear_power, trellis, tuple(type(v) for v in coefficients))
+            coefficients, nonlinear, linear_power, trellis,
+            tuple(type(v) for v in coefficients), estimate_frames)
 
     @staticmethod
     @lru_cache(maxsize=128, typed=True)
-    def _estimate_power_cached(rate, baud, expanded, h, nonlinear, linear_power, trellis, coefficient_types=None):
+    def _estimate_power_cached(rate, baud, expanded, h, nonlinear, linear_power, trellis, coefficient_types=None, estimate_frames=None):
         """Average symbol energy for random data (used to keep the transmit power equal to the training signals')."""
-        import random
-        t = DataTx.__new__(DataTx)
-        t.baud = baud
-        fp = frame_params(rate, baud)
-        t.J, t.P, t.b = fp["J"], fp["P"], fp["b"]
-        t.swp = swp_pattern(t.P, fp["r"])
-        mp = mapping_params(t.b, expanded)
-        t.K, t.M, t.q = mp["K"], mp["M"], mp["q"]
-        t.shell = ShellMapper(t.M) if t.K else None
-        t.bits_per_data_frame = fp["N"]
-        t.w = 1 if t.b < 56 else 2
-        t.z, t.conv, t.m4, t._inv, t.inv_offset = 0, convolutional_encoder(trellis), 0, INVERSION[t.J], 0
-        t.h, t.x_hist = list(h) if h is not None else [0j, 0j, 0j], [0j, 0j, 0j]
-        t.nonlinear, t._linear_power = nonlinear, linear_power
-        rnd = random.Random(1)
-        acc, n = 0.0, 0
-        for _ in range(40):
-            sy = t.data_frame([rnd.randrange(2) for _ in range(fp["N"])])
-            acc += sum(abs(v) ** 2 for v in sy)
-            n += len(sy)
-        return acc / n
+        if estimate_frames is None:
+            estimate_frames = _power_estimate_frames(rate, baud)
+        job = _PowerEstimateAccumulator(rate, baud, expanded, h, nonlinear,
+                                        linear_power, trellis)
+        job.advance(estimate_frames)
+        return job.power
+
 
     def _pc(self) -> tuple[complex, complex]:
         """p(n) and c(n) for the next symbol from the three most recent precoded symbols (9.6.2 items 1-3)."""

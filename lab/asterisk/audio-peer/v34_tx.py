@@ -104,20 +104,30 @@ def qam_modulate(symbols, baud: float, fc: float, rms: float, beta: float = 0.15
     T = 1.0 / baud
     p = np.mean(np.abs(a) ** 2) if power is None else power
     n = int(math.ceil((len(a) + 2 * span) * FS / baud)) if n_total is None else n_total
-    t = (np.arange(n) + 0.0) / FS - span * T                # leave `span` symbols of lead-in for the pulse tails
-    base = np.zeros(n, dtype=complex)
-    k0 = np.floor((t * baud) - delay).astype(int)
-    for off in range(-span, span + 1):
-        k = k0 + off
-        ok = (k >= 0) & (k < len(a))
-        tau = t - (k + delay) * T
-        g = rrc(tau[ok], T, beta)
-        base[ok] += a[k[ok]] * g
-    if baseband:
-        return base * (rms / math.sqrt(p / 2))
-    ph = 2 * math.pi * fc * (np.arange(n) + n0) / FS
-    # rms of Re(base * e^{j ph}) = sqrt(p / 2) for unit-energy pulses
-    return (base * np.exp(1j * ph)).real * (rms / math.sqrt(p / 2))
+    scale = rms / math.sqrt(p / 2)
+    out = np.empty(n, dtype=complex if baseband else float)
+    # Bound temporary vectors: full-vector evaluation corrupted startup
+    # samples on long (over 32K-sample) waveforms in the pinned NumPy build.
+    # The bounded form preserves the same pulse equation and exact prefix.
+    block = 8192
+    for start in range(0, n, block):
+        stop = min(n, start + block)
+        sample = np.arange(start, stop)
+        t = sample / FS - span * T                 # lead-in for pulse tails
+        base = np.zeros(stop - start, dtype=complex)
+        k0 = np.floor((t * baud) - delay).astype(int)
+        for off in range(-span, span + 1):
+            k = k0 + off
+            ok = (k >= 0) & (k < len(a))
+            tau = t - (k + delay) * T
+            base[ok] += a[k[ok]] * rrc(tau[ok], T, beta)
+        if baseband:
+            out[start:stop] = base * scale
+        else:
+            ph = 2 * math.pi * fc * (sample + n0) / FS
+            # rms of Re(base * e^{j ph}) = sqrt(p / 2) for unit-energy pulses
+            out[start:stop] = (base * np.exp(1j * ph)).real * scale
+    return out
 
 
 class Scrambler:

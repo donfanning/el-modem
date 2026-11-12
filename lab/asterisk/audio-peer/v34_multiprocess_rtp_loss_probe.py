@@ -3,7 +3,9 @@
 
 Each OnlineAudioSession runs in a separate process so its RTP sender and DSP
 do not contend for one interpreter lock. A local UDP relay drops a configured
-number of contiguous PCMU packets in each direction after LAPM starts.
+number of contiguous PCMU packets in each direction after LAPM starts. The
+two endpoints can advertise separate receive precoders for profile-specific
+loss experiments.
 """
 import argparse
 import hashlib
@@ -16,11 +18,25 @@ import socket
 import time
 
 
-def _modem_worker(conn, local_port, relay_port, role, rate, recovery):
-    for key in ('V34_GAP_FEEDBACK','V34_GAP_TRELLIS_ERASURE','V34_GAP_TRELLIS_HOLD'):
+def _modem_worker(conn, local_port, relay_port, role, rate, recovery,
+                  receive_precoder, per_survivor_precoder_erasure,
+                  symbol_rate_index):
+    for key in ('V34_GAP_FEEDBACK','V34_GAP_TRELLIS_ERASURE',
+                'V34_GAP_TRELLIS_HOLD','V34_GAP_PRECODER_TRELLIS'):
         os.environ.pop(key,None)
     os.environ['V34_GAP_RECOVERY']='1' if recovery else '0'
+    os.environ['V34_GAP_PRECODER_TRELLIS']=(
+        '1' if per_survivor_precoder_erasure else '0')
+    if symbol_rate_index is not None:
+        os.environ['V34_SYMS']=str(symbol_rate_index)
+    os.environ['V34_RX_PRECODER']=','.join(str(value) for value in receive_precoder)
     from modem_dce import OnlineAudioSession
+    from v34_transport import trellis_erasure_enabled
+    if per_survivor_precoder_erasure:
+        from v34_noise_kernel import warmup
+        if not warmup():
+            raise RuntimeError('per-survivor precoder erasure requires Numba')
+        import v34_noise_stream  # noqa: F401 -- keep the first receive import off media startup
 
     sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     sock.bind(('127.0.0.1',local_port));sock.settimeout(.003)
@@ -30,15 +46,27 @@ def _modem_worker(conn, local_port, relay_port, role, rate, recovery):
         line_mode='v34',v34_rate=rate,v34_min_rate=rate,v42=True,
         carrier_loss_seconds=15.0)
     rx=bytearray();payload=None;expected_payload=None;stopping=False
+    pre_payload_bytes_discarded=0
     last_status=0.0
     try:
         session.start()
         while not stopping:
             now=time.monotonic();session.poll(now)
             while conn.poll():
-                command=conn.recv()
+                try:
+                    command=conn.recv()
+                except EOFError:
+                    stopping=True
+                    break
                 if command[0]=='send':
                     payload,expected_payload=command[1],command[2]
+                    # Ignore characters decoded before the controlled DTE
+                    # transfer begins. Startup/idle bits are not part of the
+                    # payload oracle and must not make an otherwise exact
+                    # LAPM transfer fail because RX was accumulated from
+                    # modem startup.
+                    pre_payload_bytes_discarded=len(rx)
+                    rx.clear()
                     session.feed_terminal_bytes(payload)
                 elif command[0]=='stop':
                     stopping=True
@@ -52,6 +80,8 @@ def _modem_worker(conn, local_port, relay_port, role, rate, recovery):
                 eq=getattr(getattr(core,'_p4rcv',None),'eq',None)
                 guard=getattr(eq,'_transport_guard',None)
                 link=getattr(modem,'_v42',None)
+                negotiated=getattr(core,'negotiated',None)
+                rx_profile=getattr(negotiated,'rx',None)
                 conn.send(dict(role=role,connected=bool(getattr(modem,'connected',False)),
                     v34_state=getattr(modem,'state',None),
                     tx_rate=getattr(modem,'bit_rate',None),rx_rate=getattr(modem,'rx_bit_rate',None),
@@ -73,7 +103,16 @@ def _modem_worker(conn, local_port, relay_port, role, rate, recovery):
                     b1_errors=(getattr(core,'rx_qualification',{}) or {}).get('bit_errors'),
                     timing_slips=getattr(eq,'slips',None),
                     gap_feedback=guard.report() if guard is not None else None,
+                    receive_profile=(None if rx_profile is None else dict(
+                        rate=rx_profile.rate, baud=rx_profile.baud,
+                        carrier=rx_profile.carrier, trellis=rx_profile.trellis,
+                        shaping=rx_profile.shaping, nonlinear=rx_profile.nonlinear,
+                        precoder=list(rx_profile.precoder))),
+                    trellis_erasure_enabled=(
+                        trellis_erasure_enabled(rx_profile.precoder)
+                        if rx_profile is not None else None),
                     received_bytes=len(rx),received_sha256=hashlib.sha256(rx).hexdigest(),
+                    pre_payload_bytes_discarded=pre_payload_bytes_discarded,
                     expected_bytes=len(expected_payload) if expected_payload is not None else 0,
                     expected_sha256=(hashlib.sha256(expected_payload).hexdigest()
                                      if expected_payload is not None else None),
@@ -93,14 +132,36 @@ def main():
     parser.add_argument('--erasure-ms',type=int,default=80)
     parser.add_argument('--caller-drop-after-ms',type=int,default=2000)
     parser.add_argument('--answerer-drop-after-ms',type=int,default=3000)
+    parser.add_argument('--caller-rx-precoder', default='0,0,0,0,0,0',
+                        help='six signed V.34 MP receive coefficients for caller')
+    parser.add_argument('--answerer-rx-precoder', default='0,0,0,0,0,0',
+                        help='six signed V.34 MP receive coefficients for answerer')
+    parser.add_argument('--per-survivor-precoder-erasure',action='store_true',
+                        help='experimental paired candidate; requires --recovery on and Numba')
+    parser.add_argument('--symbol-rate-index',type=int,choices=range(6),
+                        help='restrict both endpoints to this V.34 symbol-rate index (0 is 2400 baud)')
     parser.add_argument('--timeout-seconds',type=float,default=90)
     parser.add_argument('--output')
     args=parser.parse_args()
+    if args.per_survivor_precoder_erasure and args.recovery!='on':
+        parser.error('--per-survivor-precoder-erasure requires --recovery on')
     if (args.rate<=0 or args.bytes<=0 or args.erasure_ms<0 or args.erasure_ms%20
             or args.caller_drop_after_ms<0 or args.caller_drop_after_ms%20
             or args.answerer_drop_after_ms<0 or args.answerer_drop_after_ms%20
             or args.timeout_seconds<=0):
         parser.error('positive rate/bytes/timeout and nonnegative 20-ms-aligned loss settings required')
+    def parse_precoder(value, option):
+        try:
+            coeff=[int(part.strip()) for part in value.split(',')]
+        except ValueError:
+            parser.error(f'{option} must be six comma-separated signed integers')
+        if len(coeff)!=6 or any(not -32768<=item<=32767 for item in coeff):
+            parser.error(f'{option} must contain six signed 16-bit integers')
+        return coeff
+    receive_precoders={
+        'caller':parse_precoder(args.caller_rx_precoder,'--caller-rx-precoder'),
+        'answerer':parse_precoder(args.answerer_rx_precoder,'--answerer-rx-precoder'),
+    }
 
     ctx=mp.get_context('spawn')
     relay_socks=[];children=[];pipes=[]
@@ -117,7 +178,8 @@ def main():
     for role,index in (('caller',0),('answerer',1)):
         parent,child=ctx.Pipe()
         proc=ctx.Process(target=_modem_worker,args=(child,modem_ports[index],ports[index],
-            role,args.rate,args.recovery=='on'))
+            role,args.rate,args.recovery=='on',receive_precoders[role],
+            args.per_survivor_precoder_erasure,args.symbol_rate_index))
         proc.start();child.close();pipes.append(parent);children.append(proc)
 
     sources=[None,None];drop_at={'c2a':None,'a2c':None}
@@ -154,7 +216,7 @@ def main():
                 drop_at={'c2a':data_start+args.caller_drop_after_ms/1000,
                          'a2c':data_start+args.answerer_drop_after_ms/1000}
             if data_start is not None:
-                if any(latest.get(role,{}).get('v42_mode') in ('failed','down')
+                if any(latest.get(role,{}).get('v42_mode') in ('failed','down','lost')
                        for role in ('caller','answerer')):
                     result_error='a paired endpoint left V.42/LAPM'
                     break
@@ -176,12 +238,15 @@ def main():
                 result_error='payload completed before all scheduled drops'
         result=dict(status='PASS' if result_error is None else 'FAIL',
             recovery=args.recovery,rate=args.rate,payload_bytes_each_way=args.bytes,seed=args.seed,
+            per_survivor_precoder_erasure=args.per_survivor_precoder_erasure,
+            symbol_rate_index=args.symbol_rate_index,
             elapsed_seconds=round(time.monotonic()-(data_start or deadline-args.timeout_seconds),2),
             loss=dict(method='loopback UDP RTP relay drops contiguous packets',
                 frame_ms=20,duration_ms=args.erasure_ms,
                 caller_to_answer_offset_ms=args.caller_drop_after_ms,
                 answer_to_caller_offset_ms=args.answerer_drop_after_ms,
                 dropped=dict(dropped),relayed=dict(relayed)),
+            receive_precoders=receive_precoders,
             endpoints={role:latest.get(role) for role in ('caller','answerer')},
             scope='paired El-Modem OnlineAudioSession/DCE, one modem process per endpoint, loopback UDP; no Asterisk, codec transcoding, external route or independent modem',
             failure=result_error)
