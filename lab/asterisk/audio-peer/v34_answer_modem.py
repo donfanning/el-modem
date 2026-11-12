@@ -91,6 +91,12 @@ class V34AnswerModem(V42Layer):
         self._ev_seen = 0
         return answerer
 
+    def begin_v90_v34_fallback(self, info1d: dict, symbol_rate_index: int) -> None:
+        """Start the V.34 answer Phase 3 selected by a V.90 INFO1a."""
+        self.answerer.begin_v90_v34_fallback(info1d, symbol_rate_index)
+        self._phase = "p2"
+        self.state = "listen"
+
     @staticmethod
     def _is_tone_b(x):
         # Tone B is 1200 Hz. Reject weak input and broadband/data energy.

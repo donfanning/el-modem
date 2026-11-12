@@ -51,6 +51,7 @@ class SipInvite:
     answered: bool = False
     cancelled: bool = False
     ring_deadline: float = 0.0
+    negotiated_codec: str | None = None
 
 
 def parse_message(data: bytes) -> tuple[str, dict[str, str], str]:
@@ -69,20 +70,73 @@ def parse_message(data: bytes) -> tuple[str, dict[str, str], str]:
     return lines[0] if lines else "", headers, body
 
 
-def parse_remote_rtp(body: str) -> tuple[str, int] | None:
-    remote_ip = None
+def parse_remote_audio(body: str) -> tuple[tuple[str, int] | None, tuple[str, ...]]:
+    """Return the first IPv4 audio target and recognized static G.711 offers."""
+    session_ip = None
+    media_ip = None
     remote_port = None
-    for line in body.splitlines():
-        line = line.strip()
-        if line.startswith("c=IN IP4 "):
-            remote_ip = line.rsplit(" ", 1)[-1]
-        elif line.startswith("m=audio "):
-            parts = line.split()
-            if len(parts) >= 2 and parts[1].isdigit():
-                remote_port = int(parts[1])
-    if remote_ip and remote_port:
-        return remote_ip, remote_port
-    return None
+    audio_payloads: list[int] = []
+    rtpmap: dict[int, tuple[str, int]] = {}
+    in_audio = False
+    found_audio = False
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if line.startswith("m="):
+            if line.startswith("m=audio ") and not found_audio:
+                parts = line.split()
+                if len(parts) >= 4 and parts[2].upper() == "RTP/AVP":
+                    try:
+                        remote_port = int(parts[1].split("/", 1)[0])
+                        audio_payloads = [int(item) for item in parts[3:]]
+                        found_audio = in_audio = remote_port > 0
+                    except ValueError:
+                        in_audio = False
+            else:
+                in_audio = False
+        elif line.startswith("c=IN IP4 "):
+            ip = line.rsplit(" ", 1)[-1]
+            if in_audio:
+                media_ip = ip
+            elif not found_audio:
+                session_ip = ip
+        elif in_audio and line.startswith("a=rtpmap:"):
+            payload_text, separator, encoding = line[len("a=rtpmap:"):].partition(" ")
+            if not separator:
+                continue
+            try:
+                payload = int(payload_text)
+                name, _, rate_text = encoding.partition("/")
+                rate = int(rate_text.split("/", 1)[0])
+            except ValueError:
+                continue
+            rtpmap[payload] = (name.lower(), rate)
+
+    remote_ip = media_ip or session_ip
+    remote = (remote_ip, remote_port) if remote_ip and remote_port and remote_port > 0 else None
+    if remote is None:
+        audio_payloads = []
+    codecs: list[str] = []
+    for payload in audio_payloads:
+        mapped = rtpmap.get(payload)
+        static_codec = {0: "pcmu", 8: "pcma"}.get(payload)
+        if static_codec is not None:
+            # RFC 3551 assigns these static payload types; an rtpmap must not
+            # silently relabel them as the other G.711 law.
+            codec = static_codec if mapped in (None, (static_codec, 8000)) else None
+        elif mapped is None:
+            codec = None
+        else:
+            # Only static G.711 payloads are currently implemented by the
+            # media session. Dynamic mappings need payload-type negotiation.
+            codec = None
+        if codec is not None and codec not in codecs:
+            codecs.append(codec)
+    return remote, tuple(codecs)
+
+
+def parse_remote_rtp(body: str) -> tuple[str, int] | None:
+    """Return the first IPv4 RTP target from an SDP body."""
+    return parse_remote_audio(body)[0]
 
 
 class SipIncomingCallServer:
@@ -97,14 +151,20 @@ class SipIncomingCallServer:
         on_hangup: Callable[[], None],
         ring_interval: float = 6.0,
         packetization_ms: int = 20,
+        supported_audio_codecs: tuple[str, ...] = ("pcmu", "pcma"),
     ):
         if packetization_ms not in (10, 20):
             raise ValueError("SIP audio packetization must be 10 or 20 ms")
+        if not supported_audio_codecs or any(
+            codec not in ("pcmu", "pcma") for codec in supported_audio_codecs
+        ):
+            raise ValueError("SIP supports only PCMU and PCMA audio codecs")
         self.host = host
         self.port = port
         self.media_host = media_host
         self.media_port = media_port
         self.packetization_ms = packetization_ms
+        self.supported_audio_codecs = tuple(dict.fromkeys(supported_audio_codecs))
         self.on_incoming = on_incoming
         self.on_ring = on_ring
         self.on_hangup = on_hangup
@@ -163,15 +223,23 @@ class SipIncomingCallServer:
             return to_value
         return f"{to_value};tag={invite.to_tag}"
 
-    def _answer_sdp(self) -> str:
+    @property
+    def negotiated_codec(self) -> str | None:
+        with self._lock:
+            return self._invite.negotiated_codec if self._invite is not None else None
+
+    def _answer_sdp(self, codec: str = "pcmu") -> str:
+        if codec not in ("pcmu", "pcma"):
+            raise ValueError("SIP supports only PCMU and PCMA audio codecs")
+        payload_type, codec_name = (0, "PCMU") if codec == "pcmu" else (8, "PCMA")
         return (
             "v=0\r\n"
             f"o=modem-lab 1 1 IN IP4 {self.media_host}\r\n"
             "s=Bell103Modem\r\n"
             f"c=IN IP4 {self.media_host}\r\n"
             "t=0 0\r\n"
-            f"m=audio {self.media_port} RTP/AVP 0\r\n"
-            "a=rtpmap:0 PCMU/8000\r\n"
+            f"m=audio {self.media_port} RTP/AVP {payload_type}\r\n"
+            f"a=rtpmap:{payload_type} {codec_name}/8000\r\n"
             f"a=ptime:{self.packetization_ms}\r\n"
             "a=sendrecv\r\n"
         )
@@ -181,8 +249,18 @@ class SipIncomingCallServer:
             invite = self._invite
             if invite is None or invite.cancelled or invite.answered:
                 return False
+            _, offered_codecs = parse_remote_audio(invite.body)
+            invite.negotiated_codec = next(
+                (codec for codec in self.supported_audio_codecs if codec in offered_codecs),
+                None,
+            )
+            if invite.negotiated_codec is None:
+                self._send_response(invite, "488 Not Acceptable Here")
+                invite.cancelled = True
+                self._invite = None
+                return False
             invite.answered = True
-            self._send_response(invite, "200 OK", self._answer_sdp())
+            self._send_response(invite, "200 OK", self._answer_sdp(invite.negotiated_codec))
         if not invite.acked.wait(timeout):
             _sip_trace("ack_timeout", source=f"{invite.source[0]}:{invite.source[1]}")
             logger.warning("SIP ACK timed out for incoming modem call")
@@ -198,7 +276,7 @@ class SipIncomingCallServer:
             invite = self._invite
             if invite is None:
                 return None
-            return parse_remote_rtp(invite.body)
+            return parse_remote_audio(invite.body)[0]
 
     def hangup(self) -> None:
         with self._lock:
@@ -296,7 +374,7 @@ class SipIncomingCallServer:
                 self._send_response(
                     current,
                     "200 OK" if current.answered else "180 Ringing",
-                    self._answer_sdp() if current.answered else "",
+                    self._answer_sdp(current.negotiated_codec or "pcmu") if current.answered else "",
                 )
                 return
             if current is not None:

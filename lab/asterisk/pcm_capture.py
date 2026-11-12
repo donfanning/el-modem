@@ -19,6 +19,7 @@ import time
 import threading
 import json
 import copy
+import struct
 from queue import Queue, Full, Empty
 
 SAMPLE_RATE = 8000
@@ -64,6 +65,9 @@ class PcmCapture:
         self._tx = open(f"{stem}.tx.raw", "wb")
         self._timeline = (open(f"{stem}.timeline.jsonl", "w")
                           if os.environ.get('MODEM_CAPTURE_TIMELINE')=='1' else None)
+        self._rtp_timeline = (open(f"{stem}.rtp.jsonl", "w")
+                              if os.environ.get('MODEM_CAPTURE_RTP_TIMELINE') == '1'
+                              else None)
         self._started = time.time()
         with open(f"{stem}.txt", "w") as fh:
             fh.write(f"label {label}\nstarted {stamp}\nnote {note}\n"
@@ -81,6 +85,33 @@ class PcmCapture:
 
     def tx(self, pcm: bytes, context=None) -> None:
         self._write(self._tx, pcm, "_tx", context)
+
+    def rtp(self, direction: str, packet: bytes, context=None) -> None:
+        """Write an optional exact RTP packet trace alongside the PCM capture."""
+        if direction not in {"rx", "tx"}:
+            raise ValueError("RTP capture direction must be 'rx' or 'tx'")
+        if self._rtp_timeline is None:
+            return
+        raw = bytes(packet)
+        if len(raw) < 12 or raw[0] >> 6 != 2:
+            raise ValueError("RTP capture packet has an invalid header")
+        _, payload_type, sequence, timestamp, ssrc = struct.unpack(
+            "!BBHII", raw[:12])
+        row = dict(
+            direction=direction,
+            sequence=sequence,
+            timestamp=timestamp,
+            ssrc=ssrc,
+            payload_type=payload_type & 0x7f,
+            packet_hex=raw.hex(),
+            monotonic=time.monotonic(),
+            wall_time=time.time(),
+            context=copy.deepcopy(context or {}),
+        )
+        with self._lock:
+            if self._closed:
+                return
+            self._rtp_timeline.write(json.dumps(row) + "\n")
 
     def _write(self, fh, pcm: bytes, which: str, context=None) -> None:
         # Media reception and session shutdown can run on different threads.
@@ -207,7 +238,7 @@ class PcmCapture:
             finally:self._close_done.set()
 
     def _close_open(self) -> None:
-        for fh in (self._rx, self._tx, self._timeline):
+        for fh in (self._rx, self._tx, self._timeline, self._rtp_timeline):
             if fh is None:
                 continue
             try:

@@ -12,6 +12,7 @@ Theta = 0 and 0.3125 (9.7), with average transmit power normalized after the non
 from __future__ import annotations
 
 import math
+import os
 from bisect import bisect_right
 from functools import lru_cache
 
@@ -252,10 +253,124 @@ def _round_complex(z: complex, step: float) -> complex:
     return complex(_round_half_to_smaller(z.real, step), _round_half_to_smaller(z.imag, step))
 
 
+REFERENCE_POWER_ESTIMATE_FRAMES = 40
+
+
+def _power_estimate_frames(rate: int, baud: float) -> int:
+    value = os.environ.get("V34_DATA_TX_POWER_ESTIMATE_FRAMES")
+    if value is None:
+        return REFERENCE_POWER_ESTIMATE_FRAMES
+    try:
+        frames = int(value)
+    except ValueError as exc:
+        raise ValueError("V34_DATA_TX_POWER_ESTIMATE_FRAMES must be an integer") from exc
+    if not 1 <= frames <= REFERENCE_POWER_ESTIMATE_FRAMES:
+        raise ValueError("V34_DATA_TX_POWER_ESTIMATE_FRAMES must be between 1 and 40")
+    return frames
+
+
+class _PowerEstimateAccumulator:
+    """Incremental deterministic DataTx simulation, advanced in bounded chunks."""
+
+    def __init__(self, rate, baud, expanded, h, nonlinear, linear_power, trellis):
+        import random
+        tx = DataTx.__new__(DataTx)
+        tx.baud = baud
+        self.rate = int(rate)
+        self.baud = baud
+        self._fp = frame_params(self.rate, self.baud)
+        fp = frame_params(rate, baud)
+        tx.J, tx.P, tx.b = fp["J"], fp["P"], fp["b"]
+        tx.swp = swp_pattern(tx.P, fp["r"])
+        mp = mapping_params(tx.b, expanded)
+        tx.K, tx.M, tx.q = mp["K"], mp["M"], mp["q"]
+        tx.shell = ShellMapper(tx.M) if tx.K else None
+        tx.bits_per_data_frame = fp["N"]
+        tx.w = 1 if tx.b < 56 else 2
+        tx.z, tx.conv, tx.m4, tx._inv, tx.inv_offset = (
+            0, convolutional_encoder(trellis), 0, INVERSION[tx.J], 0)
+        tx.h, tx.x_hist = list(h) if h is not None else [0j, 0j, 0j], [0j, 0j, 0j]
+        tx.nonlinear, tx._linear_power = nonlinear, linear_power
+        self._tx = tx
+        self._random = random.Random(1)
+        self._acc = 0.0
+        self._symbols = 0
+
+    def advance(self, frame_budget: int) -> int:
+        completed = 0
+        for _ in range(max(0, int(frame_budget))):
+            symbols = self._tx.data_frame([
+                self._random.randrange(2) for _ in range(self._fp["N"])])
+            self._acc += sum(abs(value) ** 2 for value in symbols)
+            self._symbols += len(symbols)
+            completed += 1
+        return completed
+
+    @property
+    def power(self) -> float:
+        if not self._symbols:
+            raise RuntimeError("power estimate is not complete")
+        return self._acc / self._symbols
+
+
+class DataTxPowerEstimate:
+    """Exact deterministic DataTx power estimate advanced in bounded chunks."""
+
+    def __init__(self, rate: int, baud: int, expanded: bool = False, precoder=None,
+                 nonlinear: bool = False, trellis: int = 0, estimate_frames: int = 40):
+        self.rate, self.baud = int(rate), baud
+        self.expanded = bool(expanded)
+        self.h = tuple((0j, 0j, 0j) if precoder is None else precoder)
+        self.nonlinear, self.trellis = bool(nonlinear), int(trellis)
+        self.frames = int(estimate_frames)
+        if not 1 <= self.frames <= REFERENCE_POWER_ESTIMATE_FRAMES:
+            raise ValueError("estimate_frames must be between 1 and 40")
+        self._linear_job = _PowerEstimateAccumulator(
+            self.rate, self.baud, self.expanded, self.h, False, 1.0, self.trellis)
+        self._nonlinear_job = None
+        self._linear_done = 0
+        self._nonlinear_done = 0
+        self._linear_power = None
+        self._avg_power = None
+
+    def advance(self, frame_budget: int) -> bool:
+        budget = max(0, int(frame_budget))
+        if self._linear_done < self.frames:
+            used = min(budget, self.frames - self._linear_done)
+            self._linear_job.advance(used)
+            self._linear_done += used
+            budget -= used
+            if self._linear_done == self.frames:
+                self._linear_power = self._linear_job.power
+                if self.nonlinear:
+                    self._nonlinear_job = _PowerEstimateAccumulator(
+                        self.rate, self.baud, self.expanded, self.h, True,
+                        self._linear_power, self.trellis)
+                else:
+                    self._avg_power = self._linear_power
+        if self.nonlinear and self._linear_done == self.frames and self._avg_power is None and budget:
+            used = min(budget, self.frames - self._nonlinear_done)
+            self._nonlinear_job.advance(used)
+            self._nonlinear_done += used
+            if self._nonlinear_done == self.frames:
+                self._avg_power = self._nonlinear_job.power
+        return self.done
+
+    @property
+    def done(self) -> bool:
+        return self._avg_power is not None
+
+    @property
+    def result(self) -> tuple[float, float]:
+        if not self.done:
+            raise RuntimeError("power estimate is not complete")
+        return self._linear_power, self._avg_power
+
+
 class DataTx:
     """Turn a stream of already scrambled primary-channel bits into 2D data-mode symbols."""
 
-    def __init__(self, rate: int, baud: int, expanded: bool = False, precoder=None, nonlinear: bool = False, trellis: int = 0):
+    def __init__(self, rate: int, baud: int, expanded: bool = False, precoder=None, nonlinear: bool = False, trellis: int = 0, power_estimate=None):
         """``precoder``: the three complex coefficients h(1..3) the receiver asked for (None = no precoding)."""
         self.baud = baud
         self.h = list(precoder) if precoder is not None else [0j, 0j, 0j]
@@ -274,10 +389,15 @@ class DataTx:
         self._inv = INVERSION[self.J]
         self.inv_offset = 2 * self.J - 2                   # B1 is treated as the last data frame of a superframe
         self.nonlinear = nonlinear
-        self._linear_power = self._estimate_power(rate, baud, expanded, self.h, trellis=trellis)
-        self.avg_power = (self._estimate_power(rate, baud, expanded, self.h, nonlinear=True,
-                                             linear_power=self._linear_power, trellis=trellis)
-                          if nonlinear else self._linear_power)
+        if power_estimate is None:
+            self._linear_power = self._estimate_power(
+                rate, baud, expanded, self.h, trellis=trellis)
+            self.avg_power = (self._estimate_power(
+                rate, baud, expanded, self.h, nonlinear=True,
+                linear_power=self._linear_power, trellis=trellis)
+                if nonlinear else self._linear_power)
+        else:
+            self._linear_power, self.avg_power = map(float, power_estimate)
 
     @staticmethod
     def _estimate_power(rate: int, baud: int, expanded: bool, h=None, nonlinear=False, linear_power=1.0, trellis=0) -> float:

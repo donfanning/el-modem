@@ -150,7 +150,8 @@ class InfoModulator:
         self.amp = amplitude * (10 ** (-1 / 20) if role == "answer" else 1.0)
         self.guard = guard and role == "answer"
 
-    def modulate(self, bits, tail_bits: int = 8, start_phase: float = 0.0) -> np.ndarray:
+    def modulate(self, bits, tail_bits: int = 8, start_phase: float = 0.0,
+                 guard_start_phase: float = 0.0) -> np.ndarray:
         symbols = [1.0]                                    # reference point
         sign = 1.0
         for b in list(bits) + [0] * tail_bits:
@@ -170,7 +171,8 @@ class InfoModulator:
         t = np.arange(n_out) / FS
         sig = self.amp * env * np.cos(2 * math.pi * CARRIER[self.role] * t + start_phase)
         if self.guard:
-            sig = sig + self.amp * 10 ** (-6 / 20) * np.cos(2 * math.pi * 1800.0 * t)
+            sig = sig + self.amp * 10 ** (-6 / 20) * np.cos(
+                2 * math.pi * 1800.0 * t + guard_start_phase)
         return sig
 
 
@@ -191,9 +193,25 @@ class InfoDemodulator:
         return np.convolve(z, h, mode="same")
 
     def decode(self, x: np.ndarray, kind: str) -> list[dict]:
-        z = self._baseband(np.asarray(x, dtype=float))
+        return self.decode_many(x, (kind,))[kind]
+
+    def decode_many(self, x: np.ndarray, kinds) -> dict[str, list[dict]]:
+        """Decode multiple INFO frame types from one shared baseband pass."""
+        return self.decode_baseband(self._baseband(np.asarray(x, dtype=float)), kinds)
+
+    def decode_baseband(self, z: np.ndarray, kinds) -> dict[str, list[dict]]:
+        """Decode INFO frames from already mixed and filtered complex samples."""
+        kinds = tuple(kinds)
+        if not kinds:
+            return {}
+        if len(set(kinds)) != len(kinds):
+            raise ValueError("INFO frame kinds must be unique")
+        unknown = set(kinds) - FRAME_LENGTH.keys()
+        if unknown:
+            raise ValueError(f"unsupported INFO frame kinds: {sorted(unknown)}")
+        z = np.asarray(z, dtype=np.complex128).reshape(-1)
         spb = FS / BAUD
-        found = []
+        found = {kind: [] for kind in kinds}
         n_sym = int((len(z) - 1) / spb) - 1
         for ph in range(self.phases):
             t0 = ph * spb / self.phases
@@ -202,12 +220,13 @@ class InfoDemodulator:
             s = z[i] * (1 - (pos - i)) + z[i + 1] * (pos - i)
             d = s[1:] * np.conj(s[:-1])
             bits = (d.real < 0).astype(int).tolist()        # 180 degree turn = 1
-            frames = self._scan(bits, kind, ph)
-            for frame in frames:
-                start = (frame["_bit_index"] + 1 + ph / self.phases) * spb
-                frame["_start_sample"] = start
-                frame["_end_sample"] = start + FRAME_LENGTH[kind] * spb
-            found += frames
+            for kind in kinds:
+                frames = self._scan(bits, kind, ph)
+                for frame in frames:
+                    start = (frame["_bit_index"] + 1 + ph / self.phases) * spb
+                    frame["_start_sample"] = start
+                    frame["_end_sample"] = start + FRAME_LENGTH[kind] * spb
+                found[kind].extend(frames)
         return found
 
     @staticmethod
@@ -217,9 +236,11 @@ class InfoDemodulator:
         out = []
         for i in range(len(bits) - n + 1):
             if bits[i:i + 12] == pat:
-                parsed = PARSERS[kind](bits[i:i + n])
+                frame_bits = bits[i:i + n]
+                parsed = PARSERS[kind](frame_bits)
                 if parsed is not None:
                     parsed["_bit_index"], parsed["_phase"] = i, phase
+                    parsed["_frame_bits"] = frame_bits
                     out.append(parsed)
         return out
 

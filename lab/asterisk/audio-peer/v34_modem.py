@@ -98,6 +98,19 @@ class V34Modem(V42Layer):
         self._ev_seen = 0
         return caller
 
+    def begin_v90_v34_fallback(self, info1a: dict) -> None:
+        """Enter V.34 call-side Phase 3 after a V.90 INFO1a selects V.34."""
+        if self._phase != "p2" or self.caller.t != 0 or self.caller.rx_t != 0:
+            raise RuntimeError("V.34 fallback must be selected before call-side audio starts")
+        if not isinstance(info1a, dict):
+            raise TypeError("V.34 fallback requires decoded INFO1a fields")
+        self.caller.info1a = dict(info1a)
+        self.caller.info1c_sent_t = 0
+        if not self.caller._setup_phase3():
+            raise ValueError(self.caller.failed_reason or "V.34 INFO1a profile is unsupported")
+        self.caller.stage = "phase3"
+        self._ev("V.90 selected V.34; call-side Phase 3 receiver armed")
+
     RETRAIN_MAX = 2                                          # retrains before sustained qualified LAPM recovery
     RETRAIN_TIMEOUT = 45.0                                   # seconds for a retrain to reach data mode again
 

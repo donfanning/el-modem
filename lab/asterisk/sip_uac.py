@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable
 
-from sip_uas import parse_message, parse_remote_rtp
+from sip_uas import parse_message, parse_remote_audio
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +59,12 @@ class SipOriginateCall:
         password: str | None = None,
         caller_number: str | None = None,
         packetization_ms: int = 20,
+        audio_codec: str = "pcmu",
     ):
         if packetization_ms not in (10, 20):
             raise ValueError("SIP audio packetization must be 10 or 20 ms")
+        if audio_codec not in ("pcmu", "pcma"):
+            raise ValueError("SIP audio codec must be 'pcmu' or 'pcma'")
         # Optional digest credentials: with them a 401/407 challenge is answered (SIP trunk providers).
         self.username, self._password, self.caller_number = username, password, caller_number
         self.host = host
@@ -71,6 +74,8 @@ class SipOriginateCall:
         self.media_host = media_host
         self.media_port = media_port
         self.packetization_ms = packetization_ms
+        self.audio_codec = audio_codec
+        self.negotiated_codec: str | None = None
         self.on_connected = on_connected
         self.on_failed = on_failed
         self.on_hangup = on_hangup
@@ -81,14 +86,15 @@ class SipOriginateCall:
         self._finished = False
 
     def _invite_sdp(self) -> str:
+        payload_type, codec_name = (0, "PCMU") if self.audio_codec == "pcmu" else (8, "PCMA")
         return (
             "v=0\r\n"
             f"o=modem-lab 1 1 IN IP4 {self.media_host}\r\n"
             "s=Bell103Modem\r\n"
             f"c=IN IP4 {self.media_host}\r\n"
             "t=0 0\r\n"
-            f"m=audio {self.media_port} RTP/AVP 0\r\n"
-            "a=rtpmap:0 PCMU/8000\r\n"
+            f"m=audio {self.media_port} RTP/AVP {payload_type}\r\n"
+            f"a=rtpmap:{payload_type} {codec_name}/8000\r\n"
             f"a=ptime:{self.packetization_ms}\r\n"
             "a=sendrecv\r\n"
         )
@@ -199,7 +205,20 @@ class SipOriginateCall:
                     continue
                 if code.startswith("2"):
                     _sip_trace("answered", status=code)
-                    remote_addr = parse_remote_rtp(body)
+                    remote_addr, answer_codecs = parse_remote_audio(body)
+                    has_audio_media = any(line.strip().startswith("m=audio ") for line in body.splitlines())
+                    if has_audio_media and self.audio_codec not in answer_codecs:
+                        with self._lock:
+                            if self._finished:
+                                return
+                            dialog.to_header = to_header
+                            self._answered = True
+                            self._send_ack(sock, dialog, with_route=False)
+                        self.hangup()
+                        self.on_failed("sip g711 codec mismatch")
+                        _sip_trace("failed", reason="g711_codec_mismatch")
+                        return
+                    self.negotiated_codec = self.audio_codec
                     with self._lock:
                         if self._finished:
                             return

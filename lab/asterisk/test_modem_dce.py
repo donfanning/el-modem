@@ -27,13 +27,20 @@ from pathlib import Path
 from modem_dce import (
     AtDce,
     _env_enabled,
+    _DynamicEngineRawG711Receiver,
+    _V22Transmitter,
     DeferredV42Release,
     V42BreakRequestQueue,
     default_error_control_for,
+    attach_v90_digital_answerer_profile,
+    load_v90_digital_answerer_profile,
+    attach_v90_analogue_caller_profile,
+    load_v90_analogue_caller_profile,
     dial_abort_applies,
     EscapeHold,
     EscapeSequenceDetector,
     OnlineAudioSession,
+    _metrics_json_default,
     bell212_dte_baud_for_serial,
     prepare_v42_break_dte_order,
     v42_break_options_for_k,
@@ -45,6 +52,7 @@ from modem_dce import (
     v34_rx_timing_slips,
     run_pty,
 )
+from g711 import alaw_to_linear, linear_to_alaw
 from call_progress import (
     BusyToneDetector,
     OutgoingCallProgressMonitor,
@@ -73,6 +81,406 @@ class EnvironmentFlagTests(unittest.TestCase):
         for value in ("1", "true", "yes", "on", "/tmp/capture"):
             with self.subTest(value=value), mock.patch.dict(os.environ, {"MODEM_DEBUG": value}):
                 self.assertTrue(_env_enabled("MODEM_DEBUG"))
+
+
+class V90DceProfileWiringTests(unittest.TestCase):
+    @staticmethod
+    def profile() -> dict:
+        blocks = [{} for _ in range(6)]
+        blocks[5] = {"hi_carrier": 1}
+        return {
+            "info0d_fields": {"rate3429": 1, "v90_3429_upstream": 1},
+            "info1d_fields": {"blocks": blocks},
+            "tone_b_peak": 900,
+            "probe_rms": 450,
+            "phase3_rate_mask": 0xFFFF,
+        }
+
+    @staticmethod
+    def caller_profile() -> dict:
+        return {
+            "info0a_fields": {"rate3429": 1, "disallow3429": 1},
+            "info1a_fields": {
+                "md_len": 0, "uinfo": 90, "analog_symbol_rate": 5,
+                "digital_symbol_rate": 6, "freq_offset": 0,
+            },
+            "nominal_peak": 1200,
+            "probe_rms": 300,
+        }
+
+    def test_analogue_caller_profile_is_explicit_and_outbound_only(self) -> None:
+        source = {"line_mode": "chain", "chain": {}}
+        configured = attach_v90_analogue_caller_profile(
+            source, self.caller_profile(), "originate")
+        self.assertEqual(configured["chain"]["v90_analogue_caller"],
+                         self.caller_profile())
+        self.assertNotIn("v90_analogue_caller", source["chain"])
+        self.assertEqual(attach_v90_analogue_caller_profile(
+            source, None, "originate"), source)
+        with self.assertRaisesRegex(ValueError, "V.8 chain"):
+            attach_v90_analogue_caller_profile(
+                {"line_mode": "v34"}, self.caller_profile(), "originate")
+
+    def test_analogue_caller_profile_file_is_validated_at_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "caller.json"
+            path.write_text(json.dumps(self.caller_profile()))
+            self.assertEqual(
+                load_v90_analogue_caller_profile(str(path), law="pcmu"),
+                self.caller_profile())
+            malformed = self.caller_profile()
+            malformed["probe_rms"] = 0
+            path.write_text(json.dumps(malformed))
+            with self.assertRaisesRegex(ValueError, "probe_rms"):
+                load_v90_analogue_caller_profile(str(path), law="pcmu")
+
+    def test_analogue_caller_profile_selects_phase2_engine_in_outbound_chain(self) -> None:
+        from v8 import V8_MOD_V34, V8_PCM_ANALOG
+
+        configured = attach_v90_analogue_caller_profile(
+            {"line_mode": "chain", "chain": {}}, self.caller_profile(),
+            "originate")
+        sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(
+            sock, ("127.0.0.1", 9), "originate", "answer", **configured)
+        try:
+            chain = session._v22
+            self.assertEqual(chain.pcm_availability, V8_PCM_ANALOG)
+            chain._v8.status = 2
+            chain._v8.result = {
+                "modulations": V8_MOD_V34,
+                "protocols": 0,
+                "pcm_negotiated": True,
+                "pcm_negotiated_bits": V8_PCM_ANALOG,
+            }
+            chain._step_v8()
+            self.assertEqual(chain.kind, "v90")
+            self.assertEqual(chain.engine.kind, "v90")
+            self.assertEqual(len(chain.tx_samples(160)), 160)
+            self.assertFalse(chain.connected)
+        finally:
+            session.stop()
+            sock.close()
+            peer.close()
+
+        # A shared process can still answer ordinary calls; its outbound-only
+        # profile must not advertise analogue PCM to incoming callers.
+        inbound = attach_v90_analogue_caller_profile(
+            {"line_mode": "chain", "chain": {}}, self.caller_profile(),
+            "answer")
+        sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(
+            sock, ("127.0.0.1", 9), "answer", "originate", **inbound)
+        try:
+            self.assertEqual(session._v22.pcm_availability, 0)
+            self.assertIsNone(session._v22.v90_engine_factory)
+        finally:
+            session.stop()
+            sock.close()
+            peer.close()
+
+    def test_profile_is_added_only_to_answer_role_chain_sessions(self) -> None:
+        source = {"line_mode": "chain", "chain": {}}
+        configured = attach_v90_digital_answerer_profile(
+            source, self.profile(), "answer")
+        self.assertEqual(configured["chain"]["v90_digital_answerer"], self.profile())
+        self.assertNotIn("v90_digital_answerer", source["chain"])
+
+        sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(sock, ("127.0.0.1", 9), "answer", "originate",
+                                     **configured)
+        try:
+            self.assertEqual(session._v22.pcm_availability, 1 << 6)
+            self.assertIsNotNone(session._v22.v90_engine_factory)
+            from v8 import V8_MOD_V34, V8_PCM_DIGITAL
+            chain = session._v22
+            chain._v8.status = 2
+            chain._v8.result = {
+                "modulations": V8_MOD_V34,
+                "protocols": 0,
+                "pcm_negotiated": True,
+                "pcm_negotiated_bits": V8_PCM_DIGITAL,
+            }
+            chain._step_v8()
+            self.assertEqual(chain.kind, "v90")
+            self.assertEqual(chain.engine.kind, "v90")
+            self.assertFalse(chain.engine.connected)
+            self.assertEqual(len(chain.engine.tx_g711(160, "pcmu")), 160)
+        finally:
+            session.stop()
+            sock.close()
+
+    def test_v90_engine_owned_lapm_skips_generic_v42_manager(self) -> None:
+        from v8 import V8_MOD_V34, V8_PCM_DIGITAL, V8_PROTOCOL_LAPM_V42
+
+        profile = self.profile()
+        profile["phase3_enable_lapm"] = True
+        configured = attach_v90_digital_answerer_profile(
+            {"line_mode": "chain", "chain": {}}, profile, "answer")
+        sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(
+            sock, ("127.0.0.1", 9), "answer", "originate", **configured)
+        try:
+            chain = session._v22
+            chain._v8.status = 2
+            chain._v8.result = {
+                "modulations": V8_MOD_V34,
+                "protocols": V8_PROTOCOL_LAPM_V42,
+                "pcm_negotiated": True,
+                "pcm_negotiated_bits": V8_PCM_DIGITAL,
+            }
+            chain._step_v8()
+            self.assertTrue(chain.supports_v42)
+            self.assertTrue(chain.v42_managed_by_engine)
+            session._want_v42 = True
+            self.assertFalse(session._v42_active())
+            self.assertFalse(session._v42_started)
+        finally:
+            session.stop()
+            sock.close()
+            peer.close()
+
+    def test_v34_fallback_reenters_generic_v42_manager_for_both_v90_roles(self) -> None:
+        """V.90 owns LAPM until fallback; the DCE must then start V.42.
+
+        Before this regression, both V.90 adapters always advertised
+        ``v42_managed_by_engine=True``. The original paired payload helper hid
+        the gap by calling start_v42() itself, while the real DCE therefore
+        never started LAPM for a V.34 fallback.
+        """
+        from types import SimpleNamespace
+        from v8 import (V8_MOD_V34, V8_PCM_ANALOG, V8_PCM_DIGITAL,
+                        V8_PROTOCOL_LAPM_V42)
+
+        cases = (
+            ("originate", "answer", V8_PCM_ANALOG,
+             attach_v90_analogue_caller_profile(
+                 {"line_mode": "chain", "chain": {}},
+                 self.caller_profile(), "originate"), False),
+            ("answer", "originate", V8_PCM_DIGITAL,
+             attach_v90_digital_answerer_profile(
+                 {"line_mode": "chain", "chain": {}},
+                 self.profile(), "answer"), True),
+        )
+        for tx_role, rx_role, pcm_role, configured, lapm_calling_party in cases:
+            with self.subTest(tx_role=tx_role):
+                sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+                session = OnlineAudioSession(
+                    sock, ("127.0.0.1", 9), tx_role, rx_role, **configured)
+                try:
+                    chain = session._v22
+                    chain._v8.status = 2
+                    chain._v8.result = {
+                        "modulations": V8_MOD_V34,
+                        "protocols": V8_PROTOCOL_LAPM_V42,
+                        "pcm_negotiated": True,
+                        "pcm_negotiated_bits": pcm_role,
+                    }
+                    chain._step_v8()
+                    engine = chain.engine
+                    self.assertTrue(engine.v42_managed_by_engine)
+                    self.assertFalse(session._v42_active())
+
+                    start_v42 = mock.Mock()
+                    engine._v34_fallback_engine = SimpleNamespace(
+                        supports_v42=True,
+                        connected=True,
+                        bit_rate=33600,
+                        v42_mode="off",
+                        v42_compression=False,
+                        v42_resolved=False,
+                        start_v42=start_v42,
+                        is_settled=lambda: True,
+                    )
+                    session._want_v42 = True
+                    self.assertFalse(engine.v42_managed_by_engine)
+                    self.assertTrue(engine.supports_v42)
+                    self.assertTrue(session._v42_active())
+                    session.poll(time.monotonic())
+                    start_v42.assert_called_once()
+                    self.assertEqual(
+                        start_v42.call_args.kwargs["calling_party"],
+                        lapm_calling_party)
+                    self.assertFalse(start_v42.call_args.kwargs["detect"])
+                    self.assertTrue(session._v42_started)
+                    self.assertFalse(
+                        session.negotiation_complete,
+                        "DCE must hold CONNECT while fallback LAPM is unresolved")
+                    self.assertEqual(session.connect_suffix, "")
+
+                    # run_pty announces CONNECT only after this production
+                    # predicate becomes true. The paired delayed-start tests
+                    # separately drive real XID/UA/I-frame exchange and payload.
+                    engine._v34_fallback_engine.v42_mode = "lapm"
+                    engine._v34_fallback_engine.v42_resolved = True
+                    self.assertTrue(session.negotiation_complete)
+                    self.assertEqual(session.connect_suffix, "/LAPM")
+                finally:
+                    session.stop()
+                    sock.close()
+                    peer.close()
+
+    def test_v34_fallback_can_force_v42_detection_after_v8_by_opt_in(self) -> None:
+        """Keep V.8's direct LAPM path default, but allow a diagnostic probe."""
+        from types import SimpleNamespace
+        from v8 import V8_MOD_V34, V8_PCM_ANALOG, V8_PROTOCOL_LAPM_V42
+
+        configured = attach_v90_analogue_caller_profile(
+            {"line_mode": "chain", "chain": {}}, self.caller_profile(), "originate")
+        sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(
+            sock, ("127.0.0.1", 9), "originate", "answer", **configured)
+        try:
+            chain = session._v22
+            chain._v8.status = 2
+            chain._v8.result = {
+                "modulations": V8_MOD_V34,
+                "protocols": V8_PROTOCOL_LAPM_V42,
+                "pcm_negotiated": True,
+                "pcm_negotiated_bits": V8_PCM_ANALOG,
+            }
+            chain._step_v8()
+            engine = chain.engine
+            start_v42 = mock.Mock()
+            engine._v34_fallback_engine = SimpleNamespace(
+                supports_v42=True, connected=True, bit_rate=21600,
+                v42_mode="off", v42_resolved=False,
+                start_v42=start_v42, is_settled=lambda: True)
+            session._want_v42 = True
+            with mock.patch.dict(os.environ, {"V42_FORCE_DETECT_AFTER_V8": "1"}):
+                session.poll(time.monotonic())
+            start_v42.assert_called_once()
+            self.assertFalse(
+                start_v42.call_args.kwargs["calling_party"],
+                "the V.90 analogue caller takes the V.34 answer/LAPM answer role")
+            self.assertTrue(start_v42.call_args.kwargs["detect"])
+        finally:
+            session.stop()
+            sock.close()
+            peer.close()
+
+    def test_v34_fallback_v42_role_override_is_diagnostic_and_opt_in(self) -> None:
+        """Allow a one-call initiator-role probe without changing V.90 defaults."""
+        from types import SimpleNamespace
+        from v8 import V8_MOD_V34, V8_PCM_ANALOG, V8_PROTOCOL_LAPM_V42
+
+        configured = attach_v90_analogue_caller_profile(
+            {"line_mode": "chain", "chain": {}}, self.caller_profile(), "originate")
+        sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(
+            sock, ("127.0.0.1", 9), "originate", "answer", **configured)
+        try:
+            chain = session._v22
+            chain._v8.status = 2
+            chain._v8.result = {
+                "modulations": V8_MOD_V34,
+                "protocols": V8_PROTOCOL_LAPM_V42,
+                "pcm_negotiated": True,
+                "pcm_negotiated_bits": V8_PCM_ANALOG,
+            }
+            chain._step_v8()
+            engine = chain.engine
+            start_v42 = mock.Mock()
+            engine._v34_fallback_engine = SimpleNamespace(
+                supports_v42=True, connected=True, bit_rate=12000,
+                v42_mode="off", v42_resolved=False,
+                start_v42=start_v42, is_settled=lambda: True)
+            session._want_v42 = True
+            with mock.patch.dict(os.environ, {"V42_ROLE_OVERRIDE": "originator"}):
+                session.poll(time.monotonic())
+            start_v42.assert_called_once()
+            self.assertTrue(start_v42.call_args.kwargs["calling_party"])
+            self.assertFalse(start_v42.call_args.kwargs["detect"])
+        finally:
+            session.stop()
+            sock.close()
+            peer.close()
+
+
+    def test_absent_profile_leaves_session_configuration_unchanged(self) -> None:
+        source = {"line_mode": "chain", "chain": {}}
+        self.assertEqual(attach_v90_digital_answerer_profile(source, None, "answer"), source)
+
+    def test_profile_rejects_wrong_role_or_non_chain_resolution(self) -> None:
+        with self.assertRaisesRegex(ValueError, "answer role"):
+            attach_v90_digital_answerer_profile(
+                {"line_mode": "chain"}, self.profile(), "originate")
+        with self.assertRaisesRegex(ValueError, "V.8 chain"):
+            attach_v90_digital_answerer_profile(
+                {"line_mode": "v34"}, self.profile(), "answer")
+
+    def test_selected_profile_uses_exact_g711_rtp_seams_for_both_laws(self) -> None:
+        from v8 import V8_MOD_V34, V8_PCM_DIGITAL
+
+        for law in ("pcmu", "pcma"):
+            with self.subTest(law=law):
+                sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+                session = OnlineAudioSession(
+                    sock, ("127.0.0.1", 9), "answer", "originate",
+                    g711_codec=law,
+                    **attach_v90_digital_answerer_profile(
+                        {"line_mode": "chain", "chain": {}},
+                        self.profile(), "answer"))
+                try:
+                    chain = session._v22
+                    chain._v8.status = 2
+                    chain._v8.result = {
+                        "modulations": V8_MOD_V34,
+                        "protocols": 0,
+                        "pcm_negotiated": True,
+                        "pcm_negotiated_bits": V8_PCM_DIGITAL,
+                    }
+                    chain._step_v8()
+                    engine = chain.engine
+                    self.assertEqual(chain.kind, "v90")
+                    self.assertTrue(session._raw_g711_receiver.active)
+
+                    linear = session._next_frame_samples()
+                    transmitted = session._last_raw_g711_payload
+                    self.assertIsInstance(transmitted, bytes)
+                    self.assertEqual(len(transmitted), 160)
+                    decoder = ulaw_to_linear if law == "pcmu" else alaw_to_linear
+                    self.assertEqual(linear, [decoder(value) for value in transmitted])
+
+                    received = bytes((0xFF if law == "pcmu" else 0xD5,)) * 160
+                    session._rx_context = {
+                        "packet_playout_deadline_monotonic":
+                            engine._clock.origin + engine._rx_at / 8000,
+                        "payload_samples": len(received),
+                        "timestamp": 0,
+                    }
+                    with mock.patch.object(engine, "feed_g711",
+                                           wraps=engine.feed_g711) as feed:
+                        self.assertEqual(session.handle_rtp_payload(received), b"")
+                        feed.assert_called_once()
+                        self.assertEqual(feed.call_args.args[0], received)
+                        self.assertEqual(feed.call_args.args[1], law)
+                    self.assertEqual(engine._rx_at, len(received))
+                    self.assertFalse(engine._failed)
+                finally:
+                    session.stop()
+                    sock.close()
+                    peer.close()
+
+    def test_profile_file_is_parsed_and_validated_by_production_factory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "v90-profile.json"
+            path.write_text(json.dumps(self.profile()))
+            self.assertEqual(load_v90_digital_answerer_profile(str(path), law="pcmu"),
+                             self.profile())
+            bad = self.profile()
+            bad["phase3_rate_mask"] = True
+            path.write_text(json.dumps(bad))
+            with self.assertRaisesRegex(ValueError, "rate_mask must be an integer"):
+                load_v90_digital_answerer_profile(str(path), law="pcmu")
+
+
+class MetricsSerializationTests(unittest.TestCase):
+    def test_binary_metrics_are_summarized_and_complex_values_are_structured(self):
+        encoded = _metrics_json_default(b"v90-data")
+        self.assertEqual(encoded["byte_length"], 8)
+        self.assertEqual(len(encoded["sha256"]), 64)
+        self.assertEqual(_metrics_json_default(1 + 2j), {"real": 1.0, "imag": 2.0})
 
 
 class DeferredV42ReleaseTests(unittest.TestCase):
@@ -140,6 +548,85 @@ class V34RtpMediaClockBridgeTests(unittest.TestCase):
         session._rx_switched = True
         session._bell212_char_bits = 10
         return session
+
+    def test_dsp_capture_attaches_to_nested_v90_v34_fallback(self):
+        fallback = types.SimpleNamespace(answerer=object())
+        selected = types.SimpleNamespace(_v34_fallback_engine=fallback)
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        session._v22 = types.SimpleNamespace(kind='v90', engine=selected)
+        session._dsp_capture_pending = True
+        session._dsp_capture = None
+        session._dsp_capture_attach_state = {
+            'pending': True, 'target': None, 'error': None,
+        }
+        session._dsp_capture_attach_lock = threading.Lock()
+        capture = object()
+        with mock.patch('v34_diagnostic.configured', return_value=capture) as configure:
+            self.assertIs(session._attach_dsp_capture_if_ready(), capture)
+        configure.assert_called_once_with(fallback)
+        self.assertFalse(session._dsp_capture_pending)
+        self.assertEqual(session._dsp_capture_attach_state['target'], 'v90')
+
+    def test_dsp_capture_stays_pending_until_v90_fallback_exists(self):
+        selected = types.SimpleNamespace(_v34_fallback_engine=None)
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        session._v22 = types.SimpleNamespace(kind='v90', engine=selected)
+        session._dsp_capture_pending = True
+        session._dsp_capture = None
+        session._dsp_capture_attach_state = {
+            'pending': True, 'target': None, 'error': None,
+        }
+        session._dsp_capture_attach_lock = threading.Lock()
+        self.assertIsNone(session._attach_dsp_capture_if_ready())
+        self.assertTrue(session._dsp_capture_pending)
+        selected._v34_fallback_engine = types.SimpleNamespace(caller=object())
+        capture = object()
+        with mock.patch('v34_diagnostic.configured', return_value=capture):
+            self.assertIs(session._attach_dsp_capture_if_ready(), capture)
+
+    def test_dsp_capture_registers_creation_callback_on_v90_engine(self):
+        selected = types.SimpleNamespace(_v34_fallback_engine=None)
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        session._v22 = types.SimpleNamespace(kind='v90', engine=selected)
+        session._dsp_capture_pending = True
+        session._dsp_capture = None
+        session._dsp_capture_attach_state = {
+            'pending': True, 'target': None, 'error': None,
+        }
+        session._dsp_capture_attach_lock = threading.Lock()
+        self.assertIsNone(session._attach_dsp_capture_if_ready())
+        fallback = types.SimpleNamespace(caller=object())
+        capture = object()
+        with mock.patch('v34_diagnostic.configured', return_value=capture) as configure:
+            self.assertIs(selected._dce_v34_fallback_capture_callback(
+                fallback, kind='v90-v34-fallback'), capture)
+        configure.assert_called_once_with(fallback)
+        self.assertEqual(session._dsp_capture_attach_state['target'],
+                         'v90-v34-fallback')
+
+    def test_dsp_capture_wraps_raw_g711_receiver_path(self):
+        calls = []
+
+        class Capture:
+            def call(self, function, *args, sample_count=0, **kwargs):
+                calls.append(sample_count)
+                return function(*args, **kwargs)
+
+        raw = types.SimpleNamespace(
+            active=True,
+            feed_g711=mock.Mock(return_value=b'raw-result'),
+        )
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        session._raw_g711_receiver = raw
+        session._dsp_capture = Capture()
+        session._dsp_capture_pending = False
+        session._online_control = None
+        session._g711_codec = 'pcmu'
+        session._rx_context = {'payload_samples': 160}
+        self.assertEqual(session._feed_raw_g711(b'\x7f' * 160), b'raw-result')
+        self.assertEqual(calls, [160])
+        raw.feed_g711.assert_called_once_with(
+            b'\x7f' * 160, 'pcmu', {'payload_samples': 160})
 
     def test_receive_media_anchor_uses_first_sample_after_deaf_skip(self):
         session = self._session({
@@ -280,6 +767,7 @@ class DtrLapmReleaseIntegrationTests(unittest.TestCase):
                 self.modem.close()
 
         class FakeSipServer:
+            negotiated_codec = "pcmu"
             def __init__(self, *args, **kwargs):
                 self.on_incoming = kwargs["on_incoming"]
                 self.on_ring = kwargs["on_ring"]
@@ -533,6 +1021,7 @@ class DtrLapmReleaseIntegrationTests(unittest.TestCase):
                 self.modem.close()
 
         class FakeSipServer:
+            negotiated_codec = "pcmu"
             def __init__(self, *args, **kwargs):
                 self.on_incoming = kwargs["on_incoming"]
                 self.on_ring = kwargs["on_ring"]
@@ -718,6 +1207,7 @@ class IfcDceIntegrationTests(unittest.TestCase):
                 self.modem.close()
 
         class FakeSipServer:
+            negotiated_codec = "pcmu"
             def __init__(self, *args, **kwargs):
                 self.on_incoming = kwargs["on_incoming"]
                 self.on_ring = kwargs["on_ring"]
@@ -754,6 +1244,7 @@ class IfcDceIntegrationTests(unittest.TestCase):
                 self.connect_suffix = ""
                 self.modulation_name = "BELL 103"
                 self.timing_trace = None
+                self.rtp_payload_type = 0
                 self.xoff_asserted = False
                 self._v22 = RecoveryEngine()
                 self.sent = False
@@ -985,6 +1476,7 @@ class StrictXidDceIntegrationTests(unittest.TestCase):
                 self.modem.close()
 
         class FakeSipServer:
+            negotiated_codec = "pcmu"
             def __init__(self, *args, **kwargs):
                 self.on_incoming = kwargs["on_incoming"]
                 self.on_ring = kwargs["on_ring"]
@@ -1001,6 +1493,7 @@ class StrictXidDceIntegrationTests(unittest.TestCase):
         class FakeSipCall:
             def __init__(self, *args, **kwargs):
                 self.on_connected = kwargs["on_connected"]
+                self.audio_codec = "pcmu"
                 self.hungup = False
 
             def dial(self, number):
@@ -1228,6 +1721,7 @@ class Bell212RawBreakDceTests(unittest.TestCase):
                 pass
 
         class FakeSipServer:
+            negotiated_codec = "pcmu"
             def __init__(self, *args, **kwargs):
                 self.on_incoming = kwargs["on_incoming"]
                 self.on_ring = kwargs["on_ring"]
@@ -1303,6 +1797,22 @@ class AutomaticTrafficTests(unittest.TestCase):
 
 
 class Bell212FallbackSessionTests(unittest.TestCase):
+    def test_v90_connect_reports_downstream_receive_rate(self):
+        # V.90 is asymmetric; CONNECT must report the downstream (receive)
+        # rate, not the V.34 upstream. The engine exposes rx_bit_rate.
+        from types import SimpleNamespace
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        session._auto = None
+        session._v22 = SimpleNamespace(rx_bit_rate=36000, bit_rate=28800)
+        self.assertEqual(session.line_speed, 36000)
+        # A symmetric engine (no/zero rx_bit_rate) keeps its single rate.
+        session._v22 = SimpleNamespace(rx_bit_rate=0, bit_rate=28800)
+        self.assertEqual(session.line_speed, 28800)
+
+        dce = AtDce()
+        dce.connect_speed, dce.connect_suffix = 36000, "/LAPM"
+        self.assertEqual(dce.connect_result_text(), "CONNECT 36000/LAPM")
+
     def test_bell103_fallback_reports_300_and_does_not_start_lapm(self):
         from v22 import V22Modem
 
@@ -1959,6 +2469,40 @@ class AtiScreenTests(unittest.TestCase):
             "by_core": {"caller": 4, "answerer": 3}, "total": 7,
         })
         self.assertIsNone(v34_rx_timing_slips(types.SimpleNamespace()))
+
+    def test_v34_rx_timing_profile_finds_nested_v90_fallback_phase3(self) -> None:
+        profile = types.SimpleNamespace(
+            count=5, report=lambda: {"sample_count": 5, "stages": {"window": {"max_us": 71000}}})
+        eq = types.SimpleNamespace(slips=2, _step_profile=profile)
+        startup_stages = [{"stage": "train_trn_auto", "thread_cpu_us": 80000}]
+        fallback = types.SimpleNamespace(caller=types.SimpleNamespace(
+            _p3=types.SimpleNamespace(_startup_stage_profile=startup_stages),
+            _p3_rcv=types.SimpleNamespace(eq=eq), _p4rcv=None))
+        engine = types.SimpleNamespace(_v34_fallback_engine=fallback)
+
+        self.assertEqual(v34_rx_timing_slips(engine), {
+            "by_core": {"v34_fallback_phase3": 2}, "total": 2,
+            "symbol_eq_step_profile_by_core": {
+                "v34_fallback_phase3": {"sample_count": 5, "stages": {"window": {"max_us": 71000}}}
+            },
+            "v34_fallback_phase3_startup_stages": startup_stages,
+        })
+
+    def test_v34_rx_timing_profile_finds_nested_v90_answerer_fallback(self) -> None:
+        startup_stages = [{"stage": "phase3_receiver_feed", "thread_cpu_us": 81000}]
+        fallback = types.SimpleNamespace(answerer=types.SimpleNamespace(
+            _p3={
+                "R": types.SimpleNamespace(_startup_stage_profile=startup_stages),
+                "rcv": types.SimpleNamespace(eq=types.SimpleNamespace(slips=7)),
+            },
+            _p4rcv=None,
+        ))
+        engine = types.SimpleNamespace(_v34_fallback_engine=fallback)
+
+        self.assertEqual(v34_rx_timing_slips(engine), {
+            "by_core": {"v34_fallback_answerer_phase3": 7}, "total": 7,
+            "v34_fallback_answerer_phase3_startup_stages": startup_stages,
+        })
 
     def test_identification_screens(self) -> None:
         dce = AtDce()
@@ -2735,6 +3279,476 @@ class V42BreakDteOrderTests(unittest.TestCase):
 
 
 class OnlineAudioSessionTests(unittest.TestCase):
+    def test_online_control_timing_separates_wait_from_lock_hold(self) -> None:
+        from types import SimpleNamespace
+        from v34_realtime import RealtimeStats
+
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        session.realtime = RealtimeStats(thread_timing=True)
+        session._v22 = SimpleNamespace(connected=False)
+        control = SimpleNamespace(lock=threading.RLock())
+        self.assertEqual(session._call_under_online_control_lock(
+            "rx_online_control", control, lambda value: value + 1, 41), 42)
+        measurements = session.realtime.report()["measurements"]
+        for name in ("startup_rx_online_control_lock_wait_seconds",
+                     "startup_rx_online_control_lock_wait_thread_cpu_seconds",
+                     "startup_rx_online_control_lock_hold_seconds",
+                     "startup_rx_online_control_lock_hold_thread_cpu_seconds"):
+            self.assertEqual(measurements[name]["count"], 1)
+            self.assertGreaterEqual(measurements[name]["maximum"], 0.0)
+
+        with self.assertRaisesRegex(RuntimeError, "expected failure"):
+            session._call_under_online_control_lock(
+                "tx_online_control", control,
+                lambda: (_ for _ in ()).throw(RuntimeError("expected failure")))
+        self.assertTrue(control.lock.acquire(blocking=False))
+        control.lock.release()
+
+    def test_v90_answerer_switches_dce_to_raw_g711_after_real_v8_negotiation(self) -> None:
+        from v8 import (V8Negotiator, V8_MOD_V34, V8_PCM_ANALOG,
+                        V8_PROTOCOL_LAPM_V42)
+
+        laws = (
+            ("pcmu", linear_to_ulaw, ulaw_to_linear),
+            ("pcma", linear_to_alaw, alaw_to_linear),
+        )
+        for law, encode, decode in laws:
+            with self.subTest(law=law):
+                blocks = [{} for _ in range(6)]
+                blocks[5] = {"hi_carrier": 1}
+                profile = {
+                    "info0d_fields": {"rate3429": 1, "v90_3429_upstream": 1},
+                    "info1d_fields": {"blocks": blocks},
+                    "tone_b_peak": 900,
+                    "probe_rms": 450,
+                    "phase3_rate_mask": 0xFFFF,
+                    "phase3_enable_lapm": True,
+                }
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.bind(("127.0.0.1", 0))
+                peer.bind(("127.0.0.1", 0))
+                peer_addr = peer.getsockname()
+                session = OnlineAudioSession(
+                    sock, peer_addr, "answer", "originate",
+                    line_mode="chain", chain={"v90_digital_answerer": profile},
+                    g711_codec=law, v42=True)
+                caller = V8Negotiator(
+                    True, modulations=V8_MOD_V34,
+                    protocols=V8_PROTOCOL_LAPM_V42,
+                    pcm_availability=V8_PCM_ANALOG)
+
+                def rtp_packet(payload, sequence, timestamp):
+                    return (struct.pack("!BBHII", 0x80,
+                                        session.rtp_payload_type,
+                                        sequence & 0xFFFF,
+                                        timestamp & 0xFFFFFFFF,
+                                        0x90ABCDEF)
+                            + payload)
+
+                def deliver_peer_packet(packet):
+                    peer.sendto(packet, sock.getsockname())
+                    received, address = sock.recvfrom(2048)
+                    self.assertEqual(address, peer.getsockname())
+                    return session.handle_rtp_datagram(
+                        address, received, received_at=time.monotonic())
+
+                def deliver_answerer_payload(payload, sequence, timestamp):
+                    packet = rtp_packet(payload, sequence, timestamp)
+                    sock.sendto(packet, peer_addr)
+                    received, address = peer.recvfrom(2048)
+                    self.assertEqual(address, sock.getsockname())
+                    return [decode(codeword) for codeword in received[12:]]
+
+                try:
+                    chain = session._v22
+                    self.assertIsNone(session.transmitter.tx_g711)
+                    self.assertFalse(session._raw_g711_receiver.active)
+
+                    # Exercise actual V.8 PCM-role negotiation through the DCE
+                    # audio-session seam. Each iteration is one 20 ms/160-
+                    # sample media tick; the negotiated V.90 engine is created
+                    # only after the caller and answerer complete V.8.
+                    for _tick in range(500):
+                        caller_pcm = caller.tx(160)
+                        caller_payload = bytes(encode(int(sample))
+                                               for sample in caller_pcm)
+                        deliver_peer_packet(rtp_packet(
+                            caller_payload, _tick, _tick * 160))
+                        answerer_pcm = session._next_frame_samples()
+                        answerer_payload = session._last_raw_g711_payload
+                        if answerer_payload is None:
+                            answerer_payload = bytes(encode(int(sample))
+                                                     for sample in answerer_pcm)
+                        caller.rx(deliver_answerer_payload(
+                            answerer_payload, _tick, _tick * 160))
+                        if caller.status in (2, 3, 4) and chain.kind == "v90":
+                            break
+
+                    self.assertEqual(caller.status, 2, caller.result)
+                    self.assertTrue(caller.result["pcm_negotiated"])
+                    self.assertEqual(chain.kind, "v90")
+                    self.assertEqual(
+                        session._negotiated_v8_protocols(),
+                        chain.negotiated_protocols)
+                    self.assertTrue(
+                        session._negotiated_v8_protocols()
+                        & V8_PROTOCOL_LAPM_V42)
+                    engine = chain.engine
+                    self.assertEqual(engine.law, law)
+                    self.assertTrue(session._raw_g711_receiver.active)
+                    self.assertIs(session.transmitter.tx_g711.__self__, engine)
+                    self.assertEqual(session._rtp_jitter_samples, 320)
+
+                    # The selected engine's exact codewords must cross the
+                    # DCE transmit seam unchanged, and received RTP payload
+                    # octets must reach feed_g711 without PCM requantization.
+                    tx_calls = []
+                    original_tx = engine.tx_g711
+
+                    def traced_tx(count, codec):
+                        result = original_tx(count, codec)
+                        tx_calls.append(result)
+                        return result
+
+                    engine.tx_g711 = traced_tx
+                    samples = session._next_frame_samples()
+                    self.assertEqual(session._last_raw_g711_payload, tx_calls[-1])
+                    self.assertEqual(samples,
+                                     [decode(value) for value in tx_calls[-1]])
+
+                    received_payload = bytes((index * 37) & 0xFF
+                                             for index in range(160))
+                    engine.feed_g711 = mock.Mock(return_value=b"dte-output")
+                    sequence = _tick + 1
+                    timestamp = (_tick + 1) * 160
+                    deliver_peer_packet(rtp_packet(
+                        received_payload, sequence, timestamp))
+                    second_payload = bytes((value + 1) & 0xFF
+                                            for value in received_payload)
+                    deliver_peer_packet(rtp_packet(
+                        second_payload, sequence + 1, timestamp + 160))
+                    self.assertEqual(engine.feed_g711.call_count, 0)
+                    third_payload = bytes((value + 2) & 0xFF
+                                           for value in received_payload)
+                    output = deliver_peer_packet(rtp_packet(
+                        third_payload, sequence + 2, timestamp + 320))
+                    # The ordered RTP drain now replays the bounded pre-roll,
+                    # then all three released packets through the selected
+                    # raw-G.711 engine.
+                    calls = engine.feed_g711.call_args_list
+                    self.assertEqual(output, b"dte-output" * len(calls))
+                    fed = [call.args[0] for call in calls]
+                    self.assertIn(received_payload, fed)
+                    self.assertTrue(all(call.args[1] == law
+                                        for call in engine.feed_g711.call_args_list))
+                finally:
+                    session.stop()
+                    sock.close()
+                    peer.close()
+
+    def test_v90_digital_answerer_profile_is_opt_in_at_dce_boundary(self) -> None:
+        profile_blocks = [{} for _ in range(6)]
+        profile_blocks[5] = {"hi_carrier": 1}
+        profile = {
+            "info0d_fields": {"rate3429": 1, "v90_3429_upstream": 1},
+            "info1d_fields": {"blocks": profile_blocks},
+            "tone_b_peak": 900,
+            "probe_rms": 450,
+            "phase3_rate_mask": 0xFFFF,
+        }
+        sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(
+            sock, ("127.0.0.1", 9), "answer", "originate",
+            line_mode="chain", chain={"v90_digital_answerer": profile})
+        try:
+            self.assertEqual(session._v22.pcm_availability, 1 << 6)
+            self.assertIsNotNone(session._v22.v90_engine_factory)
+            self.assertEqual(session._v22.kind, "v8")
+        finally:
+            session.stop()
+            sock.close()
+            peer.close()
+
+        sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(
+            sock, ("127.0.0.1", 9), "answer", "originate", line_mode="chain")
+        try:
+            self.assertEqual(session._v22.pcm_availability, 0)
+            self.assertIsNone(session._v22.v90_engine_factory)
+        finally:
+            session.stop()
+            sock.close()
+            peer.close()
+
+    def test_pcma_codec_preserves_all_codeword_reconstruction_levels(self) -> None:
+        for codeword in range(256):
+            decoded = alaw_to_linear(codeword)
+            self.assertEqual(linear_to_alaw(decoded), codeword)
+            self.assertEqual(alaw_to_linear(codeword ^ 0x80), -decoded)
+
+    def test_opt_in_raw_g711_transmitter_preserves_rtp_codewords(self) -> None:
+        class RawG711Source:
+            def __init__(self):
+                self.offset = 0
+                self.codec = None
+
+            def feed_bytes(self, _data):
+                pass
+
+            def pending(self):
+                return 0
+
+            def tx_g711(self, count, codec):
+                self.codec = codec
+                payload = bytes((self.offset + i) & 0xff for i in range(count))
+                self.offset += count
+                return payload
+
+        for codec, payload_type in (("pcmu", 0), ("pcma", 8)):
+            with self.subTest(codec=codec):
+                peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                peer.bind(("127.0.0.1", 0))
+                peer.settimeout(1.0)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                session = OnlineAudioSession(
+                    sock, peer.getsockname(), "answer", "originate",
+                    line_mode="bell103", g711_codec=codec)
+                source = RawG711Source()
+                session.set_raw_g711_transmitter(source)
+                session.start()
+                try:
+                    received = []
+                    for _ in range(3):
+                        packet, _ = peer.recvfrom(2048)
+                        self.assertEqual(packet[0], 0x80)
+                        self.assertEqual(packet[1] & 0x7f, payload_type)
+                        received.append(packet[12:])
+                    expected = bytes(i & 0xff for i in range(3 * 160))
+                    self.assertEqual(b"".join(received), expected)
+                    self.assertEqual(source.codec, codec)
+                    self.assertEqual(len(received[0]), 160)
+                finally:
+                    session.stop()
+                    sock.close()
+                    peer.close()
+
+    def test_engine_wrapper_exposes_optional_raw_g711_method_dynamically(self):
+        class Engine:
+            def feed_bytes(self, _data):
+                pass
+
+            def pending_bits(self):
+                return 0
+
+            def tx_g711(self, count, codec):
+                return bytes([0xFF if codec == "pcmu" else 0xD5]) * count
+
+        class OrdinaryEngine:
+            pass
+
+        wrapped = _V22Transmitter(Engine())
+        self.assertEqual(wrapped.tx_g711(3, "pcmu"), b"\xff" * 3)
+        self.assertEqual(wrapped.tx_g711(2, "pcma"), b"\xd5" * 2)
+        self.assertIsNone(_V22Transmitter(OrdinaryEngine()).tx_g711)
+
+    def test_raw_g711_transmitter_requires_exact_frame_bytes(self) -> None:
+        class ShortG711Source:
+            def feed_bytes(self, _data):
+                pass
+
+            def pending(self):
+                return 0
+
+            def tx_g711(self, count, _codec):
+                return bytes(count - 1)
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            session = OnlineAudioSession(
+                sock, ("127.0.0.1", 9), "answer", "originate", line_mode="bell103",
+                g711_codec="pcma")
+            original = session.transmitter
+            source = ShortG711Source()
+            session.set_raw_g711_transmitter(source)
+            self.assertIs(session.transmitter, source)
+            with self.assertRaisesRegex(ValueError, "one codeword per RTP sample"):
+                session._next_frame_samples()
+            session.set_raw_g711_transmitter(None)
+            self.assertIs(session.transmitter, original)
+            session.stop()
+        finally:
+            sock.close()
+
+    def test_opt_in_raw_g711_receiver_preserves_octets_and_reports_rtp_gaps(self) -> None:
+        class RawG711Sink:
+            def __init__(self):
+                self.events = []
+
+            def feed_g711(self, payload, codec, context):
+                self.events.append(("payload", payload, codec, context.get("timestamp")))
+                return b"D" + payload
+
+            def feed_gap(self, samples, codec, context):
+                self.events.append(("gap", samples, codec, context.get("timestamp")))
+                return b"G"
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(
+            sock, ("127.0.0.1", 9), "answer", "originate", line_mode="bell103",
+            g711_codec="pcmu")
+        sink = RawG711Sink()
+        session.set_raw_g711_receiver(sink)
+        # The raw-codeword role owns demodulation; it must not also feed the
+        # voiceband receiver with a lossy linear-PCM representation.
+        session._receive_pcm = lambda _pcm: self.fail("voiceband receive path was called")
+        try:
+            first_payload = bytes((0x7f, 0xff, 0x00, 0x80)) * 40
+            second_payload = bytes((0x55, 0xd5)) * 80
+
+            def packet(sequence, timestamp, payload):
+                return (struct.pack("!BBHII", 0x80, 0, sequence, timestamp, 0x12345678)
+                        + payload)
+
+            first = session.handle_rtp_packet(packet(1, 0, first_payload))
+            second = session.handle_rtp_packet(packet(2, 320, second_payload))
+            self.assertEqual(first, b"D" + first_payload)
+            self.assertEqual(second, b"G" + b"D" + second_payload)
+            self.assertEqual(sink.events, [
+                ("payload", first_payload, "pcmu", 0),
+                ("gap", 160, "pcmu", 320),
+                ("payload", second_payload, "pcmu", 320),
+            ])
+            self.assertEqual(session._rtp_counts["timestamp_gap_samples"],
+                             160)
+            self.assertEqual(session._rtp_counts["concealed_samples"], 0)
+        finally:
+            session.stop()
+            sock.close()
+
+    def test_chain_raw_g711_receiver_activates_only_after_engine_selection(self):
+        class Chain:
+            def __init__(self):
+                self.engine = None
+
+            def __getattr__(self, name):
+                if self.engine is not None:
+                    return getattr(self.engine, name)
+                raise AttributeError(name)
+
+        class DigitalEngine:
+            def __init__(self):
+                self.events = []
+
+            def feed_g711(self, payload, codec, context):
+                self.events.append(("payload", payload, codec, context["timestamp"]))
+                return b"D" + payload
+
+            def feed_gap(self, samples, codec, context):
+                self.events.append(("gap", samples, codec, context["timestamp"]))
+                return b"G"
+
+        chain = Chain()
+        receiver = _DynamicEngineRawG711Receiver(chain)
+        self.assertFalse(receiver.active)
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        session._raw_g711_receiver = receiver
+        session._g711_codec = "pcmu"
+        session._rx_context = {"timestamp": 80}
+        session._online_control = None
+        self.assertIsNone(session._feed_raw_g711(bytes((0x00, 0xff))))
+        chain.engine = DigitalEngine()
+        self.assertTrue(receiver.active)
+        payload = bytes((0x00, 0xff))
+        self.assertEqual(session._feed_raw_g711(payload),
+                         b"D" + payload + b"D" + payload)
+        self.assertEqual(chain.engine.events, [
+            ("payload", payload, "pcmu", 80),
+            ("payload", payload, "pcmu", 80),
+        ])
+        chain.engine.events.clear()
+        self.assertEqual(receiver.feed_g711(payload, "pcmu", {"timestamp": 80}),
+                         b"D" + payload)
+        self.assertEqual(receiver.feed_gap(160, "pcmu", {"timestamp": 400}), b"G")
+        self.assertEqual(chain.engine.events, [
+            ("payload", payload, "pcmu", 80),
+            ("gap", 160, "pcmu", 400),
+        ])
+
+    def test_chain_raw_g711_receiver_retains_gap_in_handoff_preroll(self):
+        class Chain:
+            engine = None
+
+            def __getattr__(self, name):
+                if self.engine is not None:
+                    return getattr(self.engine, name)
+                raise AttributeError(name)
+
+        class DigitalEngine:
+            def __init__(self):
+                self.events = []
+
+            def feed_g711(self, payload, codec, context):
+                self.events.append(("payload", payload, codec, context["timestamp"]))
+                return b""
+
+            def feed_gap(self, samples, codec, context):
+                self.events.append(("gap", samples, codec, context["timestamp"]))
+                return b""
+
+        chain = Chain()
+        receiver = _DynamicEngineRawG711Receiver(chain)
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        session._raw_g711_receiver = receiver
+        session._g711_codec = "pcmu"
+        session._rx_context = {"timestamp": 80}
+        session._online_control = None
+        self.assertIsNone(session._feed_raw_g711(b"a"))
+        self.assertEqual(session._feed_raw_g711_gap(160, {"timestamp": 240}), b"")
+        chain.engine = DigitalEngine()
+        self.assertEqual(session._feed_raw_g711(b"b"), b"")
+        self.assertEqual(chain.engine.events, [
+            ("payload", b"a", "pcmu", 80),
+            ("gap", 160, "pcmu", 240),
+            ("payload", b"b", "pcmu", 80),
+        ])
+
+    def test_chain_raw_g711_receiver_is_inactive_before_engine_selection(self):
+        class Chain:
+            engine = None
+
+            def __getattr__(self, name):
+                if self.engine is not None:
+                    return getattr(self.engine, name)
+                raise AttributeError(name)
+
+        receiver = _DynamicEngineRawG711Receiver(Chain())
+        self.assertFalse(receiver.active)
+
+    def test_pcma_rtp_is_decoded_and_payload_type_is_selected(self) -> None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(
+            sock, ("127.0.0.1", 9), "answer", "originate", line_mode="bell103",
+            g711_codec="pcma")
+        captured = []
+        session._receive_pcm = lambda pcm: captured.append(pcm) or pcm
+        try:
+            frame = bytes((0xD5, 0x55)) * 80
+            pcm = bytearray()
+            for seq in range(3):
+                header = struct.pack("!BBHII", 0x80, 8, seq, seq * 160, 0x12345678)
+                pcm.extend(session.handle_rtp_datagram(
+                    ("127.0.0.1", 9000), header + frame, received_at=10.0 + seq * 0.02))
+            expected = struct.pack("<480h", *([8, -8] * 240))
+            self.assertEqual(bytes(pcm), expected)
+            self.assertEqual(captured, [struct.pack("<160h", *([8, -8] * 80))] * 3)
+
+            wrong_payload_type = struct.pack("!BBHII", 0x80, 0, 3, 480, 0x12345678)
+            self.assertEqual(session.handle_rtp_packet(wrong_payload_type + bytes(160)), b"")
+        finally:
+            session.stop()
+            sock.close()
+
     def test_v8_lapm_advertisement_follows_error_control_and_supported_modulation(self) -> None:
         from modem_dce import line_from_ms
         from v8 import V8_PROTOCOL_LAPM_V42
@@ -2809,6 +3823,215 @@ class OnlineAudioSessionTests(unittest.TestCase):
                 if sent and answer_rx == payload_o and originate_rx == payload_a:
                     break
             self.assertTrue(sent, "V.8 did not complete LAPM before CONNECT")
+            self.assertEqual(bytes(answer_rx), payload_o)
+            self.assertEqual(bytes(originate_rx), payload_a)
+        finally:
+            originate.stop()
+            answer.stop()
+            o_sock.close()
+            a_sock.close()
+
+    def test_v8_lapm_originator_direct_answerer_detects_exact_payload(self) -> None:
+        """Exercise role-asymmetric V.42 startup after a real V.8 exchange."""
+        from modem_dce import line_from_ms
+        from v8 import V8_PROTOCOL_LAPM_V42
+
+        o_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        o_sock.bind(("127.0.0.1", 0))
+        a_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        a_sock.bind(("127.0.0.1", 0))
+        o_sock.settimeout(0.01)
+        a_sock.settimeout(0.01)
+        selection = line_from_ms({"mod": "V22B", "auto": 1,
+                                  "min": 2400, "max": 2400})
+        originate = OnlineAudioSession(
+            o_sock, a_sock.getsockname(), "originate", "answer",
+            **selection, v42=True)
+        answer = OnlineAudioSession(
+            a_sock, o_sock.getsockname(), "answer", "originate",
+            **selection, v42=True)
+        payload_o = bytes((i * 31 + 7) & 0xff for i in range(512))
+        payload_a = bytes((i * 43 + 0x29) & 0xff for i in range(512))
+        originate_rx, answer_rx = bytearray(), bytearray()
+        sent = False
+        originate.start()
+        answer.start()
+        try:
+            deadline = time.monotonic() + 35
+            while time.monotonic() < deadline:
+                now = time.monotonic()
+                # Disable forced detection for the originator and enable it
+                # only for the answer DCE after the real V.8 exchange.
+                with mock.patch.dict(os.environ,
+                                     {"V42_FORCE_DETECT_AFTER_V8": "0"}):
+                    originate.poll(now)
+                with mock.patch.dict(os.environ,
+                                     {"V42_FORCE_DETECT_AFTER_V8": "1"}):
+                    answer.poll(now)
+                if (originate.negotiation_complete
+                        and answer.negotiation_complete and not sent):
+                    self.assertEqual(
+                        (originate._negotiated_v8_protocols(),
+                         answer._negotiated_v8_protocols()),
+                        (V8_PROTOCOL_LAPM_V42, V8_PROTOCOL_LAPM_V42))
+                    self.assertTrue(originate._v22._v42_direct)
+                    self.assertFalse(answer._v22._v42_direct)
+                    originate.feed_terminal_bytes(payload_o)
+                    answer.feed_terminal_bytes(payload_a)
+                    sent = True
+                for receiver, sock, out in (
+                    (answer, a_sock, answer_rx),
+                    (originate, o_sock, originate_rx),
+                ):
+                    try:
+                        packet, source = sock.recvfrom(2048)
+                    except socket.timeout:
+                        continue
+                    out.extend(receiver.handle_rtp_datagram(source, packet))
+                if sent and answer_rx == payload_o and originate_rx == payload_a:
+                    break
+            self.assertTrue(sent, "V.8 did not complete the asymmetric LAPM start")
+            self.assertEqual(bytes(answer_rx), payload_o)
+            self.assertEqual(bytes(originate_rx), payload_a)
+            self.assertEqual(originate._v22._v42.stats["fcs_errors"], 0)
+            self.assertEqual(answer._v22._v42.stats["fcs_errors"], 0)
+        finally:
+            originate.stop()
+            answer.stop()
+            o_sock.close()
+            a_sock.close()
+
+    def test_v8_lapm_reversed_direct_detect_roles_do_not_establish_lapm(self) -> None:
+        """Negative control for reversed direct/detect roles after V.8."""
+        from modem_dce import line_from_ms
+        from v8 import V8_PROTOCOL_LAPM_V42
+
+        o_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        o_sock.bind(("127.0.0.1", 0))
+        a_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        a_sock.bind(("127.0.0.1", 0))
+        o_sock.settimeout(0.01)
+        a_sock.settimeout(0.01)
+        selection = line_from_ms({"mod": "V22B", "auto": 1,
+                                  "min": 2400, "max": 2400})
+        originate = OnlineAudioSession(
+            o_sock, a_sock.getsockname(), "originate", "answer",
+            **selection, v42=True)
+        answer = OnlineAudioSession(
+            a_sock, o_sock.getsockname(), "answer", "originate",
+            **selection, v42=True)
+        payload_o = bytes((i * 17 + 3) & 0xff for i in range(128))
+        payload_a = bytes((i * 29 + 7) & 0xff for i in range(128))
+        sent = False
+        finish_at = None
+        originate.start()
+        answer.start()
+        try:
+            deadline = time.monotonic() + 35
+            while time.monotonic() < deadline:
+                now = time.monotonic()
+                with mock.patch.dict(os.environ,
+                                     {"V42_FORCE_DETECT_AFTER_V8": "1"}):
+                    originate.poll(now)
+                with mock.patch.dict(os.environ,
+                                     {"V42_FORCE_DETECT_AFTER_V8": "0"}):
+                    answer.poll(now)
+                if (originate.negotiation_complete
+                        and answer.negotiation_complete and not sent):
+                    self.assertEqual(
+                        (originate._negotiated_v8_protocols(),
+                         answer._negotiated_v8_protocols()),
+                        (V8_PROTOCOL_LAPM_V42, V8_PROTOCOL_LAPM_V42))
+                    self.assertFalse(originate._v22._v42_direct)
+                    self.assertTrue(answer._v22._v42_direct)
+                    originate.feed_terminal_bytes(payload_o)
+                    answer.feed_terminal_bytes(payload_a)
+                    sent = True
+                    finish_at = time.monotonic() + 5.0
+                for receiver, sock in ((answer, a_sock), (originate, o_sock)):
+                    try:
+                        packet, source = sock.recvfrom(2048)
+                    except socket.timeout:
+                        continue
+                    receiver.handle_rtp_datagram(source, packet)
+                if sent and time.monotonic() >= finish_at:
+                    break
+            self.assertTrue(sent, "V.8 did not complete before the polarity probe")
+            self.assertEqual(originate._v22._v42.stats["xid_tx"], 0)
+            self.assertEqual(answer._v22._v42.stats["xid_tx"], 0)
+            self.assertNotEqual(originate._v22._v42.state, "lapm")
+            self.assertNotEqual(answer._v22._v42.state, "lapm")
+            self.assertEqual(originate._v22._v42.state, "unsupported")
+            self.assertEqual(answer._v22._v42.state, "idle")
+        finally:
+            originate.stop()
+            answer.stop()
+            o_sock.close()
+            a_sock.close()
+
+    def test_v8_lapm_forced_detection_carries_exact_payload(self) -> None:
+        """The opt-in forced-detection compatibility path works end to end."""
+        from modem_dce import line_from_ms
+        from v8 import V8_PROTOCOL_LAPM_V42
+
+        o_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        o_sock.bind(("127.0.0.1", 0))
+        a_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        a_sock.bind(("127.0.0.1", 0))
+        o_sock.settimeout(0.01)
+        a_sock.settimeout(0.01)
+        selection = line_from_ms({"mod": "V22B", "auto": 1,
+                                  "min": 2400, "max": 2400})
+        originate = OnlineAudioSession(
+            o_sock, a_sock.getsockname(), "originate", "answer",
+            **selection, v42=True)
+        answer = OnlineAudioSession(
+            a_sock, o_sock.getsockname(), "answer", "originate",
+            **selection, v42=True)
+        payload_o = bytes((i * 37 + 9) & 0xff for i in range(256))
+        payload_a = bytes((i * 61 + 0x35) & 0xff for i in range(256))
+        originate_rx, answer_rx = bytearray(), bytearray()
+        sent = False
+        originate.start()
+        answer.start()
+        try:
+            with mock.patch.dict(os.environ,
+                                 {"V42_FORCE_DETECT_AFTER_V8": "1"}):
+                deadline = time.monotonic() + 35
+                while time.monotonic() < deadline:
+                    now = time.monotonic()
+                    originate.poll(now)
+                    answer.poll(now)
+                    if (originate.negotiation_complete
+                            and answer.negotiation_complete and not sent):
+                        self.assertEqual(
+                            (originate.line_speed, answer.line_speed),
+                            (2400, 2400))
+                        self.assertEqual(
+                            originate._negotiated_v8_protocols(),
+                            V8_PROTOCOL_LAPM_V42)
+                        self.assertEqual(
+                            answer._negotiated_v8_protocols(),
+                            V8_PROTOCOL_LAPM_V42)
+                        self.assertTrue(originate._v42_started_from_v8)
+                        self.assertTrue(answer._v42_started_from_v8)
+                        self.assertFalse(originate._v22._v42_direct)
+                        self.assertFalse(answer._v22._v42_direct)
+                        originate.feed_terminal_bytes(payload_o)
+                        answer.feed_terminal_bytes(payload_a)
+                        sent = True
+                    for receiver, sock, out in (
+                            (answer, a_sock, answer_rx),
+                            (originate, o_sock, originate_rx)):
+                        try:
+                            packet, source = sock.recvfrom(2048)
+                        except socket.timeout:
+                            continue
+                        out.extend(receiver.handle_rtp_datagram(source, packet))
+                    if sent and answer_rx == payload_o \
+                            and originate_rx == payload_a:
+                        break
+            self.assertTrue(sent, "V.8 did not complete forced V.42 before CONNECT")
             self.assertEqual(bytes(answer_rx), payload_o)
             self.assertEqual(bytes(originate_rx), payload_a)
         finally:
@@ -3018,7 +4241,7 @@ class OnlineAudioSessionTests(unittest.TestCase):
         )
         session._v22 = types.SimpleNamespace(
             v42_mode="lost", v42_compression=None, _v42=link,
-            _v42_ever_established=True, rx_signal_power_dbm0=None,
+            v42_ever_established=True, rx_signal_power_dbm0=None,
         )
         session._rtp_frame_seconds = 0.02
         session._v23_detector_transitions = []
@@ -3040,6 +4263,81 @@ class OnlineAudioSessionTests(unittest.TestCase):
             "requested": "V.42 LAPM", "ever_established": True,
             "final_mode": "lost", "final_state": "down",
         })
+
+    def test_unanswered_lapm_startup_never_reports_error_control(self) -> None:
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        link = types.SimpleNamespace(
+            state="down", stats={}, events=[], tx_n401=32, rx_n401=32,
+            tx_k=15, rx_k=15, _xid_sent=2, _sabme_sent=True,
+        )
+        session._v22 = types.SimpleNamespace(
+            v42_mode="failed", v42_compression=None, _v42=link,
+            _v42_ever_established=False, rx_signal_power_dbm0=None,
+        )
+        session._rtp_frame_seconds = 0.02
+        session._v23_detector_transitions = []
+        session._v8_local_protocols = 0
+        session._timer_resolution_request = None
+        session.realtime = types.SimpleNamespace(report=lambda: {})
+        session.timing_trace = None
+        session._want_v42 = True
+        session._want_mnp = False
+        session._rtp_counts = {}
+        session._rx_pcm_sum_squares = 0
+        session._rx_pcm_samples = 0
+
+        stats = session.link_stats()
+
+        self.assertEqual(session.connect_suffix, "")
+        self.assertEqual(stats["error_control"], "NONE")
+        self.assertEqual(stats["v42_session"], {
+            "requested": "V.42 LAPM", "ever_established": False,
+            "final_mode": "failed", "final_state": "down",
+        })
+
+    def test_auto_policy_reports_raw_connect_after_bounded_xid_failure(self) -> None:
+        """Auto-reliable mode may fall back to raw, but must not claim LAPM."""
+        session = OnlineAudioSession.__new__(OnlineAudioSession)
+        link = types.SimpleNamespace(
+            state="down", stats={}, events=[], tx_n401=32, rx_n401=32,
+            tx_k=15, rx_k=15, _xid_sent=11, _sabme_sent=False,
+        )
+        session._v22 = types.SimpleNamespace(
+            state="connected", is_settled=lambda: True,
+            supports_v42=True, v42_mode="failed", v42_resolved=True,
+            v42_compression=None, _v42=link, _v42_ever_established=False,
+            rx_signal_power_dbm0=None,
+        )
+        session._auto = None
+        session._v42_started = True
+        session._v42_xid_fallback = True
+        session._want_v42 = True
+        session._want_mnp = False
+        session._rtp_frame_seconds = 0.02
+        session._v23_detector_transitions = []
+        session._v8_local_protocols = 0
+        session._timer_resolution_request = None
+        session.realtime = types.SimpleNamespace(report=lambda: {})
+        session.timing_trace = None
+        session._rtp_counts = {}
+        session._rx_pcm_sum_squares = 0
+        session._rx_pcm_samples = 0
+
+        self.assertTrue(session.negotiation_complete)
+        self.assertFalse(session.failed)
+        self.assertEqual(session.connect_suffix, "")
+        stats = session.link_stats()
+        self.assertEqual(stats["error_control"], "NONE")
+        self.assertEqual(stats["v42_session"], {
+            "requested": "V.42 LAPM", "ever_established": False,
+            "final_mode": "failed", "final_state": "down",
+        })
+
+        dce = AtDce()
+        dce.connect_speed = 12000
+        dce.connect_suffix = session.connect_suffix
+        dce.notify_call_progress("CONNECT")
+        self.assertEqual(dce.take_notifications(), b"\r\nCONNECT 12000\r\n")
 
     def test_v22bis_dte_payload_waits_for_retrain_transmit_readiness(self) -> None:
         sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -3749,7 +5047,6 @@ class OnlineAudioSessionTests(unittest.TestCase):
             )
             self.assertEqual(bytes(answer_rx), payload_o)
             self.assertEqual(bytes(originate_rx), payload_a)
-
             # The receiver can deliver the last I-frame before its RR reaches
             # the sender. Wait for the protocol window to drain; L-SETPARM is
             # correctly refused while unacknowledged data remains.
@@ -4127,6 +5424,7 @@ class OnlineAudioSessionTests(unittest.TestCase):
                 self.modem.close()
 
         class FakeSipServer:
+            negotiated_codec = "pcmu"
             def __init__(self, *args, **kwargs):
                 self.on_incoming = kwargs["on_incoming"]
                 self.on_ring = kwargs["on_ring"]
@@ -4152,6 +5450,7 @@ class OnlineAudioSessionTests(unittest.TestCase):
                 self.on_connected = kwargs["on_connected"]
                 self.on_hangup = kwargs["on_hangup"]
                 self.on_failed = kwargs["on_failed"]
+                self.audio_codec = "pcmu"
                 self.hungup = False
 
             def dial(self, number):
@@ -5557,6 +6856,27 @@ class V22bisSessionTests(unittest.TestCase):
             s._last_rtp_at = time.monotonic() - 2
             self.assertFalse(s.link_lost)
 
+    def test_silent_rtp_after_connect_is_link_lost_on_the_bell103_path_with_no_engine(self) -> None:
+        # The Bell 103 / V.21 session has no engine (_v22 is None), so the old
+        # link_lost returned False unconditionally and a call whose peer hung
+        # up after CONNECT held the dead call forever. The RTP dead-leg check
+        # applies to that path too; flowing RTP still means alive.
+        s = OnlineAudioSession.__new__(OnlineAudioSession)
+        s._v22 = None
+        s._carrier_down_at = None
+        s._carrier_loss_seconds = 1.0
+        s._created = time.monotonic() - 5
+        s._last_rtp_at = None
+        with mock.patch.object(OnlineAudioSession, "negotiation_complete", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.link_lost)
+            s._last_rtp_at = time.monotonic()
+            self.assertFalse(s.link_lost)
+            s._last_rtp_at = time.monotonic() - 2
+            self.assertTrue(s.link_lost)
+        with mock.patch.object(OnlineAudioSession, "negotiation_complete", new_callable=mock.PropertyMock, return_value=False):
+            s._last_rtp_at = time.monotonic() - 2
+            self.assertFalse(s.link_lost)
+
     def test_carrier_loss_after_connect_is_reported_so_the_call_is_dropped(self) -> None:
         import socket
 
@@ -5682,6 +7002,7 @@ class V21DceIntegrationTests(unittest.TestCase):
                 self.modem.close()
 
         class FakeSipServer:
+            negotiated_codec = "pcmu"
             def __init__(self, *args, **kwargs):
                 self.on_incoming = kwargs["on_incoming"]
                 self.on_ring = kwargs["on_ring"]
@@ -5695,6 +7016,7 @@ class V21DceIntegrationTests(unittest.TestCase):
         class FakeSipCall:
             def __init__(self, *args, **kwargs):
                 self.on_connected = kwargs["on_connected"]
+                self.audio_codec = "pcmu"
                 self.hungup = False
 
             def dial(self, number):
@@ -5845,6 +7167,7 @@ class V21DceIntegrationTests(unittest.TestCase):
                 self.modem.close()
 
         class FakeSipServer:
+            negotiated_codec = "pcmu"
             def __init__(self, *args, **kwargs):
                 self.on_incoming = kwargs["on_incoming"]
                 self.on_ring = kwargs["on_ring"]
@@ -6038,6 +7361,7 @@ class V23SessionTests(unittest.TestCase):
                     self.modem.close()
 
             class FakeSipServer:
+                negotiated_codec = "pcmu"
                 def __init__(self, *args, **kwargs):
                     pass
 
@@ -6050,6 +7374,7 @@ class V23SessionTests(unittest.TestCase):
             class FakeSipCall:
                 def __init__(self, *args, **kwargs):
                     self.on_connected = kwargs["on_connected"]
+                    self.audio_codec = "pcmu"
 
                 def dial(self, number):
                     shared["dialed_number"] = number
@@ -6226,6 +7551,7 @@ class V23SessionTests(unittest.TestCase):
                     self.modem.close()
 
             class FakeSipServer:
+                negotiated_codec = "pcmu"
                 def __init__(self, *args, **kwargs):
                     self.on_incoming = kwargs["on_incoming"]
                     self.on_ring = kwargs["on_ring"]
@@ -6751,6 +8077,7 @@ class V23SessionTests(unittest.TestCase):
                         self.modem.close()
 
                 class FakeSipServer:
+                    negotiated_codec = "pcmu"
                     def __init__(self, *args, **kwargs):
                         self.on_incoming = kwargs["on_incoming"]
                         self.on_ring = kwargs["on_ring"]
@@ -6780,6 +8107,7 @@ class V23SessionTests(unittest.TestCase):
                 class FakeSipCall:
                     def __init__(self, *args, **kwargs):
                         self.on_connected = kwargs["on_connected"]
+                        self.audio_codec = "pcmu"
                         self.hungup = False
 
                     def dial(self, number):
@@ -6880,6 +8208,83 @@ class GapConcealmentTests(unittest.TestCase):
         chunks = []
         session._receive_pcm = lambda pcm: chunks.append(pcm) or b""
         return session, chunks
+
+    def test_rtp_capture_records_the_exact_receive_datagram_at_decode(self):
+        session, _ = self._session()
+        capture = mock.Mock()
+        session._capture = capture
+        packet = self._packet(7, 1120, [1200] * 160)
+
+        session.handle_rtp_packet(packet, received_at=10.0)
+
+        capture.rtp.assert_called_once()
+        direction, recorded, context = capture.rtp.call_args.args
+        self.assertEqual(direction, 'rx')
+        self.assertEqual(recorded, packet)
+        self.assertEqual(context['sequence'], 7)
+        self.assertEqual(context['timestamp'], 1120)
+
+    def test_rtp_capture_records_tx_only_after_successful_send(self):
+        session, _ = self._session()
+        capture = mock.Mock()
+        session._capture = capture
+        session._stop = threading.Event()
+
+        class StopAfterSend:
+            def sendto(self, packet, _address):
+                self.packet = packet
+                session._stop.set()
+
+        sock = StopAfterSend()
+        session._sock = sock
+        session._send_loop()
+
+        capture.rtp.assert_called_once()
+        direction, recorded, context = capture.rtp.call_args.args
+        self.assertEqual(direction, 'tx')
+        self.assertEqual(recorded, sock.packet)
+        self.assertEqual(context['sequence'], 0)
+        self.assertEqual(context['timestamp'], 0)
+
+    def test_call_capture_writes_exact_rtp_after_admission_and_send(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {
+            'MODEM_CAPTURE': os.path.join(directory, 'call'),
+            'MODEM_CAPTURE_TIMELINE': '1',
+            'MODEM_CAPTURE_RTP_TIMELINE': '1',
+        }):
+            session, _ = self._session()
+            session._receive_pcm = OnlineAudioSession._receive_pcm.__get__(session)
+            capture = session._capture
+            for sequence in range(3):
+                packet = self._packet(sequence, sequence * 160,
+                                      [1000 + sequence] * 160)
+                session.handle_rtp_datagram(
+                    ('192.0.2.2', 6000), packet, received_at=10 + sequence * .02)
+
+            session._stop = threading.Event()
+
+            class StopAfterSend:
+                def sendto(self, packet, _address):
+                    self.packet = packet
+                    session._stop.set()
+
+            sock = StopAfterSend()
+            session._sock = sock
+            session._send_loop()
+            capture.close()
+            with open(capture.stem + '.rtp.jsonl') as trace:
+                rows = [json.loads(line) for line in trace]
+
+        rx = [row for row in rows if row['direction'] == 'rx']
+        tx = [row for row in rows if row['direction'] == 'tx']
+        self.assertEqual(len(rx), 3)
+        self.assertTrue(all(row['context']['source_address'] == '192.0.2.2'
+                            and row['context']['source_port'] == 6000
+                            for row in rx))
+        self.assertEqual([row['sequence'] for row in rx], [0, 1, 2])
+        self.assertEqual(len(tx), 1)
+        self.assertEqual(tx[0]['packet_hex'], sock.packet.hex())
+        self.assertEqual(tx[0]['context']['pcm_source'], 'before_g711')
 
     def test_automode_fallback_drains_held_audio_before_new_audio(self):
         from types import SimpleNamespace
@@ -7202,6 +8607,8 @@ class RtpJitterByLineModeTests(unittest.TestCase):
         self.assertEqual(s._rtp_jitter_samples, 2 * 160)                 # V.34 keeps 40 ms
         s._v22 = SimpleNamespace(kind="v32")
         self.assertEqual(s._rtp_jitter_samples, 2 * 160)
+        s._v22 = SimpleNamespace(kind="v90")
+        self.assertEqual(s._rtp_jitter_samples, 2 * 160)                 # V.34 upstream ordering
 
     def test_plain_v34_line_mode_still_holds_40_ms(self):
         self.assertEqual(self._session("v34")._rtp_jitter_samples, 2 * 160)

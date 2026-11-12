@@ -682,6 +682,7 @@ class InputPowerGuard:
         self.reference_samples = 0
         self.armed = False
         self.holding = False
+        self.release_enabled = True
         self.return_count = 0
         self.events = self.held_symbols = self.longest_hold = self.current_hold = 0
         self.power_returns = 0
@@ -690,7 +691,7 @@ class InputPowerGuard:
         if not self.armed and math.isfinite(energy) and energy > 0:
             self.training.append(float(energy))
 
-    def arm(self):
+    def arm(self, *, hold=False):
         if self.armed:
             return
         self.armed = True
@@ -698,15 +699,30 @@ class InputPowerGuard:
         if len(self.training) >= self.MIN_REFERENCE_SAMPLES:
             self.reference = float(np.median(self.training))
         self.training.clear()
+        self.holding = bool(hold)
+        self.release_enabled = not hold
+        if hold:
+            self.events += 1
+
+    def enable_release(self):
+        """Allow explicitly held feedback to recover after a valid return signal."""
+        self.release_enabled = True
+        if self.reference is None:
+            self.holding = False
 
     def hold(self, energy):
         if self.reference is None:
-            return False
+            return self.holding
         if not self.holding and (not math.isfinite(energy) or energy < self.ENTER_RATIO*self.reference):
             self.holding = True
             self.events += 1
             self.current_hold = 0
         if self.holding:
+            if not self.release_enabled:
+                self.current_hold += 1
+                self.held_symbols += 1
+                self.longest_hold = max(self.longest_hold, self.current_hold)
+                return True
             self.return_count = (self.return_count+1 if math.isfinite(energy)
                                  and energy >= self.EXIT_RATIO*self.reference else 0)
             if self.return_count >= self.RETURN_SYMBOLS:
@@ -725,6 +741,7 @@ class InputPowerGuard:
             reference_samples=self.reference_samples,
             reference_source='median positive pre-data adaptive window energy; sampled every 16 symbols',
             reference_available=self.reference is not None, feedback_held=self.holding,
+            release_enabled=self.release_enabled,
             events=self.events, held_symbols=self.held_symbols, longest_hold_symbols=self.longest_hold,
             power_returns=self.power_returns, entry_ratio=self.ENTER_RATIO,
             exit_ratio=self.EXIT_RATIO, return_symbols=self.RETURN_SYMBOLS,
@@ -774,6 +791,8 @@ class SymbolEq:
         self.freq = 0.0
         self.mu, self.kp, self.ki = mu, kp, ki
         self.adapt = True
+        self.hold_carrier_phase = False
+        self.last_input_power = None
         from v34_equalizer_backend import selected
         arithmetic=selected()
         self._rust_interp=arithmetic.interpolate if arithmetic is not None else None
@@ -1134,6 +1153,7 @@ class SymbolEq:
                     self._gradient_rows = []
             elif self.adapt and self.k % 16 == 0:
                 self._input_guard.observe_training(power)
+        self.last_input_power = power
         transport=getattr(self,'_transport_guard',None)
         tainted=False
         if transport is not None:
@@ -1185,7 +1205,7 @@ class SymbolEq:
                     perr = math.atan2((yr * d.conjugate()).imag, (yr * d.conjugate()).real)
                     self.freq += self.ki * perr
                     self.phase += self.kp * perr + self.freq
-        elif not tracking:
+        elif not tracking and not self.hold_carrier_phase:
             self.phase += self.freq                          # keep rotating at the learned carrier offset
         decision_error = (float(abs(d - yr) ** 2 / max(abs(d) ** 2, 1e-30))
                           if sampled_timing_state else None)
