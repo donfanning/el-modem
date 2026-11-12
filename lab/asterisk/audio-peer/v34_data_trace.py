@@ -14,6 +14,13 @@ _traces = []
 _installed = False
 
 
+def _selected_role(value):
+    role = (value or 'both').strip().lower()
+    if role not in ('both', 'call', 'answer'):
+        raise ValueError('V34_DATA_TRACE_ROLE must be both, call, or answer')
+    return role
+
+
 def pairs(values):
     return [[float(complex(v).real), float(complex(v).imag)] for v in values]
 
@@ -114,7 +121,14 @@ def install():
     from v34_datarx import DataRx, descramble_stream
     from v34_viterbi import TrellisDetector
 
-    for cls in (V34Caller, V34Answerer):
+    selected_role = _selected_role(os.environ.get('V34_DATA_TRACE_ROLE'))
+
+    for cls, role in ((V34Caller, 'call'), (V34Answerer, 'answer')):
+        # Some offline replays create a second modem to decode their own TX.
+        # Select one side explicitly so that its trace cannot overwrite or
+        # obscure the receiver whose behavior is under investigation.
+        if selected_role not in ('both', role):
+            continue
         original = cls._data_rx
         def wrap(original):
             @functools.wraps(original)
@@ -152,11 +166,28 @@ def install():
         if trace and eq is engine._p4rcv.eq and len(trace.symbols) < 8*trace.limit + 64:
             k = eq.k
             row = dict(k=k, sample_position=float(eq.R.lag+(eq.R.LEAD+k+eq.R.delay)*eq.R.spl+eq.dt),
-                dt=float(eq.dt), vel=float(eq.vel), phase=float(eq.phase), freq=float(eq.freq))
+                dt=float(eq.dt), vel=float(eq.vel), phase=float(eq.phase), freq=float(eq.freq),
+                taps=pairs(eq.h), tap_energy=float(sum(abs(tap)**2 for tap in eq.h)))
+        decision_sample = {}
+        if row is not None and kwargs.get('desired') is None:
+            decide = kwargs.get('decide')
+            if callable(decide):
+                def trace_decision(yr):
+                    d = decide(yr)
+                    decision_sample.update(yr=complex(yr), decision=complex(d))
+                    return d
+                kwargs['decide'] = trace_decision
         y = original_step(eq, *args, **kwargs)
         if row is not None:
             row.update(y=pairs([y])[0], trajectory_used=getattr(eq, '_tj_k', -1) == row['k'],
                 dt_after=float(eq.dt), vel_after=float(eq.vel), phase_after=float(eq.phase))
+            if decision_sample:
+                yr, decision = decision_sample['yr'], decision_sample['decision']
+                row['decision_input'] = pairs([yr])[0]
+                row['decision_point'] = pairs([decision])[0]
+                row['decision_error'] = pairs([decision - yr])[0]
+                row['decision_error_normalized'] = float(
+                    abs(decision - yr)**2 / max(abs(decision)**2, 1e-30))
             trace.symbols.append(row)
         return y
     SymbolEq.step = step
@@ -208,12 +239,15 @@ def install():
         if active:
             hist = list(engine._rx_state['hist'][-23:])
             before = dict(z=drx.z, m4=drx.m4, frame_pos=drx.frame_pos, conv=list(drx.conv.d))
+            parity_errors_before = int(drx.errors)
         result = original_decode(drx, symbols, trellis_states=trellis_states)
         if active:
             role = 'answer' if trace.header['role'] == 'call' else 'call'
             trace.frames.append(dict(before=before, points=pairs(symbols),
                 states=None if trellis_states is None else [int(s) for s in trellis_states],
                 scrambled=list(result[0]), raw=descramble_stream(result[0], hist, role), worst=float(result[1])))
+            trace.frames[-1]['mapper_parity_errors_before'] = parity_errors_before
+            trace.frames[-1]['mapper_parity_errors_after'] = int(drx.errors)
             if len(trace.frames) == trace.limit:
                 trace.publish()
         return result

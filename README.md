@@ -24,6 +24,8 @@ the retained dynamic-policy baseline passed data checks but failed timing gates
 on six calls. See [Linux qualification and limits](docs/LINUX_QUALIFICATION.md).
 New native build candidates need their own qualification; these Linux results
 do not establish Windows/macOS real-time performance.
+The native V.34 caller has a limited live control-exchange result, not bulk
+payload qualification; see [V.34 qualification and limits](docs/V34_QUALIFICATION.md).
 Multiple modem processes work, but their real-time capacity depends on the host.
 Windows/macOS builds are not a claim of qualified native virtual COM support.
 

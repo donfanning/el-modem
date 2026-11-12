@@ -6,6 +6,7 @@ only the first half of B1; held-out decisions never receive expected symbols.
 from dataclasses import asdict, dataclass, replace
 import math
 import os
+import time
 import numpy as np
 import v34_data as vd
 import v34_datarx as vr
@@ -131,15 +132,22 @@ def calibrate(observed, linear, nonlinear, *, fit_indices=None):
     return g,e,nmse,ref
 
 
-def refine_taps(receiver, windows, observed, prior):
-    """Production first-half refinement, explicitly tied to this receiver's state.
+def refine_taps(receiver, windows, observed, prior, *, fit_symbols=None,
+                ridge_scale=1e-4):
+    """Refine equalizer taps against known B1 waveform observations.
 
     Offline state comparisons must call this for every hypothesis, rather than
-    reusing outputs that were fitted against a different B1 reference.
+    reusing outputs that were fitted against a different B1 reference. The
+    default remains the established half-B1 fit; V.90 may request a shorter
+    explicitly qualified training prefix.
     """
-    first=len(receiver.linear)//2
+    first=(len(receiver.linear)//2 if fit_symbols is None else int(fit_symbols))
+    if not 1 <= first <= len(receiver.linear):
+        raise ValueError('tap-refinement fit_symbols must be inside B1')
+    if not math.isfinite(float(ridge_scale)) or float(ridge_scale)<0:
+        raise ValueError('tap-refinement ridge_scale must be finite and nonnegative')
     A=np.asarray(windows)[:first]
-    ridge=1e-4*float(np.linalg.norm(A,ord=2)**2)
+    ridge=float(ridge_scale)*float(np.linalg.norm(A,ord=2)**2)
     normal=A.conj().T@A+ridge*np.eye(A.shape[1])
     def fit(log_energy):
         energy=math.exp(log_energy)
@@ -189,10 +197,18 @@ def calibration_scores(observed, linear, nonlinear):
         fa,fb=fit(a)[0],fit(b)[0]
         for _ in range(90):
             left=fa<fb
-            hi=np.where(left,b,hi);lo=np.where(left,lo,a)
-            # Recompute both to keep the vectorized search easy to audit.
-            a=hi-ratio*(hi-lo);b=lo+ratio*(hi-lo)
-            fa,fb=fit(a)[0],fit(b)[0]
+            old_a,old_b,old_fa,old_fb=a,b,fa,fb
+            lo=np.where(left,lo,old_a);hi=np.where(left,old_b,hi)
+            next_a=hi-ratio*(hi-lo);next_b=lo+ratio*(hi-lo)
+            # Golden-section search retains one old interior point after each
+            # bracket shrink. Select the one new point per state/boundary and
+            # reuse the old score, avoiding a second vectorized calibration
+            # fit on every iteration without changing the iteration count or
+            # the search interval.
+            candidate=np.where(left,next_a,next_b)
+            next_f=fit(candidate)[0]
+            a=np.where(left,next_a,old_b);b=np.where(left,old_a,next_b)
+            fa=np.where(left,next_f,old_fb);fb=np.where(left,old_fa,next_f)
         optimum=(lo+hi)/2
         mse,gain=fit(optimum)
         invalid=abs(optimum-center)>11.9
@@ -203,22 +219,65 @@ def calibration_scores(observed, linear, nonlinear):
     return scores
 
 
+class _ReceiverTxState:
+    """Small transmit-side state retained by the B1 receive/qualification path.
+
+    Receiver only needs the trellis start state and precoder quantization
+    width. A full DataTx also performs a 40-frame power simulation at
+    construction, which is not needed on the receive path. Keep the old
+    private power diagnostic available lazily for analysis tools/tests.
+    """
+
+    def __init__(self, rate, baud, expanded, precoder):
+        fp = vd.frame_params(rate, baud)
+        self.w = 1 if fp['b'] < 56 else 2
+        self.conv = vd.ConvEncoder16()
+        self._power_args = (rate, baud, expanded, precoder)
+        self._linear_power_value = None
+
+    @property
+    def _linear_power(self):
+        if self._linear_power_value is None:
+            self._linear_power_value = vd.DataTx._estimate_power(
+                *self._power_args)
+        return self._linear_power_value
+
+    @property
+    def avg_power(self):
+        return self._linear_power
+
+
 class Receiver:
     def __init__(self, profile, remote_role, initial_state=(0,0,0,0)):
+        timing_enabled = os.environ.get('V34_EQ_STEP_PROFILE') == '1'
+        timing_start = time.thread_time_ns() if timing_enabled else 0
+        construction_timing = {}
         if profile.trellis != 0:
             raise ValueError('unsupported receive trellis: only 16-state is qualified')
         self.profile, self.role = profile, remote_role
         self.initial_state=tuple(initial_state)
         self.h = vd.precoder_from_mp(profile.precoder)
-        self.tx = vd.DataTx(profile.rate,profile.baud,expanded=profile.shaping,precoder=self.h)
-        self.drx = vr.DataRx(profile.rate,profile.baud,expanded=profile.shaping,precoder=self.h)
+        self.tx = _ReceiverTxState(profile.rate, profile.baud,
+                                   profile.shaping, self.h)
+        self.drx = vr.DataRx(profile.rate,profile.baud,expanded=profile.shaping,
+                             precoder=self.h)
+        if timing_enabled:
+            construction_timing['data_rx_ns'] = self.drx.construction_timing_cpu_ns['total_ns']
+            construction_timing['data_rx_shell_mapper_ns'] = self.drx.construction_timing_cpu_ns['shell_mapper_ns']
+            construction_timing['data_rx_constellation_tables_ns'] = self.drx.construction_timing_cpu_ns['constellation_tables_ns']
+            construction_timing['transmit_state_and_data_rx_ns'] = time.thread_time_ns() - timing_start
+            timing_start = time.thread_time_ns()
         self.tx.conv.d=list(initial_state)
         self.drx.conv.d=list(initial_state)
-        independent = v34_b1_reference.build(profile.rate, profile.baud, remote_role,
-            profile.shaping, profile.precoder, initial_state)
-        self.expected = independent["bits"]
-        self.expected_mapper = np.asarray(independent["u"])
-        self.linear = np.asarray(independent["x"])
+        expected_bits, expected_mapper, linear_reference = (
+            v34_b1_reference.standard_sequences(
+                profile.rate, profile.baud, remote_role, profile.shaping,
+                profile.precoder, initial_state))
+        self.expected = list(expected_bits)
+        self.expected_mapper = np.asarray(expected_mapper)
+        self.linear = np.asarray(linear_reference)
+        if timing_enabled:
+            construction_timing['b1_reference_ns'] = time.thread_time_ns() - timing_start
         self.energy=1.; self.slicer_hist=[0j]*3
         self._native_decision_kernel=None
         self._native_slicer_hist=None
@@ -228,18 +287,30 @@ class Receiver:
         self._native_grid_origin=None
         self._native_hist_synced=False
         self.diagnostics={'profile':asdict(profile),'qualified':False,'initial_trellis_state':list(initial_state),'standard_initialization':not any(initial_state)}
+        if timing_enabled:
+            self.diagnostics['construction_timing_cpu_ns'] = construction_timing
 
     def detector(self, start=False, trace=False):
         d=self.drx
-        from v34_transport import trellis_hold_enabled
-        detector=vv.TrellisDetector(4*d.M*2**d.q,d.J,d.P,
-            start_state=tuple(d.conv.d) if start else self.initial_state,
-            m4_start=d.m4 if start else 0,precoder=self.h,w=self.tx.w,
-            nonlinear=self.profile.nonlinear,energy=self.energy,
-            erasure_hold=trellis_hold_enabled(self.profile.precoder),
-            x_hist=d.x_hist if start else None,trace=trace)
-        # Qualification diagnostics retain every interval. Ordinary native
-        # streaming uses only bounded traceback; opt-in tracing still records.
+        from v34_transport import (gap_recovery_enabled,
+                                   per_survivor_precoder_erasure_enabled,
+                                   trellis_hold_enabled)
+        if (start and any(self.profile.precoder) and gap_recovery_enabled()
+                and per_survivor_precoder_erasure_enabled()):
+            from v34_noise_kernel import available
+            if not available():
+                raise RuntimeError('per-survivor precoder erasure requires the Numba backend')
+            import numpy as np
+            from v34_noise_stream import PredictiveTrellisDetector
+            detector=PredictiveTrellisDetector(self,np.zeros(3,np.complex128),
+                                               np.zeros(3,np.complex128))
+        else:
+            detector=vv.TrellisDetector(4*d.M*2**d.q,d.J,d.P,
+                start_state=tuple(d.conv.d) if start else self.initial_state,
+                m4_start=d.m4 if start else 0,precoder=self.h,w=self.tx.w,
+                nonlinear=self.profile.nonlinear,energy=self.energy,
+                erasure_hold=trellis_hold_enabled(self.profile.precoder),
+                x_hist=d.x_hist if start else None,trace=trace)
         if start and not trace:
             detector.record_snapshots=False
         if start:
@@ -248,13 +319,34 @@ class Receiver:
         return detector
 
     def qualify(self, observed, *, trace=False):
+        timing_enabled = (os.environ.get('V90_B1_QUALIFY_TRACE') == '1'
+                          or os.environ.get('V34_EQ_STEP_PROFILE') == '1')
+        timing_started = time.thread_time_ns() if timing_enabled else 0
+        timings = {}
+        stage_started = time.thread_time_ns() if timing_enabled else 0
         g,self.energy,nmse,ref=calibrate(np.asarray(observed),self.linear,self.profile.nonlinear)
+        if timing_enabled:
+            timings['calibration_ns'] = time.thread_time_ns() - stage_started
         self.b1_gain=g
+        # B1 qualification is on the live receive path too. Retaining a Python
+        # dict snapshot for every trellis interval is diagnostic-only work and
+        # can stall the RTP sender while qualification holds the DCE lock.
+        # Keep snapshots for explicit traces or when a diagnostic run opts in.
+        retain_qualification_snapshots = (
+            trace or os.environ.get('V34_B1_QUALIFICATION_SNAPSHOTS') == '1')
+        stage_started = time.thread_time_ns() if timing_enabled else 0
         det=self.detector(trace=trace)
+        det.record_snapshots = retain_qualification_snapshots
         self.b1_detector=det
+        if timing_enabled:
+            timings['detector_construct_ns'] = time.thread_time_ns() - stage_started
+        stage_started = time.thread_time_ns() if timing_enabled else 0
         for a,b in np.asarray(observed).reshape(-1,2)/g:
             det.feed(a,b)
         det.flush()
+        if timing_enabled:
+            timings['trellis_and_flush_ns'] = time.thread_time_ns() - stage_started
+        stage_started = time.thread_time_ns() if timing_enabled else 0
         points=[x for pair in det.decided for x in pair]
         bits=[]
         for i in range(0,len(points),8):
@@ -268,28 +360,32 @@ class Receiver:
         _bad=[i for i in range(_n) if points[i]!=self.expected_mapper[i]]
         _obs=np.asarray(observed).reshape(-1)
         _ev=[]
-        for i in _bad[:8]:
-            rcv=complex(_obs[i]/g) if i < len(_obs) else 0j
-            sn=det.snapshots[i//2]
-            delta=complex(*sn['delta'+str(i%2)])
-            true_candidate=self.expected_mapper[i]+delta
-            decided_candidate=points[i]+delta
-            if self.profile.nonlinear:
-                true_candidate=complex(projection(true_candidate,self.energy))
-                decided_candidate=complex(projection(decided_candidate,self.energy))
-            _ev.append(dict(symbol=i, received=[rcv.real,rcv.imag],
-                true=[self.expected_mapper[i].real,self.expected_mapper[i].imag],
-                decided=[points[i].real,points[i].imag],
-                true_candidate_waveform=[true_candidate.real,true_candidate.imag],
-                decided_candidate_waveform=[decided_candidate.real,decided_candidate.imag],
-                d_true=float(abs(rcv-true_candidate)), d_decided=float(abs(rcv-decided_candidate)),
-                d_expected_waveform=float(abs(rcv-ref[i]))))
+        snapshots = getattr(det, 'snapshots', ())
+        if retain_qualification_snapshots:
+            for i in _bad[:8]:
+                if i // 2 >= len(snapshots):
+                    break
+                rcv=complex(_obs[i]/g) if i < len(_obs) else 0j
+                sn=snapshots[i//2]
+                delta=complex(*sn['delta'+str(i%2)])
+                true_candidate=self.expected_mapper[i]+delta
+                decided_candidate=points[i]+delta
+                if self.profile.nonlinear:
+                    true_candidate=complex(projection(true_candidate,self.energy))
+                    decided_candidate=complex(projection(decided_candidate,self.energy))
+                _ev.append(dict(symbol=i, received=[rcv.real,rcv.imag],
+                    true=[self.expected_mapper[i].real,self.expected_mapper[i].imag],
+                    decided=[points[i].real,points[i].imag],
+                    true_candidate_waveform=[true_candidate.real,true_candidate.imag],
+                    decided_candidate_waveform=[decided_candidate.real,decided_candidate.imag],
+                    d_true=float(abs(rcv-true_candidate)), d_decided=float(abs(rcv-decided_candidate)),
+                    d_expected_waveform=float(abs(rcv-ref[i]))))
         # At the first divergence, what did the trellis survive to, and were the true label/parity
         # admissible? snapshots[i//2] is the interval that produced symbol i.
         first_div = None
-        if _bad and hasattr(det, "snapshots"):
+        if _bad and snapshots:
             i = _bad[0]
-            sn = det.snapshots[i // 2] if i // 2 < len(det.snapshots) else None
+            sn = snapshots[i // 2] if i // 2 < len(snapshots) else None
             if sn is not None:
                 first_div = dict(symbol=i, interval=i // 2, snapshot=sn)
         # Positions of the individual bit errors, so a failure can be read by shape as well as by
@@ -303,10 +399,18 @@ class Receiver:
             length_mismatch=abs(len(bits)-len(self.expected)),
             first_decoded_point_deltas=_ev,
             point_distance_domain='forward waveform with detector feedback history',
-            mapper_symbol_errors=len(_bad),first_divergence=first_div)
+            mapper_symbol_errors=len(_bad),first_divergence=first_div,
+            qualification_snapshots_retained=bool(snapshots))
         self.bits=bits
         self.slicer_hist=list(self.drx.x_hist)
+        if timing_enabled:
+            timings['qualification_analysis_ns'] = time.thread_time_ns() - stage_started
+        stage_started = time.thread_time_ns() if timing_enabled else 0
         self.vit=self.detector(start=True)
+        if timing_enabled:
+            timings['data_detector_construct_ns'] = time.thread_time_ns() - stage_started
+            timings['total_ns'] = time.thread_time_ns() - timing_started
+            self.diagnostics['qualification_timing_cpu_ns'] = timings
         return g,ref
 
     def decide(self, y):
@@ -357,8 +461,133 @@ def live_policy():
     return SearchPolicy.dual_convention()
 
 
-def initialize(engine, eq, remote_role, baud, policy=None):
-    """Acquire B1 once; return False until enough samples exist."""
+def b1_capture_pending(engine):
+    """Whether bounded live B1 window acquisition is in progress."""
+    return getattr(engine, '_b1_capture_job', None) is not None
+
+
+def configured_b1_capture_budget():
+    budget=int(os.environ.get('V34_B1_CAPTURE_SYMBOL_BUDGET','0'))
+    if budget < 0:
+        raise RuntimeError('V34_B1_CAPTURE_SYMBOL_BUDGET must be non-negative')
+    return budget
+
+
+def _capture_b1_incremental(engine, eq, remote_role, baud, policy, n, margin, budget):
+    """Collect the ordinary B1 windows over bounded media polls.
+
+    The equalizer is rewound and frozen once, then advanced by at most
+    ``budget`` symbols per call. Qualification still uses the exact captured
+    windows and observed symbols used by the synchronous path.
+    """
+    key=(id(eq),int(engine._rx_b1),remote_role,int(baud),n,margin,repr(policy))
+    job=getattr(engine,'_b1_capture_job',None)
+    if job is None:
+        dsp=getattr(engine,'receive_dsp',None)
+        if dsp is not None and hasattr(dsp,'before_b1') and not getattr(engine,'_connected_rate_b1',False):
+            dsp.before_b1(eq,engine._p4rcv.k_trn)
+        snapshot=eq.__dict__.copy()
+        timing_state_start=eq.timing_snapshot()
+        eq.adapt=False
+        eq.k=engine._rx_b1-margin
+        eq.phase-=margin*eq.freq
+        # update_baseband uses a centered 81-sample FIR and revises its last
+        # 40 outputs on every media append. Do not capture windows whose
+        # interpolation support can still touch that mutable tail.
+        eq._filter_future=40
+        job=dict(key=key,snapshot=snapshot,timing_state_start=timing_state_start,
+            samples=[],windows=[],centers=[],capture_cpu_ns=0,polls=0,
+            max_symbols_per_poll=0)
+        engine._b1_capture_job=job
+    elif job['key'] != key:
+        raise RuntimeError('B1 qualification inputs changed while incremental capture was pending')
+
+    started=time.thread_time_ns()
+    done=0
+    job['polls']+=1
+    while (done < budget and len(job['samples']) < n+2*margin
+            and eq.k < eq.available()-8):
+        center=eq.R.lag+(eq.R.LEAD+eq.k+eq.R.delay)*eq.R.spl+eq.dt
+        window=eq.window(eq.k).copy()*np.exp(-1j*eq.phase)
+        job['centers'].append(center)
+        job['windows'].append(window)
+        job['samples'].append(eq.step(decide=lambda y:y))
+        done+=1
+    job['capture_cpu_ns']+=time.thread_time_ns()-started
+    job['max_symbols_per_poll']=max(job['max_symbols_per_poll'],done)
+    if len(job['samples']) < n+2*margin:
+        return None
+    del engine._b1_capture_job
+    return dict(snapshot=job['snapshot'],timing_state_start=job['timing_state_start'],
+        samples=np.asarray(job['samples']),windows=np.asarray(job['windows']),
+        centers=job['centers'],capture_cpu_ns=job['capture_cpu_ns'],
+        polls=job['polls'],max_symbols_per_poll=job['max_symbols_per_poll'])
+
+
+def initialize(engine, eq, remote_role, baud, policy=None, capture_budget=None,
+               staged=None):
+    """Acquire and qualify B1; optionally spread identical work over media ticks.
+
+    If ``staged`` is omitted, this function's standalone environment default
+    is synchronous; ``V34_B1_QUALIFY_STAGED=1`` opts into one bounded stage
+    per call. The V.34 caller data path passes this argument explicitly and
+    defaults it to staged unless ``V34_B1_QUALIFY_STAGED=0``. The answerer
+    does not use that caller override. Staging preserves the captured B1
+    observations and acceptance rule while allowing PCM buffering between
+    stages.
+    """
+    recorded=getattr(engine,'_recorded_receive',False)
+    effective_policy=(policy or getattr(engine,'_receive_search_policy',None)
+                      or (SearchPolicy.diagnostic() if recorded else live_policy()))
+    effective_budget=(configured_b1_capture_budget() if capture_budget is None
+                      else int(capture_budget))
+    if staged is None:
+        staged = os.environ.get('V34_B1_QUALIFY_STAGED') == '1'
+    if not staged:
+        steps = _initialize_steps(engine, eq, remote_role, baud,
+                                  effective_policy, effective_budget)
+        while True:
+            try:
+                next(steps)
+            except StopIteration as done:
+                return bool(done.value)
+
+    key=(id(eq),int(getattr(engine,'_rx_b1',-1)),str(remote_role),int(baud),
+         repr(getattr(engine,'negotiated',None)),repr(effective_policy),
+         effective_budget)
+    task=getattr(engine,'_b1_qualification_task',None)
+    if task is not None and task['key'] != key:
+        task['generator'].close()
+        del engine._b1_qualification_task
+        task=None
+    if task is None:
+        task=dict(key=key,generator=_initialize_steps(
+            engine,eq,remote_role,baud,effective_policy,effective_budget))
+        engine._b1_qualification_task=task
+    try:
+        next(task['generator'])
+    except StopIteration as done:
+        del engine._b1_qualification_task
+        return bool(done.value)
+    except Exception:
+        task['generator'].close()
+        del engine._b1_qualification_task
+        raise
+    return False
+
+
+def _initialize_steps(engine, eq, remote_role, baud, policy, capture_budget):
+    """Generator for the synchronous-compatible B1 qualification stages."""
+    timing_enabled = os.environ.get('V34_EQ_STEP_PROFILE') == '1'
+    init_timing = {}
+
+    def record_total_timing():
+        # A staged qualification spans multiple media callbacks. Use the sum
+        # of explicitly measured work, not the thread clock delta across the
+        # intervening RTP receive/transmit work.
+        init_timing['total_ns'] = sum(value for name, value in init_timing.items()
+                                      if name.endswith('_ns') and name != 'total_ns')
+
     if getattr(engine,"rx_qualification",{}).get("reason") or getattr(engine,"failed_reason",None):
         return False
     profile=engine.negotiated.rx
@@ -369,8 +598,6 @@ def initialize(engine, eq, remote_role, baud, policy=None):
         return False
     # Legacy simulated replay remains compatible; passive observation passes an
     # explicit policy and never uses this switch to select its qualification.
-    recorded=getattr(engine,'_recorded_receive',False)
-    policy=policy or getattr(engine,'_receive_search_policy',None) or (SearchPolicy.diagnostic() if recorded else live_policy())
     profiles=[profile]
     if policy.rate_search:
         mask=engine._local_mp['mask'] & (getattr(engine,'mp_ans',None) or getattr(engine,'mp_call',None))['mask']
@@ -378,21 +605,42 @@ def initialize(engine, eq, remote_role, baud, policy=None):
                   if mask & (1 << (rate//2400-1)) and __import__('v34_negotiation').supported(rate,profile.baud,profile.shaping)]
     margin=max(abs(k) for k in policy.boundary_offsets)
     n=max(8*vd.frame_params(p.rate,p.baud)["P"] for p in profiles)
-    if eq.available()<engine._rx_b1+n+margin+8:
-        return False
-    dsp=getattr(engine,'receive_dsp',None)
-    if dsp is not None and hasattr(dsp,'before_b1') and not getattr(engine, '_connected_rate_b1', False):
-        dsp.before_b1(eq, engine._p4rcv.k_trn)
-    snapshot=eq.__dict__.copy()
-    timing_start=eq.timing_snapshot()
-    eq.adapt=False; eq.k=engine._rx_b1-margin; eq.phase-=margin*eq.freq
-    samples,windows,centers=[],[],[]
-    for _ in range(n+2*margin):
-        centers.append(eq.R.lag+(eq.R.LEAD+eq.k+eq.R.delay)*eq.R.spl+eq.dt)
-        windows.append(eq.window(eq.k).copy()*np.exp(-1j*eq.phase))
-        samples.append(eq.step(decide=lambda y:y))
-    observed_all=np.array(samples)
+    capture_budget=int(capture_budget)
+    if capture_budget < 0:
+        raise RuntimeError('V34_B1_CAPTURE_SYMBOL_BUDGET must be non-negative')
+    if capture_budget:
+        capture=_capture_b1_incremental(engine,eq,remote_role,baud,policy,n,margin,capture_budget)
+        if capture is None:
+            return False
+        snapshot=capture['snapshot']
+        timing_state_start=capture['timing_state_start']
+        observed_all=capture['samples']
+        windows=capture['windows']
+        centers=capture['centers']
+        capture_cpu_ns=capture['capture_cpu_ns']
+        engine._ev(f"B1 windows captured over {capture['polls']} media polls "
+                   f"({len(observed_all)} symbols; max {capture['max_symbols_per_poll']} per poll)")
+    else:
+        if eq.available()<engine._rx_b1+n+margin+8:
+            return False
+        dsp=getattr(engine,'receive_dsp',None)
+        if dsp is not None and hasattr(dsp,'before_b1') and not getattr(engine, '_connected_rate_b1', False):
+            dsp.before_b1(eq, engine._p4rcv.k_trn)
+        snapshot=eq.__dict__.copy()
+        timing_state_start=eq.timing_snapshot()
+        eq.adapt=False; eq.k=engine._rx_b1-margin; eq.phase-=margin*eq.freq
+        samples,windows,centers=[],[],[]
+        capture_started=time.thread_time_ns() if timing_enabled else 0
+        for _ in range(n+2*margin):
+            centers.append(eq.R.lag+(eq.R.LEAD+eq.k+eq.R.delay)*eq.R.spl+eq.dt)
+            windows.append(eq.window(eq.k).copy()*np.exp(-1j*eq.phase))
+            samples.append(eq.step(decide=lambda y:y))
+        observed_all=np.array(samples)
+        capture_cpu_ns=time.thread_time_ns()-capture_started if timing_enabled else 0
     windows=np.asarray(windows)
+    if timing_enabled:
+        init_timing['b1_window_capture_ns'] = capture_cpu_ns
+        stage_started = time.thread_time_ns()
     source_offset=getattr(engine,'_p4_x0',None)
     if source_offset is None:
         source_offset=engine._p3['x0']
@@ -408,8 +656,9 @@ def initialize(engine, eq, remote_role, baud, policy=None):
             source_offset=source_offset,frequency=eq.R.fc,baud=eq.R.baud,
             lag=eq.R.lag,delay=eq.R.delay,dt=snapshot['dt'],phase=snapshot['phase'],
             frequency_loop=snapshot['freq'],b1_symbol=engine._rx_b1,margin=margin)
-        engine._b1_inputs['timing_start']=np.array([timing_start['sample_position'],
-            timing_start['samples_per_symbol'],timing_start['timing_velocity'],timing_start['carrier_phase']])
+        engine._b1_inputs['timing_start']=np.array([timing_state_start['sample_position'],
+            timing_state_start['samples_per_symbol'],timing_state_start['timing_velocity'],timing_state_start['carrier_phase']])
+    yield False
     candidates=[]
     states=policy.initial_states
     candidate_scores=[]
@@ -427,9 +676,12 @@ def initialize(engine, eq, remote_role, baud, policy=None):
             states[state_index],shift,observations[offset_index]))
         candidate_scores.append(dict(rate=candidate_profile.rate,
             scores=[[float(v) if np.isfinite(v) else None for v in row] for row in scores]))
+    if timing_enabled:
+        init_timing['candidate_search_ns'] = time.thread_time_ns() - stage_started
     search_evidence=dict(search_policy=asdict(policy),normative_rate=profile.rate,
         rate_rule='V.34 11.4.1.1.3 / 11.4.1.2.3: highest mutually enabled rate',
         calibration_candidates=candidate_scores,selection_uses_held_out=False)
+    yield False
     if not candidates or not np.isfinite(min(c[0] for c in candidates)):
         engine.rx_qualification={'profile':asdict(profile),'qualified':False,'reason':'no identifiable B1 profile',**search_evidence}
         engine._b1_linear=np.asarray(v34_b1_reference.build(profiles[-1].rate,
@@ -448,12 +700,17 @@ def initialize(engine, eq, remote_role, baud, policy=None):
             'reason':reason,'search_evidence':search_evidence}
         engine.failed_reason=reason
         return False
+    stage_started = time.thread_time_ns() if timing_enabled else 0
     receiver=Receiver(selected_profile,remote_role,state)
+    yield False
+    if timing_enabled:
+        init_timing['receiver_construct_ns'] = time.thread_time_ns() - stage_started
     receiver.diagnostics.update(search_evidence)
     receiver.diagnostics.update(differential_convention='continued' if any(state) else 'reset',
         convention_policy=policy.label,boundary_offset=shift-margin,calibration_nmse=score,
         rate_candidates=len(profiles),state_candidates=len(states),boundary_candidates=len(policy.boundary_offsets))
     refined_h=None
+    stage_started = time.thread_time_ns() if timing_enabled else 0
     if score>1e-4:
         # Train taps on the calibration half only. Re-fit radial energy jointly
         # with the linear channel; a channel mismatch must not masquerade as
@@ -462,19 +719,29 @@ def initialize(engine, eq, remote_role, baud, policy=None):
         refined_score,refined_h=refine_taps(receiver,W,observed,snapshot['h'])
         observed=W@refined_h
         receiver.diagnostics['tap_calibration_nmse']=refined_score
+    if timing_enabled:
+        init_timing['tap_refinement_ns'] = time.thread_time_ns() - stage_started
+    yield False
     engine._b1_observed=observed
     engine._b1_linear=receiver.linear
     if getattr(engine,'_receive_trace',False):
         engine._b1_inputs.update(observed_after=observed,linear=receiver.linear,
             chosen_shift=shift,taps_after=refined_h if refined_h is not None else snapshot['h'])
     try:
+        stage_started = time.thread_time_ns() if timing_enabled else 0
         g,ref=receiver.qualify(observed)
+        if timing_enabled:
+            init_timing['qualification_ns'] = time.thread_time_ns() - stage_started
         dsp=getattr(engine,'receive_dsp',None)
         if dsp is not None:dsp.qualify(receiver,observed,g)
     except ValueError as exc:
+        if timing_enabled:
+            record_total_timing()
+            receiver.diagnostics['initialization_timing_cpu_ns'] = init_timing
         engine.rx_qualification={**receiver.diagnostics,'reason':str(exc)}
         engine.failed_reason=str(exc)
         return False
+    yield False
     # Restore and advance exactly to the selected B1/data boundary.
     eq.__dict__.update(snapshot)
     eq.adapt=False; eq.k=engine._rx_b1-margin; eq.phase-=margin*eq.freq
@@ -483,6 +750,9 @@ def initialize(engine, eq, remote_role, baud, policy=None):
     if policy.rate_search and receiver.diagnostics['qualified']:
         engine.rx_rate=receiver.profile.rate
         engine.negotiated=replace(engine.negotiated,rx=receiver.profile)
+    if timing_enabled:
+        record_total_timing()
+        receiver.diagnostics['initialization_timing_cpu_ns'] = init_timing
     engine.rx_qualification=receiver.diagnostics
     engine.rx_qualification['standard_qualification']=bool(receiver.diagnostics['qualified']
         and policy.label in ('standard',DUAL_CONVENTION) and selected_profile.rate==profile.rate
@@ -504,4 +774,6 @@ def initialize(engine, eq, remote_role, baud, policy=None):
         from v34_transport import held_symbols
         engine._rx_state['quality'] = DataQuality(receiver.vit, receiver.profile, baud,
             held_symbols=held_symbols(eq))
+    if capture_budget:
+        engine._b1_incremental_just_completed=True
     return True

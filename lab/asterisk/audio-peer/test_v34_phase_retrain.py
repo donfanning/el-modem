@@ -135,7 +135,7 @@ class ToneSkipTests(unittest.TestCase):
         from types import SimpleNamespace
         fed = []
         rcv = SimpleNamespace(idx=[], trn_end=None, _end_est=None, frames=[], b1_symbol=None, e_span=None,
-                              eq=SimpleNamespace(slips=0), feed=lambda parse_mp: fed.append(1))
+                              eq=SimpleNamespace(slips=0), feed=lambda parse_mp, **kwargs: fed.append(1))
         for coherence, expect_feeds in ((0.06, 1), (0.9, 0)):
             call = self.caller(coherence)
             call.stage, call._p4rcv, call._p4R = "p4_trn", rcv, SimpleNamespace(update_baseband=lambda x: None, _z=None)

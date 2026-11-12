@@ -6141,6 +6141,13 @@ def preimport_v34_modules() -> None:
         import_module(name)
 
 
+def _prewarm_v34_receiver_tables_for_v90_profiles(args) -> None:
+    """Prewarm the V.34 B1 mapper when either experimental V.90 profile is active."""
+    if args.v90_digital_answerer_profile or args.v90_analogue_caller_profile:
+        from v34_datarx import prewarm_v34_receive_tables
+        prewarm_v34_receive_tables()
+
+
 def main(serial_backend=None, control=None) -> None:
     _configure_runtime_clock()
     parser = argparse.ArgumentParser(prog="el-modem", description=f"{PRODUCT} V{VERSION} - open-source software modem ({PROJECT_URL})")
@@ -6321,8 +6328,7 @@ def main(serial_backend=None, control=None) -> None:
         # Its immutable point dictionaries can trigger a costly GC cycle after
         # Phase 2/3 allocations, so build every supported mapper table before
         # opening media. The cache is shared by all profiles using the same M/q.
-        from v34_datarx import prewarm_v34_receive_tables
-        prewarm_v34_receive_tables()
+        _prewarm_v34_receiver_tables_for_v90_profiles(args)
     if (os.environ.get('V34_TRN_GRADIENT') in ('1','auto')
             or os.environ.get('V34_TRN_CLOCK_NATIVE')=='1'
             or os.environ.get('V34_SYMBOL_INTERP_NATIVE')=='1'):

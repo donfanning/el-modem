@@ -5,6 +5,7 @@ RECEIVER requests from the remote transmitter, not its own transmitted format.
 """
 from dataclasses import dataclass
 import copy
+import os
 
 from v34_data import frame_params, mapping_params
 
@@ -114,3 +115,23 @@ def final_mp(frames):
     messages = [f for f in frames if isinstance(f,dict)]
     acknowledged = [f for f in messages if f.get('ack')]
     return (acknowledged or messages)[-1] if messages else None
+
+
+def tolerate_post_e_mp_update() -> bool:
+    """Opt in to retaining the negotiated profile after a post-E MP update.
+
+    V.34 10.1.3.9 says MP/MP' sequences sent as a group should contain
+    identical modulation parameters. A recorded interop peer changed only its
+    precoder coefficients in later MP' frames after the local modem had sent
+    E. Keep strict rejection as the default; this opt-in permits only that
+    precoder-only variation while retaining the negotiated data profile.
+    """
+    return os.environ.get("V34_TOLERATE_POST_E_MP_UPDATE") == "1"
+
+
+def is_precoder_only_mp_update(current: dict, selected: dict) -> bool:
+    """Return true only when the precoder is the sole changed MP field."""
+    keys = (set(current) | set(selected)) - {"ack", "precoder"}
+    if any(current.get(key) != selected.get(key) for key in keys):
+        return False
+    return current.get("precoder") != selected.get("precoder")

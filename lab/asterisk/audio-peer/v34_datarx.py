@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from collections import deque
+from functools import lru_cache
 
 import numpy as np
 
@@ -111,34 +113,86 @@ def inverse_shell(sm: vd.ShellMapper, rings: list[int]) -> int:
     return sm.z8[A] + sm.g4_prefix[A][B] + R1
 
 
+@lru_cache(maxsize=64)
+def _constellation_tables(M: int, q: int):
+    """Immutable receive point lookup tables shared by profiles with same M/q."""
+    L = 4 * M * 2 ** q
+    points = tuple((vd.rotate_cw(vd.QUARTER[qi], r), qi, r)
+                   for qi in range(L // 4) for r in range(4))
+    pts = np.array([p[0] for p in points])
+    pts.setflags(write=False)
+    exact = {complex(point): (qi, r, 0.) for point, qi, r in points}
+    return points, pts, exact
+
+
+def prewarm_v34_receive_tables() -> int:
+    """Build supported V.34 point tables before an RTP call can need them."""
+    import v34_negotiation as negotiation
+    bauds = (2400, 2743, 2800, 3000, 3200, 3429)
+    prepared = set()
+    for rate in range(2400, 33601, 2400):
+        for baud in bauds:
+            for expanded in (False, True):
+                if not negotiation.supported(rate, baud, expanded):
+                    continue
+                fp = vd.frame_params(rate, baud)
+                mp = vd.mapping_params(fp['b'], expanded)
+                key = (mp['M'], mp['q'])
+                if key not in prepared:
+                    _constellation_tables(*key)
+                    prepared.add(key)
+    return len(prepared)
+
+
 class DataRx:
     """Decode mapping frames of 2D symbols back to the scrambled primary bits."""
 
     def __init__(self, rate: int, baud: int, expanded: bool = False, precoder=None):
-        tx = vd.DataTx(rate, baud, expanded)
-        self.b, self.P, self.K, self.M, self.q = tx.b, tx.P, tx.K, tx.M, tx.q
-        self.J = tx.J
-        self.swp = tx.swp
-        self.shell = tx.shell
-        self.N = tx.bits_per_data_frame
-        self.avg_power = tx.avg_power
-        L = 4 * self.M * 2 ** self.q
-        self.points = []                                      # (point, Q index, rotation)
-        for qi in range(L // 4):
-            for r in range(4):
-                self.points.append((vd.rotate_cw(vd.QUARTER[qi], r), qi, r))
-        self._pts = np.array([p[0] for p in self.points])
-        self._exact_points = {complex(point): (qi, r, 0.) for point,qi,r in self.points}
+        profile = os.environ.get('V34_EQ_STEP_PROFILE') == '1'
+        timing = {}
+        started = time.thread_time_ns() if profile else 0
+        # The receive mapper needs only framing and mapping parameters. Avoid
+        # constructing DataTx here: its fixed-seed average-power estimate
+        # simulates random frames and is unrelated to receive decisions.
+        fp = vd.frame_params(rate, baud)
+        mp = vd.mapping_params(fp['b'], expanded)
+        if profile:
+            timing['framing_ns'] = time.thread_time_ns() - started
+            started = time.thread_time_ns()
+        self.b, self.P, self.J = fp['b'], fp['P'], fp['J']
+        self.K, self.M, self.q = mp['K'], mp['M'], mp['q']
+        self.swp = vd.swp_pattern(self.P, fp['r'])
+        self.shell = vd._shell_mapper(self.M) if self.K else None
+        if profile:
+            timing['shell_mapper_ns'] = time.thread_time_ns() - started
+            started = time.thread_time_ns()
+        self.N = fp['N']
+        self._avg_power_args = (rate, baud, expanded)
+        self._avg_power = None
+        self.points, self._pts, self._exact_points = _constellation_tables(
+            self.M, self.q)
+        if profile:
+            timing['constellation_tables_ns'] = time.thread_time_ns() - started
         self.z = 0
         self.conv = vd.ConvEncoder16()
         self.h = list(precoder) if precoder is not None else [0j] * 3
         self.x_hist = [0j] * 3
-        self.w = tx.w
+        self.w = 1 if self.b < 56 else 2
         self.m4 = 0
         self.frame_pos = 0                                    # index into the SWP pattern
         self._inv = vd.INVERSION[self.J]
         self.inv_offset = 2 * self.J - 2
         self.errors = 0
+        if profile:
+            timing['total_ns'] = sum(timing.values())
+            self.construction_timing_cpu_ns = timing
+
+    @property
+    def avg_power(self) -> float:
+        """Compatibility diagnostic, computed only when a caller requests it."""
+        if self._avg_power is None:
+            self._avg_power = vd.DataTx._estimate_power(*self._avg_power_args)
+        return self._avg_power
 
     def nearest(self, y: complex) -> tuple[int, int, float]:
         exact=self._exact_points.get(y)

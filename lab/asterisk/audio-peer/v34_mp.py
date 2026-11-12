@@ -9,6 +9,20 @@ from __future__ import annotations
 from v34_info import crc16
 
 
+def progress_frame_name(frames) -> str | None:
+    """Name the MP'/E frame that advances Phase 4 startup.
+
+    Logs must distinguish MP-ACK1 from E: both can trigger the local E/data
+    response, but only E marks the peer's transition into B1.
+    """
+    for frame in frames:
+        if isinstance(frame, dict) and frame.get("ack"):
+            return "MP-ACK1"
+        if frame == "E":
+            return "E"
+    return None
+
+
 def _f(v: int, w: int) -> list[int]:
     return [(v >> i) & 1 for i in range(w)]
 

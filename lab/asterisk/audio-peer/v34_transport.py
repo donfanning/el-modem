@@ -21,15 +21,29 @@ def gap_recovery_enabled():
     return value=='1'
 
 
+def per_survivor_precoder_erasure_enabled():
+    """Select the experimental per-survivor erasure detector for paired tests."""
+    value=os.environ.get('V34_GAP_PRECODER_TRELLIS','0')
+    if value not in ('0','1'):
+        raise ValueError('V34_GAP_PRECODER_TRELLIS must be 0 or 1')
+    if value=='1' and not gap_recovery_enabled():
+        raise ValueError('V34_GAP_PRECODER_TRELLIS requires V34_GAP_RECOVERY=1')
+    return value=='1'
+
+
 def trellis_erasure_enabled(precoder):
     """Use erased trellis metrics when enabled and supported by the profile."""
-    if gap_recovery_enabled():return not any(precoder)
+    per_survivor=per_survivor_precoder_erasure_enabled()
+    if gap_recovery_enabled():
+        return not any(precoder) or (any(precoder) and per_survivor)
     return os.environ.get('V34_GAP_TRELLIS_ERASURE')=='1'
 
 
 def trellis_hold_enabled(precoder):
     """Keep extended traceback for the combined or legacy erasure mode."""
-    if gap_recovery_enabled():return not any(precoder)
+    per_survivor=per_survivor_precoder_erasure_enabled()
+    if gap_recovery_enabled():
+        return not any(precoder) or (any(precoder) and per_survivor)
     return os.environ.get('V34_GAP_TRELLIS_HOLD')=='1'
 
 
@@ -131,17 +145,33 @@ class FeedbackValidity:
             carrier_updates_on_taint=self.phase_updates,timing_velocity_updates_on_taint=self.velocity_updates,
             tap_delta_squared=self.tap_delta_squared,tap_delta_units='sum squared complex tap coefficient changes',
             first_tainted=self.first_tainted,last_tainted=self.last_tainted,
+            first_retained_range=(list(self.ranges[0]) if self.ranges else None),
+            last_retained_range=(list(self.ranges[-1]) if self.ranges else None),
             trellis_erasure_intervals=self.trellis_erasure_intervals,
             first_trellis_erasure=self.first_trellis_erasure,
             last_trellis_erasure=self.last_trellis_erasure,
             decoder_samples_preserved=True,payload_truth_used=False)
 
 
-def note_concealed(core,start,count):
-    if getattr(core,'_rx_state',None) is None:return
+def register_concealed_ranges(core,ranges):
+    """Register retained RX concealment spans once the Phase-4 guard exists."""
     eq=getattr(getattr(core,'_p4rcv',None),'eq',None)
     guard=getattr(eq,'_transport_guard',None)
-    if guard is not None:guard.add(int(start),int(count))
+    if guard is None:return 0
+    registered=0
+    for start,count in ranges:
+        guard.add(int(start),int(count))
+        registered+=1
+    return registered
+
+
+def note_concealed(core,start,count):
+    # The transport guard protects the equalizer from known-bad input during
+    # Phase-4 TRN as well as data. _rx_state is initialized only after B1, and
+    # the Phase-4 receiver may not exist yet when an early TRN gap arrives.
+    # V34Caller retains those spans and backfills them when it creates the
+    # receiver; do not discard them based on data-state initialization.
+    register_concealed_ranges(core,((start,count),))
 
 
 def held_symbols(eq):

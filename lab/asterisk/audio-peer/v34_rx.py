@@ -20,6 +20,20 @@ from v34_transport import FeedbackValidity
 
 FS = 8000
 
+# Cadence for the live Phase-4 MP-boundary search. Scanning every 64 symbols
+# avoids rechecking the same 48 candidate boundaries on every 8-symbol step.
+# Paired 28.8 kb/s fallback runs with 15 ms one-way delay and 5 ms jitter
+# passed exact 16 KiB duplex transfers at this cadence. The measured Phase-4
+# scan cost fell from about 6.9 ms (32-symbol cadence) to 3.8 ms. Detection can
+# be deferred by at most 64 symbols (18.7 ms at 3429 baud); keep the override
+# for controlled comparisons.
+try:
+    P4_TRN_SCAN_INTERVAL = int(os.environ.get('EL_MODEM_P4_TRN_SCAN_INTERVAL', '64'))
+except ValueError as exc:
+    raise RuntimeError('EL_MODEM_P4_TRN_SCAN_INTERVAL must be an integer') from exc
+if not 1 <= P4_TRN_SCAN_INTERVAL <= 256:
+    raise RuntimeError('EL_MODEM_P4_TRN_SCAN_INTERVAL must be in 1..256')
+
 
 class _SymbolEqStepProfile:
     """Bounded sampled timings for optional equalizer-stage attribution."""
@@ -29,6 +43,9 @@ class _SymbolEqStepProfile:
     def __init__(self, capacity=4096):
         self.capacity = capacity
         self.rows = {name: deque(maxlen=capacity) for name in self._STAGES}
+        self.grid_rows = deque(maxlen=128)
+        self.feed_rows = deque(maxlen=128)
+        self.phase4_feed_rows = deque(maxlen=128)
         self.count = 0
 
     def add(self, elapsed_ns):
@@ -52,7 +69,22 @@ class _SymbolEqStepProfile:
                 'max_us': ordered[-1] / 1000.0,
                 'retained_samples': n,
             }
+        if self.grid_rows:
+            result['grid_builds'] = list(self.grid_rows)
+        if self.feed_rows:
+            result['phase3_feed_batches'] = list(self.feed_rows)
+        if self.phase4_feed_rows:
+            result['phase4_feed_batches'] = list(self.phase4_feed_rows)
         return result
+
+    def add_grid_build(self, row):
+        self.grid_rows.append(row)
+
+    def add_feed_batch(self, row):
+        self.feed_rows.append(row)
+
+    def add_phase4_feed_batch(self, row):
+        self.phase4_feed_rows.append(row)
 
 
 def phase4_equalizer_span() -> int:
@@ -139,9 +171,22 @@ class Phase3Rx:
         self.baud, self.fc, self.role = baud, fc, sender_role
         self.spl = FS / baud
         self.bw = max(1700.0, 0.62 * baud)                  # baseband low-pass cut-off
+        self._startup_stage_profile = (
+            deque(maxlen=64) if os.environ.get('V34_EQ_STEP_PROFILE') == '1' else None)
         self.lag = self.delay = None
         self.gain = None
         self.taps = None
+
+    def record_startup_stage(self, stage: str, wall_started: int,
+                             cpu_started: int, **details) -> None:
+        if self._startup_stage_profile is None:
+            return
+        self._startup_stage_profile.append({
+            'stage': stage,
+            'wall_us': (time.perf_counter_ns() - wall_started) / 1000.0,
+            'thread_cpu_us': (time.thread_time_ns() - cpu_started) / 1000.0,
+            **details,
+        })
 
     def update_baseband(self, x: np.ndarray, *, origin: int = 0) -> np.ndarray:
         """Mix/filter an append-only audio buffer, revising the centered FIR's trailing edge.
@@ -390,6 +435,39 @@ def trn_end_from_mismatch(mismatch, min_run: int = 64, last: bool = False) -> in
     if last:
         return int(ends[np.flatnonzero(lens >= min_run)[-1]])
     return int(ends[int(np.argmax(lens))])                 # first of the longest: the TRN, not a later echo
+
+
+class TrnEndTracker:
+    """Incrementally track the end of the longest exact-TRN agreement run.
+
+    Phase 3 examines the growing mismatch history every few symbols. Re-running
+    ``trn_end_from_mismatch`` on that full history at each scan makes the work
+    quadratic in the TRN length. This keeps the same first-longest-run rule in
+    O(1) work per received symbol.
+    """
+
+    def __init__(self, min_run: int = 64):
+        self.min_run = int(min_run)
+        self.count = 0
+        self.current_run = 0
+        self.longest_run = 0
+        self.longest_end: int | None = None
+
+    def append(self, mismatch: int) -> int | None:
+        """Append one 0/1 mismatch and return the current qualifying end, if any."""
+        self.count += 1
+        if mismatch == 0:
+            self.current_run += 1
+            # np.argmax chooses the first run on ties. Replace only when this
+            # run becomes strictly longer, including while it is still open.
+            if self.current_run > self.longest_run:
+                self.longest_run = self.current_run
+                self.longest_end = self.count
+        else:
+            self.current_run = 0
+        if self.longest_run < self.min_run:
+            return None
+        return self.longest_end
 
 
 def find_trn_end(idx: np.ndarray, expected: np.ndarray) -> int | None:
@@ -705,8 +783,10 @@ class InputPowerGuard:
             self.events += 1
 
     def enable_release(self):
-        """Allow explicitly held feedback to recover after a valid return signal."""
+        """Permit an explicitly held feedback loop to recover on signal return."""
         self.release_enabled = True
+        # A CRC-valid protocol frame is stronger evidence of signal return
+        # than a power measurement when no training reference was available.
         if self.reference is None:
             self.holding = False
 
@@ -791,8 +871,10 @@ class SymbolEq:
         self.freq = 0.0
         self.mu, self.kp, self.ki = mu, kp, ki
         self.adapt = True
+        # V.90's known upstream B1 may freeze feedback while still integrating
+        # a stale carrier-frequency estimate. Its complex gain fit can absorb
+        # a fixed phase, but not that artificial phase ramp across the burst.
         self.hold_carrier_phase = False
-        self.last_input_power = None
         from v34_equalizer_backend import selected
         arithmetic=selected()
         self._rust_interp=arithmetic.interpolate if arithmetic is not None else None
@@ -814,10 +896,13 @@ class SymbolEq:
         guard_mode = os.environ.get('V34_INPUT_POWER_GUARD')
         self._input_guard = (InputPowerGuard('fade' if guard_mode == 'fade' else 'silence')
                              if guard_mode in ('1', 'fade') else None)
-        # NLMS tap update and carrier PLL can be frozen independently of the timing loop, so a
-        # receiver that has finished training (e.g. tracked a real peer's seconds-long MP re-send)
-        # can keep the sampling window centred without the tap/phase gains walking into divergence.
+        self.last_input_power = None
+        # Keep the historical combined NLMS/PLL switch, and provide a separate
+        # tap switch for diagnostics and controlled adaptation experiments.
         self.adapt_nlms = True
+        self.adapt_taps = True
+        self._tap_update_error_threshold = None
+        self._tap_update_error_stats = None
         self.slips = 0
         # Rare-event trace for diagnosing large timing corrections. Disabled by
         # default; when enabled it records only actual half-symbol slips.
@@ -904,6 +989,10 @@ class SymbolEq:
 
         With ``trajectory`` the grid follows the predicted timing path dt + vel*(symbols ahead), and a derivative
         grid is kept so each window can add its exact first-order residual (see ``window``)."""
+        profile = self._step_profile
+        if profile is not None:
+            wall_started = time.perf_counter_ns()
+            cpu_started = time.thread_time_ns()
         R = self.R
         half = R.spl / 2
         t0 = R.lag + (R.LEAD + self.k + R.delay) * R.spl + self.dt
@@ -941,6 +1030,15 @@ class SymbolEq:
             hi = int(np.ceil(pos.max()))+9
             indices = np.clip(np.arange(lo, hi)-self._g_origin, 0, len(R._z)-1)
             self._clock_grid_source = (lo, R._z[indices].copy(), pos)
+        if profile is not None:
+            profile.add_grid_build({
+                'wall_us': (time.perf_counter_ns() - wall_started) / 1000.0,
+                'thread_cpu_us': (time.thread_time_ns() - cpu_started) / 1000.0,
+                'input_samples': len(R._z),
+                'position_count': len(pos),
+                'equalizer_span': self.span,
+                'trajectory': bool(trajectory),
+            })
 
     TRAJECTORY_TOLERANCE = .02                            # samples; beyond this the first-order residual is not used
     TRAJECTORY_REBUILD_SPACING = 16                       # symbols between rebuilds before falling back to direct windows
@@ -1059,7 +1157,11 @@ class SymbolEq:
             samples_per_symbol=float(self.R.spl+self.vel), timing_offset_samples=float(self.dt),
             timing_velocity=float(self.vel), tap_centroid=centroid, slips=self.slips,
             carrier_phase=float(self.phase), carrier_radians_per_symbol=float(self.freq),
-            tap_adaptation=bool(self.adapt and self.adapt_nlms and not held), timing_feedback=bool(self.adapt and not held),
+            carrier_phase_held=bool(self.hold_carrier_phase),
+            tap_adaptation=bool(self.adapt and self.adapt_nlms and self.adapt_taps and not held),
+            tap_update_error_threshold=self._tap_update_error_threshold,
+            carrier_tracking=bool(self.adapt and self.adapt_nlms and not held),
+            timing_feedback=bool(self.adapt and not held),
             timing_mode=self.timing_mode, timing_gradient_error=self._gradient_error,
             timing_gradient_information=self._gradient_information)
         if self._input_guard is not None:
@@ -1166,6 +1268,8 @@ class SymbolEq:
         if hold_timing:self._gradient_rows=[]
         tracking = self.adapt and not held and not hold_carrier
         tracking_timing = self.adapt and not held and not hold_timing
+        tracking_nlms = tracking and self.adapt_nlms
+        tracking_taps = tracking_nlms and self.adapt_taps
         t2 = time.perf_counter_ns() if sampled else 0
         y = complex(w @ self.h)
         t3_dot = time.perf_counter_ns() if sampled else 0
@@ -1174,7 +1278,8 @@ class SymbolEq:
         fused_decision_feedback=False
         owner=getattr(decide,'__self__',None) if desired is None and decide is not None else None
         gradient_update=(tracking_timing and self.timing_mode=='gradient' and self.k%2==0)
-        if (desired is None and tracking and self.adapt_nlms and self._native_decision_feedback
+        if (desired is None and tracking_taps and self._tap_update_error_threshold is None
+                and self._native_decision_feedback
                 and not gradient_update and owner is not None
                 and hasattr(owner,'decide_and_feedback')):
             known_energy=-1.0 if power is None else power
@@ -1185,12 +1290,12 @@ class SymbolEq:
         t4 = time.perf_counter_ns() if sampled else 0
         if tracking_timing and self.timing_mode == 'gradient' and self.k % 2 == 0:
             self._gradient_timing(yr,d)
-        if tracking and self.adapt_nlms:
+        if tracking_nlms:
             if fused_decision_feedback:
                 pass
-            elif self._rust_feedback is not None:
+            elif tracking_taps and self._tap_update_error_threshold is None and self._rust_feedback is not None:
                 self.phase,self.freq=self._rust_feedback(self.h,w,yr,d,self.mu,self.kp,self.ki,self.phase,self.freq)
-            elif self._native_feedback:
+            elif tracking_taps and self._tap_update_error_threshold is None and self._native_feedback:
                 if self._native_feedback_kernel is None:
                     from v34_feedback_native import feedback
                     self._native_feedback_kernel = feedback
@@ -1200,7 +1305,23 @@ class SymbolEq:
             else:
                 e = d - yr
                 rot = complex(math.cos(self.phase), math.sin(self.phase))
-                self.h += self.mu * np.conj(w) * (e * rot) / ((float(np.vdot(w, w).real) if power is None else power) + 1e-9)
+                threshold = self._tap_update_error_threshold
+                if tracking_taps and threshold is not None:
+                    normalized_error = float(abs(e) ** 2 / max(abs(d) ** 2, 1e-30))
+                    if self._tap_update_error_stats is None:
+                        self._tap_update_error_stats = dict(
+                            threshold=float(threshold), samples=0, held_steps=0,
+                            first_held_symbol=None, maximum_error=0.0)
+                    stats = self._tap_update_error_stats
+                    stats['samples'] += 1
+                    stats['maximum_error'] = max(stats['maximum_error'], normalized_error)
+                    if normalized_error > threshold:
+                        stats['held_steps'] += 1
+                        if stats['first_held_symbol'] is None:
+                            stats['first_held_symbol'] = int(self.k)
+                        tracking_taps = False
+                if tracking_taps:
+                    self.h += self.mu * np.conj(w) * (e * rot) / ((float(np.vdot(w, w).real) if power is None else power) + 1e-9)
                 if abs(d) > 0:
                     perr = math.atan2((yr * d.conjugate()).imag, (yr * d.conjugate()).real)
                     self.freq += self.ki * perr
@@ -1463,6 +1584,7 @@ class Phase4Receiver:
         self.sc = tx.Scrambler(role)
         self.mismatch: list[int] = []
         self._end_est: int | None = None
+        self._next_trn_scan = 0
         self.bits: list[int] = []                           # descrambled bits after the TRN end
         self.hist: list[int] = []                           # scrambled bits (descrambler history)
         self.pos = 0
@@ -1470,6 +1592,10 @@ class Phase4Receiver:
         self.b1_symbol: int | None = None
         self.e_span = None
         self.mp_spans = []
+        self._trn_scan_profile_enabled = os.environ.get(
+            'V34_DATA_STAGE_PROFILE') == '1'
+        self._trn_scan_profile_calls = 0
+        self._trn_scan_profile_cpu_ns = 0
         # Slicer scale tracking, see _rescale. _last holds the most recent rescaled symbol so the
         # (q, n) extraction and the NLMS decision see the same value.
         self._sq: float | None = None
@@ -1525,18 +1651,43 @@ class Phase4Receiver:
         q2 = self.sc.step(1)
         return 2 * i2 + i1, 2 * q2 + q1
 
-    def feed(self, parse_mp) -> None:
-        self._feed(parse_mp)
+    def feed(self, parse_mp, *, max_symbols: int | None = None) -> None:
+        if max_symbols is not None and max_symbols < 1:
+            raise ValueError('Phase-4 symbol budget must be positive')
+        profile = self.eq._step_profile
+        start_symbol = self.eq.k
+        if profile is not None:
+            wall_started = time.perf_counter_ns()
+            cpu_started = time.thread_time_ns()
+        self._feed(parse_mp, max_symbols=max_symbols)
         observer=getattr(self,'observer',None)
         if observer is not None:observer.after_feed(self)
+        if profile is not None:
+            profile.add_phase4_feed_batch({
+                'wall_us': (time.perf_counter_ns() - wall_started) / 1000.0,
+                'thread_cpu_us': (time.thread_time_ns() - cpu_started) / 1000.0,
+                'start_symbol': start_symbol,
+                'end_symbol': self.eq.k,
+                'symbols_processed': self.eq.k - start_symbol,
+                'symbol_budget': max_symbols,
+                'b1_found': self.b1_symbol is not None,
+            })
 
-    def _feed(self, parse_mp) -> None:
-        next_scan = 0
-        while self.b1_symbol is None and self.eq.k < self.eq.available():
-            if self.trn_end is None and self._end_est is not None and len(self.idx) >= next_scan:
-                next_scan = len(self.idx) + 8
+    def _feed(self, parse_mp, *, max_symbols: int | None = None) -> None:
+        start_symbol = self.eq.k
+        while (self.b1_symbol is None and self.eq.k < self.eq.available()
+               and (max_symbols is None or self.eq.k - start_symbol < max_symbols)):
+            if (self.trn_end is None and self._end_est is not None
+                    and len(self.idx) >= self._next_trn_scan):
+                self._next_trn_scan = len(self.idx) + P4_TRN_SCAN_INTERVAL
+                scan_started = (time.thread_time_ns()
+                                if self._trn_scan_profile_enabled else 0)
                 found = decode_after_trn(self._idx_np[:len(self.idx)], self._end_est, self.role,
                                          c16=self.c16, qidx=self.qidx)
+                if self._trn_scan_profile_enabled:
+                    self._trn_scan_profile_cpu_ns += (
+                        time.thread_time_ns() - scan_started)
+                    self._trn_scan_profile_calls += 1
                 if found is not None:
                     self.trn_end = found[0]
                     self._start_bits(found[0])
@@ -1661,27 +1812,59 @@ class Phase3Receiver:
         self.eq = SymbolEq(R, k_trn)
         self.k_trn, self.role = k_trn, role
         self.idx: list[int] = []
+        self._idx_np = np.empty(1024, dtype=np.int64)
         self.sc = tx.Scrambler(role)
         self.mismatch: list[int] = []
+        self._trn_end_tracker = TrnEndTracker()
         self.j: tuple[int, int, str, int] | None = None
         self._end_est: int | None = None
 
-    def feed(self) -> None:
-        while self.j is None and self.eq.k < self.eq.available():
+    def feed(self, max_symbols: int | None = None) -> None:
+        if max_symbols is not None and max_symbols < 1:
+            raise ValueError('Phase-3 symbol budget must be positive')
+        profile = self.eq._step_profile
+        start_symbol = self.eq.k
+        if profile is not None:
+            wall_started = time.perf_counter_ns()
+            cpu_started = time.thread_time_ns()
+        while (self.j is None and self.eq.k < self.eq.available()
+               and (max_symbols is None or self.eq.k - start_symbol < max_symbols)):
             y = self.eq.step(decide=decide4)
             r = int(round(-math.atan2((y / tx.P0).imag, (y / tx.P0).real) / (math.pi / 2))) % 4
+            k = len(self.idx)
+            if k >= self._idx_np.size:
+                grown = np.empty(max(1024, 2 * self._idx_np.size), dtype=np.int64)
+                grown[:k] = self._idx_np[:k]
+                self._idx_np = grown
+            self._idx_np[k] = r
             self.idx.append(r)
             i1, i2 = self.sc.step(1), self.sc.step(1)
-            self.mismatch.append(0 if r == 2 * i2 + i1 else 1)
+            mismatch = 0 if r == 2 * i2 + i1 else 1
+            self.mismatch.append(mismatch)
+            tracked_end = self._trn_end_tracker.append(mismatch)
             n = len(self.idx)
             if self._end_est is None and n >= 16 and sum(self.mismatch[-16:]) >= 8 and (n - 16) > 300:
                 # The TRN is a known sequence, so pin the transition to the exact symbol rather than
                 # leaving it at the granularity of the 16-symbol window that first noticed it.
-                self._end_est = trn_end_from_mismatch(self.mismatch) or (n - 16)
+                self._end_est = tracked_end or (n - 16 if n >= 512 else None)
+            elif self._end_est is not None and tracked_end is not None:
+                # Keep following a longer agreement run if the early estimate
+                # landed on a burst of errors inside the peer's TRN.
+                self._end_est = tracked_end
             if self._end_est is not None and n % 8 == 0:
-                got = decode_j(np.array(self.idx), self._end_est, self.role, mismatch=self.mismatch)
+                got = decode_j(self._idx_np[:n], self._end_est, self.role)
                 if got is not None and got[1] >= 16:
                     self.j = got
+        if profile is not None:
+            profile.add_feed_batch({
+                'wall_us': (time.perf_counter_ns() - wall_started) / 1000.0,
+                'thread_cpu_us': (time.thread_time_ns() - cpu_started) / 1000.0,
+                'start_symbol': start_symbol,
+                'end_symbol': self.eq.k,
+                'symbols_processed': self.eq.k - start_symbol,
+                'available_symbol': self.eq.available(),
+                'j_found': self.j is not None,
+            })
 
 
 def find_jprime(idx, n_trn: int, role: str, j_pattern: str = "J_4PT"):

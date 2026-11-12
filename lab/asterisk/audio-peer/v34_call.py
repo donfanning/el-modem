@@ -13,6 +13,7 @@ import copy
 import math
 import os
 import threading
+import time
 
 import numpy as np
 
@@ -92,6 +93,15 @@ class Silence(ArraySrc):
 # sample offset between the tx clock we derive x0 from and the rx buffer, which is still open.
 # Searching longer is safe: the S reference is 432 symbols long and min_metric still gates the lock.
 P3_SEARCH_SECS = 8.0
+# S/S-bar/PP is 432 symbols. Including the modulator lead and the 100-sample
+# acquisition guard, the correlation needs about 0.20 s even at the minimum
+# V.34 symbol rate (2400 baud). Waiting 1.2 s here let a 3429-baud peer finish
+# most or all of its phase-3 TRN before we attempted acquisition. With a
+# bounded Phase-3 feed, that left the J detector behind real time and delayed
+# our phase-4 response past the peer's wait window. Keep a small margin over
+# the correlator's actual input requirement; acquire() still rejects a weak
+# or incomplete S/PP match.
+P3_ACQUIRE_MIN_SECS = 0.25
 
 # How long to wait after confirming J before starting our own phase-3 S. 11.3.1.1.3 allows "up to
 # 500 ms"; this is deliberately far below that, because the answerer's deadline runs on its own clock
@@ -118,6 +128,62 @@ P3_SEARCH_SECS = 8.0
 # 37 ms margin into roughly 490 ms. Per 10.1.3.3 the answerer repeats J "until interrupted", so
 # overlapping its J is the intended behaviour, not a collision to be avoided by waiting.
 P3_POST_J_WAIT_SECS = 0.050
+
+# The caller's phase-3 TRN (11.3.1.1: at least 512T).
+P3_CALL_TRN_SYMBOLS = 1024
+
+# Work budget for draining a late Phase-3 equalizer backlog. The paired
+# impairment runs qualified 384 symbols as the default: it keeps the measured
+# catch-up batch below one 20 ms media interval while still draining faster
+# than the observed symbol arrival rate. Set the environment variable to 0 to
+# restore the historical drain-to-J behavior, or to another positive value
+# for controlled qualification.
+try:
+    P3_RX_SYMBOL_BUDGET = int(os.environ.get('V34_P3_RX_SYMBOL_BUDGET', '384'))
+except ValueError as exc:
+    raise RuntimeError('V34_P3_RX_SYMBOL_BUDGET must be an integer') from exc
+if P3_RX_SYMBOL_BUDGET < 0:
+    raise RuntimeError('V34_P3_RX_SYMBOL_BUDGET must be non-negative')
+try:
+    P4_RX_SYMBOL_BUDGET = int(os.environ.get('V34_P4_RX_SYMBOL_BUDGET', '160'))
+except ValueError as exc:
+    raise RuntimeError('V34_P4_RX_SYMBOL_BUDGET must be an integer') from exc
+if P4_RX_SYMBOL_BUDGET < 0:
+    raise RuntimeError('V34_P4_RX_SYMBOL_BUDGET must be non-negative')
+
+# One RTP media frame at 8 kHz. Acquired Phase-3/4 tracking is serviced once
+# per frame when packet polling is on.
+RTP_PACKET_SAMPLES = FS // 50
+
+
+def tracking_packet_poll_enabled(environ=None) -> bool:
+    """Packet polling is enabled only when explicitly set to 1.
+
+    The engine default is off. The packaged runtime exports
+    V34_TRACKING_PACKET_POLL=1 (packaging/native_runtime.py); lab DCE runs
+    without that setting poll Phase 4 every 100 ms (caller) or 50 ms
+    (answerer). With the 160-symbol cap that serviced 1600 or 3200 symbols/s
+    against up to 3429 arriving, and the 2026-11-09 Astound calls answered the
+    peer's MP about 2 s late (lab/ASTOUND_V34_PHASE4_SERVICE_RATE_2026-11-09.md).
+    """
+    environ = os.environ if environ is None else environ
+    return environ.get('V34_TRACKING_PACKET_POLL') == '1'
+
+
+def p4_feed_budget(packet_poll: bool, budget: int) -> int | None:
+    """Phase-4 symbols to consume in one poll, or None to drain.
+
+    The cap bounds work per media frame and is only fast enough at packet
+    cadence. On the slower fixed cadence it would fall behind the line, so
+    that path drains to the current audio as it did before the cap existed.
+    """
+    return (budget or None) if packet_poll else None
+try:
+    V34_DATA_RX_SYMBOL_BUDGET = int(os.environ.get('V34_DATA_RX_SYMBOL_BUDGET', '96'))
+except ValueError as exc:
+    raise RuntimeError('V34_DATA_RX_SYMBOL_BUDGET must be an integer') from exc
+if V34_DATA_RX_SYMBOL_BUDGET < 0:
+    raise RuntimeError('V34_DATA_RX_SYMBOL_BUDGET must be non-negative')
 
 # How many symbols of the answerer's phase-4 TRN to run through the equalizer before we start MP.
 # 11.4.1.1.2 permits continuing TRN for up to 2000 ms before "ceasing to transmit TRN and send
@@ -196,8 +262,10 @@ class V34Caller:
         self.events: list[tuple[int, str]] = []
         self.stage = "silence75"
         self._log = log
-        self._tracking_packet_poll = os.environ.get('V34_TRACKING_PACKET_POLL') == '1'
+        self._tracking_packet_poll = tracking_packet_poll_enabled()
         self._connected_rate_enabled = os.environ.get('V34_CONNECTED_RATE') == '1'
+        self._data_rx_stage_profile = [] if os.environ.get(
+            'V34_DATA_STAGE_PROFILE') == '1' else None
         if self._tracking_packet_poll:
             self._ev('packet polling enabled for acquired phase-three/four tracking')
         self._info0 = info0 or {}
@@ -807,22 +875,38 @@ class V34Caller:
         x0 = self.info1c_sent_t
         x = self._rx[x0:]
         R = self._p3
+        timing_profile = R._startup_stage_profile is not None
         if not self._p3_locked:
-            if len(x) < int(1.2 * FS):
+            if len(x) < int(P3_ACQUIRE_MIN_SECS * FS):
                 return
+            wall_started = time.perf_counter_ns() if timing_profile else 0
+            cpu_started = time.thread_time_ns() if timing_profile else 0
             got = R.acquire(x, search=int(P3_SEARCH_SECS * FS))
+            if timing_profile:
+                R.record_startup_stage('acquire', wall_started, cpu_started,
+                                       input_samples=len(x), acquired=got is not None)
             if got is None:
                 return
             self._p3_locked = True
             self._ev(f"S/PP found: lag {x0 + got['lag']} corr {got['metric']:.3f}")
             return
+        wall_started = time.perf_counter_ns() if timing_profile else 0
+        cpu_started = time.thread_time_ns() if timing_profile else 0
         R._z = R.update_baseband(x)
+        if timing_profile:
+            R.record_startup_stage('update_baseband', wall_started, cpu_started,
+                                   input_samples=len(x), baseband_samples=len(R._z))
         spl = R.spl
         avail = int((len(x) - R.lag) / spl) - R.LEAD - 20
         if not self._p3_trained:
             if avail < 144 + 288 + 760:
                 return
+            wall_started = time.perf_counter_ns() if timing_profile else 0
+            cpu_started = time.thread_time_ns() if timing_profile else 0
             mse, trn_role = R.train_trn_auto()
+            if timing_profile:
+                R.record_startup_stage('train_trn_auto', wall_started, cpu_started,
+                                       available_symbols=avail)
             if trn_role != R.role:
                 self._ev(f"peer TRN does not match the expected {R.role} scrambler; "
                          f"using {trn_role} instead")
@@ -830,7 +914,17 @@ class V34Caller:
             self._p3_rcv = v34_rx.Phase3Receiver(R, role=trn_role)
             self._ev(f"equalizer trained, mse {mse:.3f}")
         rcv = self._p3_rcv
-        rcv.feed()
+        feed_started_symbol = rcv.eq.k
+        wall_started = time.perf_counter_ns() if timing_profile else 0
+        cpu_started = time.thread_time_ns() if timing_profile else 0
+        rcv.feed(max_symbols=P3_RX_SYMBOL_BUDGET or None)
+        if timing_profile:
+            R.record_startup_stage(
+                'phase3_receiver_feed', wall_started, cpu_started,
+                start_symbol=feed_started_symbol, end_symbol=rcv.eq.k,
+                symbols_processed=rcv.eq.k - feed_started_symbol,
+                symbol_budget=P3_RX_SYMBOL_BUDGET or None,
+                j_found=rcv.j is not None)
         if rcv.j is not None:
             # rcv.j[3] is the abs/differential split (the TRN end), which is what the phase-4 receive chain
             # needs; rcv.j[0] is where J starts, and on a real modem that is well past it.
@@ -881,13 +975,13 @@ class V34Caller:
             return
         self._start_call_training()
 
-    # _peer_silent used to live here and gated the phase-3 transmit on the answerer's carrier having
-    # dropped. Removed with the gate: the premise in its docstring was wrong. It said self._rx "includes
-    # the local echo of our own transmit", but fitting our transmit back out of the line signal gives
-    # an echo gain of 0.007 on that capture (debug/p4_duplex.py measures this). The checked-in lab
-    # route uses SIP/RTP with direct_media disabled and an AudioSocket modem peer; its Asterisk config
-    # does not enable an echo canceller. The low measured return is real, but its cause is unknown.
-    # And the gate itself waited for the
+    # _peer_silent used to live here and gated phase-3 transmit on the answerer's carrier having
+    # dropped. It was removed because the capture did not establish that premise. The earlier 0.007
+    # return-echo estimate compared raw TX/RX indices despite their different origins. A timeline-
+    # aligned, mean-centered audit of three Astound captures found no stable delay/gain component;
+    # the peer can dominate the receive signal. See the 2026-11-05 follow-up in
+    # lab/V90_V34_FALLBACK_PAIRED_2026-11-04.md. Do not use the old number as line evidence. The gate
+    # itself also waited for the
     # silence that the answerer only reaches by expiring its 11.3.2.2.1 deadline. See the note at the
     # 500 ms bound above.
 
@@ -898,7 +992,7 @@ class V34Caller:
         S = v34_tx.s_signal(128)
         Sb = v34_tx.s_signal(16, True)
         PP = v34_tx.pp_signal() * math.sqrt(2)
-        trn, sc = v34_tx.trn_symbols(1024, "call")
+        trn, sc = v34_tx.trn_symbols(P3_CALL_TRN_SYMBOLS, "call")
         last_i = v34_tx.trn_last_rotation(trn, 4)
         self._j_sc, self._j_z = sc, last_i
         self._unit_states: list = []
@@ -911,6 +1005,14 @@ class V34Caller:
         # Earliest rx sample worth searching for the answerer's phase-4 S->S-bar: just past the
         # phase-3 S/PP we locked in phase3_rx, so the phase-3 transition itself cannot match.
         self._p3_search_lo = self.info1c_sent_t + self._p3.lag + int(0.5 * FS)
+        # The answerer sends its phase-4 S only after our phase-3 J, which
+        # follows our S, S-bar, PP and TRN. Nothing in the receive stream
+        # before that can be its S. Without this bound the answerer's own
+        # J-to-silence edge, when it stops J on hearing our S, matched as an
+        # S/S-bar flip about 140 ms after we started; J-prime then cut our PP
+        # and TRN short.
+        self._p4_s_earliest = self.p3_tx_started + int(
+            (128 + 16 + 288 + P3_CALL_TRN_SYMBOLS) / self.call_baud * FS)
         self._ev("transmitting S, S-bar, PP, TRN, J")
 
     def _fill_j(self, qam) -> None:
@@ -944,6 +1046,7 @@ class V34Caller:
         hi = len(self._rx)
         if lo is None:
             return
+        earliest = getattr(self, "_p4_s_earliest", None)
         step = int(0.25 * FS)
         # Scan newest -> oldest so the most recent transition wins. Scanning forward would latch an
         # older match: that regressed bcm and ess, which previously took the latest flip because the
@@ -965,7 +1068,8 @@ class V34Caller:
             # This and v34_ans._start_phase4 sending S-bar only after the caller's J' are one change.
             # The caller half alone reaches data mode but fails the loopback, because the answerer was
             # pushing S + S-bar + TRN as a single block and was not listening for J' at that point.
-            if res is not None and res[0] in ("S", "flip"):
+            if (res is not None and res[0] in ("S", "flip")
+                    and (earliest is None or start + res[1] >= earliest)):
                 what = "S -> S-bar transition" if res[0] == "flip" else "S"
                 self._ev(f"answerer {what} detected at rx sample {start + res[1]}; "
                          f"sending J-prime then TRN")
@@ -1125,6 +1229,11 @@ class V34Caller:
             if len(x) < int((16 + 700 + 120) * spl):
                 return
             R = v34_rx.Phase3Rx(self.ans_baud, self.ans_fc, "answer")
+            # This receiver's baseband buffer is self._rx[x0:], while RTP
+            # concealment ranges are stored in the caller's absolute rx_t
+            # coordinates. Keep the slice origin attached from construction;
+            # data-phase streaming sets it later, but Phase-4 TRN needs it now.
+            R._pcm_source_offset = x0
             # Our J requests the answerer's phase-4 constellation. Its J
             # independently requests ours; the two preferences may differ.
             c = self._rx_p4_c
@@ -1142,6 +1251,12 @@ class V34Caller:
             self._p4R, self._p4_x0 = R, x0
             # TRN is 16 symbols after that, since S-bar is 16T.
             self._p4rcv = v34_rx.Phase4Receiver(R, 16, constellation=c)
+            # RTP gaps can arrive during the S-bar search, before this
+            # receiver (and its transport guard) exists. note_concealed()
+            # retained their absolute RX sample spans; apply them before the
+            # first Phase-4 TRN window can train the timing/equalizer loops.
+            from v34_transport import register_concealed_ranges
+            register_concealed_ranges(self, self._concealed)
             if self.data_rate >= 24000 and not __import__("os").environ.get("V34_NOTL"):   # dense constellations need the timing loop (see README)
                 self._p4rcv.eq.ktp, self._p4rcv.eq.kti, self._p4rcv.eq.mu = 0.003, 5e-8, 0.1
             self._ev(f"phase 4: answerer S-bar/TRN found (corr {got['metric']:.2f}), equalizer mse {mse:.3f}")
@@ -1156,7 +1271,8 @@ class V34Caller:
             # TRN-end rescan (decode_after_trn) then dominates the CPU, which on the lcp-1/bbs-8 calls put the receive path
             # up to 3.5 s behind real time and delayed the retrain response by about 4 s (lab/V34_TUXEDOCAT_BBS8_CALL.md).
             return
-        rcv.feed(None)
+        rcv.feed(None, max_symbols=p4_feed_budget(
+            getattr(self, '_tracking_packet_poll', False), P4_RX_SYMBOL_BUDGET))
         q = getattr(self, "_qam", None)      # absent in the phase-4 watchdog tests
         if q is not None and q.fill is None and len(rcv.idx) >= P4_MP_BURNIN_SYMBOLS:
             if withhold_mp():
@@ -1187,24 +1303,33 @@ class V34Caller:
         if selected_mp is not None and (self.mp_ans is None or
                 any(self.mp_ans.get(k) != v for k, v in selected_mp.items() if k != "ack")):
             if self.e_sent:
-                self.failed_reason = "peer changed MP parameters after E"
-                self.stage = "failed"
-                return
-            self.mp_ans = dict(selected_mp)
-            self._mp_ack = 1
-            try:
-                self._prepare_data_mode()
-            except ValueError as exc:
-                self.failed_reason = str(exc)
-                self.stage = "failed"
-                return
-            self._ev(f"answerer TRN length {rcv.trn_end}; MP received: {frames[0]}")
-            self.stage = "p4_mp"
+                if (v34_negotiation.tolerate_post_e_mp_update()
+                        and v34_negotiation.is_precoder_only_mp_update(
+                            self.mp_ans or {}, selected_mp)):
+                    self._ev("peer changed MP precoder after local E; keeping negotiated profile (opt-in)")
+                    selected_mp = None
+                else:
+                    self.failed_reason = "peer changed MP parameters after E"
+                    self.stage = "failed"
+                    return
+            else:
+                self.mp_ans = dict(selected_mp)
+                self._mp_ack = 1
+                try:
+                    self._prepare_data_mode()
+                except ValueError as exc:
+                    self.failed_reason = str(exc)
+                    self.stage = "failed"
+                    return
+                self._ev(f"answerer TRN length {rcv.trn_end}; MP received: {frames[0]}")
+                self.stage = "p4_mp"
         if selected_mp is not None:
             self.mp_ans = {**(self.mp_ans or {}), **selected_mp}
         got_ack = mp_acknowledged(frames)
         if got_ack and not self.e_sent:
-            self._ev(f"answerer MP' / E received ({len(frames)} frames): sending E then data")
+            progress_frame = v34_mp.progress_frame_name(frames)
+            label = progress_frame or "MP-ACK1/E"
+            self._ev(f"answerer {label} received ({len(frames)} frames); sending local E then data")
             self.e_sent = True
         if rcv.b1_symbol is not None and self._rx_b1 is None:
             self._rx_b1 = rcv.b1_symbol
@@ -1212,24 +1337,68 @@ class V34Caller:
             self._ev(f"answerer E seen; B1 at symbol {self._rx_b1}")
 
     def _data_rx(self) -> None:
-        """Decode the answerer's data frames (B1 first) with the adaptive equalizer."""
+        """Decode the caller's data frames, optionally retaining bounded timings."""
+        profile_enabled = self._data_rx_stage_profile is not None
+        profile_started = time.thread_time_ns() if profile_enabled else 0
+        profile_stages = {}
+        profile_eq = (self._p4rcv.eq if self._p4rcv is not None else None)
+        profile_start_symbol = (None if profile_eq is None else profile_eq.k)
+
+        def record_profile(outcome: str, limit_value=None) -> None:
+            if not profile_enabled:
+                return
+            profile_stages['total_ns'] = time.thread_time_ns() - profile_started
+            if profile_eq is not None and profile_start_symbol is not None:
+                profile_stages['start_symbol'] = profile_start_symbol
+                profile_stages['end_symbol'] = profile_eq.k
+                profile_stages['symbols_processed'] = profile_eq.k - profile_start_symbol
+            if limit_value is not None:
+                profile_stages['symbol_limit'] = limit_value
+            profile_stages['outcome'] = outcome
+            self._data_rx_stage_profile.append(profile_stages)
+            if len(self._data_rx_stage_profile) > 128:
+                slowest = min(range(len(self._data_rx_stage_profile)),
+                              key=lambda i: self._data_rx_stage_profile[i]['total_ns'])
+                del self._data_rx_stage_profile[slowest]
+
         rate_controller = None
         if getattr(self, '_connected_rate_enabled', False):
             from v34_rate_live import controller
             rate_controller = controller(self, 'call')
             if rate_controller is not None and rate_controller.poll():
+                record_profile('rate-controller-return')
                 return
-        if self._rx_b1 is None or (self._rx_state is None and self.rx_t - self._p3_last < FS // 20):
+        b1_task_pending = getattr(self, '_b1_qualification_task', None) is not None
+        if self._rx_b1 is None or (self._rx_state is None and
+                self.rx_t - self._p3_last < FS // 20 and not b1_task_pending):
+            record_profile('await-b1')
             return
         self._p3_last = self.rx_t
         eq = self._p4rcv.eq
         R = self._p4R
         from v34_streaming import update_data_baseband, trim_data_pcm
+        stage_started = time.thread_time_ns() if profile_enabled else 0
         update_data_baseband(self,R,self._p4_x0)
+        if profile_enabled:
+            profile_stages['update_baseband_ns'] = time.thread_time_ns() - stage_started
         rate = self.rx_rate
         if self._rx_state is None:
-            if not v34_receive.initialize(self, eq, "answer", self.ans_baud):
+            stage_started = time.thread_time_ns() if profile_enabled else 0
+            if not v34_receive.initialize(self, eq, "answer", self.ans_baud,
+                    capture_budget=v34_receive.configured_b1_capture_budget(),
+                    staged=os.environ.get('V34_B1_QUALIFY_STAGED', '1') != '0'):
+                if profile_enabled:
+                    profile_stages['initialize_ns'] = time.thread_time_ns() - stage_started
+                record_profile('await-b1')
                 return
+            if profile_enabled:
+                profile_stages['initialize_ns'] = time.thread_time_ns() - stage_started
+            # Leave buffered post-B1 symbols for the next media tick; staged
+            # qualification and data decoding must not share one callback.
+            if hasattr(self, '_b1_incremental_just_completed'):
+                del self._b1_incremental_just_completed
+            record_profile('b1-qualified')
+            return
         st = self._rx_state
         drx = st["drx"]
         vit = st.get("vit")
@@ -1252,6 +1421,12 @@ class V34Caller:
                 if len(st["pend"])==8:
                     self._data_frame(st,st["pend"],drx);st["pend"]=[]
         limit = rate_controller.limit(eq.available()) if rate_controller is not None else eq.available()
+        # Keep a receive backlog from monopolizing one caller-side data tick.
+        # The qualified default is 96 symbols; an explicit zero restores the
+        # historical unbounded drain.
+        if V34_DATA_RX_SYMBOL_BUDGET:
+            limit = min(limit, eq.k + V34_DATA_RX_SYMBOL_BUDGET)
+        stage_started = time.thread_time_ns() if profile_enabled else 0
         while eq.k < limit:
             y = eq.step(decide=self._decide)
             if vit is not None:
@@ -1283,9 +1458,15 @@ class V34Caller:
         if pending_intervals:
             vit.feed_many(pending_intervals);publish_decided()
         if vit is not None and not block_size:publish_decided()
+        if profile_enabled:
+            profile_stages['equalize_and_trellis_ns'] = time.thread_time_ns() - stage_started
+        stage_started = time.thread_time_ns() if profile_enabled else 0
         v34_receive.observe_quality(self, st, eq)
         self._async_bytes(st)
         trim_data_pcm(self,eq,self._p4_x0)
+        if profile_enabled:
+            profile_stages['postprocess_ns'] = time.thread_time_ns() - stage_started
+        record_profile('data', limit)
 
     def _data_frame(self, st, syms, drx) -> None:
         states = st.pop('pend_states', None)
