@@ -180,6 +180,7 @@ class V90DigitalPhase2FrameRx:
         self._base = 0
         self._total = 0
         self._until_scan = 0
+        self._scanned_through = 0
         # A scan window can contain several genuine frames of the same kind.
         # Comparing only with the last returned start lets older frames be
         # emitted again on every later scan as the detector walks that window
@@ -222,6 +223,7 @@ class V90DigitalPhase2FrameRx:
         self._until_scan %= _SCAN_STRIDE
         if not kinds:
             return []
+        self._scanned_through = self._total
 
         # The shared INFO API's role labels denote carrier direction/frequency,
         # not the V.90 modem's calling/answering role: "answer" is 2400 Hz.
@@ -305,6 +307,11 @@ class V90DigitalPhase2FrameRx:
     @property
     def samples_seen(self) -> int:
         return self._total
+
+    @property
+    def scanned_through(self) -> int:
+        """End of the audio the most recent decoding scan covered."""
+        return self._scanned_through
 
 
 class V90DigitalPhase2SignalRx:

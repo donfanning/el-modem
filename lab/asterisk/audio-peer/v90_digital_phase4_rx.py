@@ -116,6 +116,13 @@ class V90DigitalPhase4Receiver:
             del self._pending[:6]
         return output
 
+    def discard_frame(self) -> None:
+        """Drop codewords that would not decode (an RTP erasure, say), so decoding resumes after them.
+
+        The self-synchronising descrambler is not stepped and recovers within its 23-bit span.
+        """
+        self._pending.clear()
+
     def _decode_frame(self, points: Sequence[int], signs: Sequence[int]) -> list[int]:
         sign_inputs = [int(signs[0]) ^ self._previous_sign5]
         sign_inputs.extend(int(signs[index]) ^ int(signs[index - 1])

@@ -14,6 +14,10 @@ from v34_realtime import RealtimeStats
 
 
 class TimingTraceTests(unittest.TestCase):
+    def test_endpoint_annotation_is_unknown_for_partial_test_session(self):
+        session = object.__new__(OnlineAudioSession)
+        self.assertEqual(session._endpoint_name(), 'unknown')
+
     def test_opt_in_timer_setting_survives_supervisor_worker_scrub(self):
         settings = worker_passthrough_environment({
             'EL_MODEM_WINDOWS_TIMER_RESOLUTION_MS': '1',
@@ -117,6 +121,43 @@ class TimingTraceTests(unittest.TestCase):
         finally:
             release.set();session.stop()
         self.assertFalse(session._tx_watchdog.is_alive())
+
+    def test_sender_deadline_is_measured_at_packet_egress(self):
+        sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        sink=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        self.addCleanup(sock.close);self.addCleanup(sink.close)
+        sink.bind(('127.0.0.1',0));sink.settimeout(1)
+        with patch.dict('os.environ',{'EL_MODEM_TIMING_TRACE':'1'}):
+            session=OnlineAudioSession(sock,sink.getsockname(),'originate','answer')
+        entered=threading.Event();release=threading.Event()
+        def delayed_samples(count):
+            if not entered.is_set():
+                entered.set()
+                release.wait(.5)
+            return [0]*count
+        session.transmitter.samples=delayed_samples
+        session.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            time.sleep(.08)
+            release.set()
+            packet,_=sink.recvfrom(2048)
+            self.assertEqual(len(packet),172)
+            metrics=session.realtime.report()['measurements']
+            self.assertGreater(metrics['startup_sender_lateness_seconds']['maximum'],.04)
+            event=session.timing_trace.report()['events']['sender_late']['first']
+            self.assertGreater(event['score'],.04)
+            self.assertIn('sent_at',event['row'])
+            self.assertGreater(event['row']['send_lateness_seconds'],.04)
+        finally:
+            release.set();session.stop()
+
+    def test_timing_trace_reports_rtp_packet_gap_over_two_frames(self):
+        trace=TimingTrace()
+        trace.threshold('tx_packet_gap',.080,dict(sequence=546,packet_gap_seconds=.080))
+        event=trace.report()['events']['tx_packet_gap']['first']
+        self.assertEqual(event['row']['sequence'],546)
+        self.assertEqual(trace.report()['thresholds_seconds']['tx_packet_gap'],.040)
 
     def test_startup_queue_does_not_hide_worst_data_queue(self):
         trace=TimingTrace()

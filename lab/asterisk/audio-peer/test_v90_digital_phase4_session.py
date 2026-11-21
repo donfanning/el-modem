@@ -38,12 +38,12 @@ class V90DigitalPhase4SessionTests(unittest.TestCase):
         # Ri(24T) + TRN2d(2040T) drain before the first MP is generated.
         self.assertEqual(len(session.read_g711(2064)), 2064)
         self.assertEqual(session.transmitter.mp_frames_sent, 0)
-        self.assertEqual(len(session.read_g711(30)), 30)
+        self.assertEqual(len(session.read_g711(36)), 36)  # MP, filled to 6 frames
 
         cp = _profile("cp")
         self.assertTrue(session.receive_profile(cp))
         self.assertEqual(session.state, session.transmitter.WAIT_CP_PRIME)
-        self.assertEqual(len(session.read_g711(30)), 30)  # MP′
+        self.assertEqual(len(session.read_g711(36)), 36)  # MP′
 
         cp_prime = _profile("cp", ack=1, start_bit=9876)
         self.assertTrue(session.receive_profile(cp_prime))
@@ -61,6 +61,27 @@ class V90DigitalPhase4SessionTests(unittest.TestCase):
             return [1] * count
         self.assertEqual(len(session.read_g711(160, data_bit_source=bit_source)), 160)
         self.assertEqual(requested, [27 * 22])  # 27 six-symbol frames cover 160 samples.
+
+    def test_rbar_i_lands_on_the_phase3_96t_grid(self):
+        # SmartLink, 2026-11-18: R-bar-i off this grid stalled CPt or broke
+        # the downstream at data start.
+        from v90_digital_phase4 import rbar_i_codewords, ri_codewords
+        for offset, first_read in ((1236, 250), (1200, 160), (1254, 192), (0, 400)):
+            with self.subTest(offset=offset, first_read=first_read):
+                session = V90DigitalAnswererPhase4Session(
+                    uinfo=78, law="pcmu", constellation=4)
+                session.start(grid_offset=offset)
+                sent = session.read_g711(first_read)
+                self.assertTrue(session.receive_profile(_profile("cpt", law="pcmu")))
+                sent += session.read_g711(300)
+                at = next(i for i in range(first_read, len(sent))
+                          if (offset + i) % 96 == 48)
+                ri = ri_codewords(78, "pcmu", duration_symbols=24) * 40
+                self.assertEqual(sent[:at], ri[:at])
+                self.assertEqual(sent[at:at + 24], rbar_i_codewords(78, "pcmu"))
+        with self.assertRaisesRegex(ValueError, "6-symbol"):
+            V90DigitalAnswererPhase4Session(
+                uinfo=78, law="pcmu", constellation=4).start(grid_offset=1237)
 
     def test_e_can_arrive_before_mp_prime_and_is_latched(self):
         session = V90DigitalAnswererPhase4Session(

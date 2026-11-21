@@ -86,7 +86,9 @@ class V90DigitalPhase4Transmitter:
         fields = dict(self._mp_fields)
         fields["mp_type"] = self.mp_type
         fields["ack"] = int(self.state == self.WAIT_CP_PRIME)
-        bits = build_mp(**fields)
+        # Whole mapper frames, so Ed after the last MP′ starts on a frame.
+        # SmartLink missed Ed whenever an unfilled MP′ ended mid-frame.
+        bits = build_mp(**fields, frame_bits=self.encoder.s + self.encoder.k)
         output = self.encoder.encode_bits(bits)
         if self.state == self.WAIT_CP:
             self.mp_frames_sent += 1
@@ -151,10 +153,12 @@ class V90DigitalPhase4Transmitter:
         assert self.encoder is not None and self.cp_profile is not None
         frame_bits = self.encoder.s + self.encoder.k
         ed = self.encoder.encode_bits([0] * (2 * frame_bits))
+        ed += self.encoder.flush_lookahead()
 
         self.data_encoder = V90DigitalPhase4Encoder(self.cp_profile, self.law)
         b1d_bits = [1] * (48 * (self.data_encoder.s + self.data_encoder.k))
         b1d = self.data_encoder.encode_bits(b1d_bits)
+        b1d += self.data_encoder.flush_lookahead()
         if len(b1d) != 48 * 6:
             raise RuntimeError("B1d encoder did not produce exactly 48 data frames")
         self.state = self.DATA_READY

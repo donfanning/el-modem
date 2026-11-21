@@ -44,7 +44,10 @@ class V90AnaloguePhase2FrameRx:
         self._total = 0
         self._until_scan = 0
         self._rx_next: int | None = None
-        self._last_at: dict[str, int] = {}
+        # Start positions already reported, per kind. A window can hold several
+        # valid frames (a peer repeating INFO0d), and each scan decodes them
+        # all again, so every reported frame is remembered until it leaves.
+        self._reported_at: dict[str, list[int]] = {}
 
     def feed(self, samples, *, rx_at: int,
              kinds: tuple[str, ...] | None = None
@@ -75,6 +78,10 @@ class V90AnaloguePhase2FrameRx:
             return []
         self._until_scan %= _SCAN_STRIDE
 
+        for kind, reported in self._reported_at.items():
+            self._reported_at[kind] = [
+                at for at in reported
+                if at >= self._base - _DUPLICATE_SAMPLES]
         found = []
         for kind, bits, decoder in (
             ("info0d", v90.INFO0D_BITS,
@@ -87,10 +94,11 @@ class V90AnaloguePhase2FrameRx:
             frames = decoder(self._pending)
             for frame in frames:
                 at = self._base + int(round(frame["_start_sample"]))
-                previous = self._last_at.get(kind)
-                if previous is not None and abs(at - previous) <= _DUPLICATE_SAMPLES:
+                reported = self._reported_at.setdefault(kind, [])
+                if any(abs(at - previous) <= _DUPLICATE_SAMPLES
+                       for previous in reported):
                     continue
-                self._last_at[kind] = at
+                reported.append(at)
                 complete = at + int(round(bits * FS / v34_info.BAUD))
                 fields = {key: value for key, value in frame.items()
                           if not key.startswith("_")}

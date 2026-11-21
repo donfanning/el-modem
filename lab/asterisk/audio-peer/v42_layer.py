@@ -69,6 +69,8 @@ class V42Layer:
     # line has a longer round trip, or whose receive path runs behind real time, sets this so the ADP can still arrive inside the
     # window (dialup.world, 2026-10-07: ADP arrived 0.8-1.1 s after connect, the 0.73 s window had already closed on 2 of 4 calls).
     v42_detect_extra_seconds = 0.0
+    # The round trip the modulation measured, seconds, or None: seeds LAPM's adaptive T401 (V42_T401_ADAPTIVE).
+    v42_rtt_hint_seconds = None
 
     def _v42_setup(self) -> None:
         self._v42 = None
@@ -92,7 +94,7 @@ class V42Layer:
         self._v42_compression_recovery = False
         self._v42_recovery_stage: str | None = None
         self._v42_recovery_deadline = 0
-        self._v42_recovery_peer_busy_at: float | None = None
+        self._v42_recovery_peer_busy_at: int | None = None     # line bit (_v42_bits) at which the peer's RNR began
         self._v42_local_release = False
         self._v42_recovery_timeout_seconds = 8.0
         self._v42_recovery_hold_limit = 1024 * 1024
@@ -125,7 +127,8 @@ class V42Layer:
                   frame_size: int = 0, window: int = 0, rate: int | None = None, detect: bool = True,
                   compression: tuple[int, int, int] | None = None, protocol: str = "lapm",
                   mnp_level: int = 4, xid_fallback: bool | None = None,
-                  compression_recovery: bool = False) -> None:
+                  compression_recovery: bool = False,
+                  default_parameters: bool | None = None) -> None:
         """``protocol`` "lapm" is V.42 proper (ODP/ADP detection, then LAPM); "mnp" is the Annex A alternative
         procedure (MNP 2-4 class, see mnp_link.py): the originator sends its link request at once, no detection."""
         from v42_lapm import V42Link
@@ -159,7 +162,9 @@ class V42Layer:
             else:
                 self._v42 = V42Link(calling_party, detect=detect, bit_rate=rate, frame_size=frame_size,
                                     window=window, compression=compression, t400=0.75 + extra,
-                                    xid_fallback=xid_fallback)
+                                    xid_fallback=xid_fallback,
+                                    default_parameters=default_parameters,
+                                    rtt_hint=self.v42_rtt_hint_seconds)
             self._v42_bits = 0
             self._v42_detect_deadline = int(detect_seconds * rate) if detect else 10 ** 9
             self._v42_establish_deadline = int((detect_seconds + establish_seconds) * rate)
@@ -308,6 +313,21 @@ class V42Layer:
                 return (pending + len(self._v42_hold)) * 10
         return 0
 
+    def v42_flow_state(self) -> tuple[int, int, int] | None:
+        """(unsent bits, XOFF high water, XON low water) for DTE flow control while LAPM is up, else None.
+
+        Only data not yet framed counts: frames in flight are bounded by the window k, and counting them
+        (as v42_pending_bits does) held a 1.1 s round trip to ~30 bytes in flight under &K4. Two full
+        frames of backlog keep N401-sized I frames and the window full."""
+        from v42_lapm import V42Link
+        with self._v42_lock:
+            link = self._v42
+            if self.v42_mode != "lapm" or type(link) is not V42Link:
+                return None
+            unsent = len(link._txq) + len(link._post_break_txq) + sum(len(c) for c in link._cq)
+            frame = max(int(link.tx_n401), 1) * 10
+            return unsent * 10, 2 * frame, frame
+
     def v42_set_local_busy(self, busy: bool) -> None:
         """Throttle an established LAPM peer while DTE receive flow is paused."""
         from v42_lapm import V42Link
@@ -441,12 +461,14 @@ class V42Layer:
                 if state != "lapm":
                     self._v42_recovery_fail(f"LAPM left connected state while draining ({state})")
                     return
-                now = time.monotonic()
+                # Timed in line bits, like T401 itself: a receive path running behind real time (or a test
+                # pumping bits faster than it) must not stretch or shrink the wait.
+                now = self._v42_bits
                 if link._peer_busy:
                     if self._v42_recovery_peer_busy_at is None:
                         self._v42_recovery_peer_busy_at = now
                     elif now - self._v42_recovery_peer_busy_at >= max(
-                            0.1, link._t401_bits / max(link.rate, 1)):
+                            link.rate // 10, link._t401_bits):
                         # A persistent RNR during recovery can mean that both
                         # endpoints have C-ERROR and are waiting for the
                         # opposite data direction to drain. Wait one T401 for

@@ -1110,6 +1110,18 @@ def _exchange(a, b, seconds=16):
 
 
 @unittest.skipIf(numpy is None, "numpy not installed")
+class V42DetectWindowTests(unittest.TestCase):
+    def test_t400_extension_is_opt_in(self):
+        import os
+        from unittest.mock import patch
+        m = v22.V22Modem(True, 2400, profile="v22bis")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("V42_DETECT_EXTRA_S", None)
+            self.assertEqual(m.v42_detect_extra_seconds, 0.0)              # plain 0.75 s T400 by default
+            os.environ["V42_DETECT_EXTRA_S"] = "2.5"
+            self.assertEqual(m.v42_detect_extra_seconds, 2.5)
+
+
 class SpandspInterop(unittest.TestCase):
     """SpanDSP is only a test reference; skipped where its library is not built."""
 

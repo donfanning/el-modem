@@ -1,8 +1,9 @@
 """Symmetric RTP destination latching; no network or call needed."""
+import os
 import socket
 import struct
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from modem_dce import OnlineAudioSession
 
@@ -83,7 +84,9 @@ class SymmetricRtpTests(unittest.TestCase):
             sock.close()
 
     def test_ssrc_change_requires_contiguous_sequence_and_timestamp(self):
-        session, sock = make_session()
+        # The strict policy, now opt-in (EL_MODEM_RTP_SSRC_RESTART=contiguous).
+        with patch.dict(os.environ, {"EL_MODEM_RTP_SSRC_RESTART": "contiguous"}):
+            session, sock = make_session()
         try:
             addr = ("192.0.2.21", 10004)
             for seq in range(3):
@@ -96,6 +99,72 @@ class SymmetricRtpTests(unittest.TestCase):
             self.assertEqual(session._rtp_peer, (addr, struct.pack('!I', 1234)))
         finally:
             sock.close()
+
+    def test_default_requalifies_a_restarted_stream(self):
+        # Confirmed live 2026-11-21: on some calls to a Patton dial-in line the stream to us restarts SSRC/sequence ~2 s
+        # into the answer tone; the contiguous-only rule then dropped 2134 packets and the call went deaf.
+        os.environ.pop("EL_MODEM_RTP_SSRC_RESTART", None)
+        session, sock = make_session()
+        try:
+            self.assertTrue(session._rtp_ssrc_requalify)
+        finally:
+            sock.close()
+
+    def test_contiguous_policy_counts_the_rejected_restart_packets(self):
+        with patch.dict(os.environ, {"EL_MODEM_RTP_SSRC_RESTART": "contiguous"}):
+            session, sock = make_session()
+        try:
+            addr = ("192.0.2.21", 10004)
+            for seq in range(3):
+                session.note_rtp_source(addr, self.packet(seq), 10.0 + seq * .02)
+            for seq in range(100, 106):
+                session.note_rtp_source(addr, self.packet(seq, 5678), 11.0 + seq * .02)
+            session.note_rtp_source((addr[0], 10008), self.packet(7), 13.0)
+            self.assertEqual(session._rtp_counts['rejected_ssrc_restart'], 6)
+            self.assertEqual(session._rtp_counts['rejected_foreign_source'], 1)
+        finally:
+            sock.close()
+
+    def test_requalify_admits_a_discontinuous_restart_from_the_pinned_endpoint(self):
+        """A Patton dial-in pool: the far stream restarts ~2 s into the answer tone on some calls (confirmed 2026-11-21)."""
+        with patch.dict(os.environ, {"EL_MODEM_RTP_SSRC_RESTART": "requalify"}):
+            session, sock = make_session()
+        try:
+            addr = ("192.0.2.21", 10004)
+            for seq in range(3):
+                session.note_rtp_source(addr, self.packet(seq), 10.0 + seq * .02)
+            restart = [struct.pack('!BBHII', 0x80, 0, 4000 + i, 777777 + 160 * i, 5678) + bytes(160)
+                       for i in range(3)]
+            self.assertEqual(session.note_rtp_source(addr, restart[0], 10.10), [])
+            self.assertEqual(session.note_rtp_source(addr, restart[1], 10.12), [])
+            accepted = session.note_rtp_source(addr, restart[2], 10.14)
+            self.assertEqual([row[0] for row in accepted], restart)
+            self.assertEqual(session._rtp_peer, (addr, struct.pack('!I', 5678)))
+            # The address/port stays pinned, and a gap inside the new stream's probation still restarts it.
+            for seq in range(3):
+                self.assertEqual(session.note_rtp_source((addr[0], 10008), self.packet(seq, 9999),
+                                                         10.2 + seq * .02), [])
+        finally:
+            sock.close()
+
+    def test_requalify_needs_three_consecutive_packets_of_the_new_stream(self):
+        with patch.dict(os.environ, {"EL_MODEM_RTP_SSRC_RESTART": "requalify"}):
+            session, sock = make_session()
+        try:
+            addr = ("192.0.2.21", 10004)
+            for seq in range(3):
+                session.note_rtp_source(addr, self.packet(seq), 10.0 + seq * .02)
+            for seq, at in ((500, 10.1), (502, 10.12), (503, 10.14)):
+                self.assertEqual(session.note_rtp_source(addr, self.packet(seq, 5678), at), [])
+            self.assertEqual(session._rtp_peer, (addr, struct.pack('!I', 1234)))
+            self.assertEqual(len(session.note_rtp_source(addr, self.packet(504, 5678), 10.16)), 3)
+        finally:
+            sock.close()
+
+    def test_restart_policy_rejects_unknown_values(self):
+        with patch.dict(os.environ, {"EL_MODEM_RTP_SSRC_RESTART": "loose"}):
+            with self.assertRaises(ValueError):
+                make_session()
 
     def test_rejects_garbage(self):
         session, sock = make_session()

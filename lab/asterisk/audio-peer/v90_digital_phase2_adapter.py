@@ -22,6 +22,8 @@ from v90_digital_phase2_rx import (
     V90DigitalPhase2SignalRx,
 )
 
+FS = 8000
+
 
 @dataclass(frozen=True)
 class Phase2DeadlineMiss:
@@ -56,6 +58,7 @@ class V90DigitalPhase2Adapter:
         self.event_trace: list[dict] = []
         self.signal_trace: list[dict] = []
         self._pending_tone_a_reversals: list[Phase2RxEvent] = []
+        self._pending_early_tone_a: list[Phase2RxEvent] = []
         self.info1a_complete_rx_sample: int | None = None
 
     def start(self, media_at: int) -> list[Phase2Action]:
@@ -77,7 +80,7 @@ class V90DigitalPhase2Adapter:
         """Feed one contiguous receive chunk and return newly scheduled actions."""
         if not self.started:
             raise RuntimeError("start the Phase 2 adapter before feeding audio")
-        if rx_at < 0 or tx_now < 0:
+        if tx_now < 0:
             raise ValueError("sample positions must be nonnegative")
         x = np.asarray(samples, dtype=float).reshape(-1)
         if not np.all(np.isfinite(x)):
@@ -115,13 +118,35 @@ class V90DigitalPhase2Adapter:
         frame_started = time.thread_time_ns() if self.trace_events else 0
         detected.extend(self.frames.feed(x, kinds=self._expected_frame_kinds()))
         frame_cpu_ns = time.thread_time_ns() - frame_started if self.trace_events else 0
-        # Detection completion order, rather than list append order, preserves
-        # state transitions when a frame and a waveform event finish together.
-        detected.sort(key=lambda event: (event.complete_at, event.at, event.kind))
+        # Protocol meaning follows receive onset. In particular, an INFO0a
+        # frame can start before its 2400 Hz carrier qualifies as Tone A but
+        # finish decoding afterward; route that frame first so its modulated
+        # carrier is not mistaken for the §9.2.1.2.1 retry condition.
+        detected.sort(key=lambda event: (event.at, event.complete_at, event.kind))
 
         actions: list[Phase2Action] = []
         route_started = time.thread_time_ns() if self.trace_events else 0
         for event in detected:
+            after_frame: list[Phase2RxEvent] = []
+            if (event.kind == "tone_a"
+                    and self.controller.state == self.controller.WAIT_INFO0A
+                    and self.controller.info0a is None):
+                # A continuous 2400 Hz Tone A detector can qualify the
+                # unmodulated carrier while the CRC scanner is still decoding
+                # an INFO0a carried on that same carrier. Hold briefly so an
+                # overlapping valid frame wins; a genuine early Tone A is
+                # released once the frame scan has had time to complete.
+                self._pending_early_tone_a.append(event)
+                continue
+            if event.kind == "info0a" and self._pending_early_tone_a:
+                pending, self._pending_early_tone_a = (
+                    self._pending_early_tone_a, [])
+                for tone in pending:
+                    if tone.at < event.at:
+                        actions.extend(self._deliver(tone, tx_now))
+                    elif tone.at >= event.complete_at:
+                        after_frame.append(tone)
+                    # A tone onset inside INFO0a is its carrier, not recovery.
             if (event.kind == "tone_a_reversal"
                     and self.controller.info0a is None):
                 # The phase detector can confirm a real reversal before the
@@ -134,6 +159,9 @@ class V90DigitalPhase2Adapter:
                 continue
 
             actions.extend(self._deliver(event, tx_now))
+            if event.kind == "info0a":
+                for tone in after_frame:
+                    actions.extend(self._deliver(tone, tx_now))
             if event.kind == "info0a" and self._pending_tone_a_reversals:
                 held, self._pending_tone_a_reversals = (
                     self._pending_tone_a_reversals, [])
@@ -143,6 +171,18 @@ class V90DigitalPhase2Adapter:
                     # end can be the subsequent Tone A phase reversal.
                     if reversal.at >= event.complete_at:
                         actions.extend(self._deliver(reversal, tx_now))
+        if (self.controller.state == self.controller.WAIT_INFO0A
+                and self.controller.info0a is None):
+            pending, self._pending_early_tone_a = (
+                self._pending_early_tone_a, [])
+            for event in pending:
+                # Scans run every 200 ms, so audio received is not audio
+                # scanned: release only once a scan has covered the end of any
+                # INFO0a whose carrier could have qualified as this Tone A.
+                if self.frames.scanned_through >= event.at + FS // 5:
+                    actions.extend(self._deliver(event, tx_now))
+                else:
+                    self._pending_early_tone_a.append(event)
         if trace_row is not None:
             trace_row.update(
                 signal_cpu_ms=signal_cpu_ns / 1_000_000.0,
@@ -152,6 +192,40 @@ class V90DigitalPhase2Adapter:
             self.signal_trace.append(trace_row)
             if len(self.signal_trace) > 320:
                 del self.signal_trace[:-320]
+        return actions
+
+    def prime_info0a_preroll(self, samples, *, rx_at: int,
+                             tx_now: int) -> list[Phase2Action]:
+        """Back-search a bounded pre-Phase-2 receive window for INFO0a.
+
+        V.8 can finish after the analogue peer has already sent INFO0a. The
+        engine is selected at that boundary, so retain the receive origin and
+        feed this history to the CRC frame decoder before accepting live PCM.
+        Signal detections are suppressed during the back-search; only a
+        CRC-valid INFO0a is delivered to the controller.
+        """
+        if not self.started:
+            raise RuntimeError("start the Phase 2 adapter before priming receive history")
+        if self.rx_origin is not None or self.rx_next is not None:
+            raise RuntimeError("receive history can only be primed once before live PCM")
+        if rx_at >= 0 or tx_now < 0:
+            raise ValueError("INFO0a pre-roll must precede the live receive origin")
+        x = np.asarray(samples, dtype=float).reshape(-1)
+        if not len(x) or not np.all(np.isfinite(x)):
+            raise ValueError("INFO0a pre-roll must contain finite samples")
+        self.rx_origin = int(rx_at)
+        self.rx_next = int(rx_at) + len(x)
+        self.signals.feed(x, expect="none")
+        detected = self.frames.feed(x, kinds=("info0",))
+        actions: list[Phase2Action] = []
+        for event in detected:
+            if event.kind != "info0a":
+                continue
+            # One initial INFO0a is expected in the short handoff window.
+            # Stop at the first CRC-valid frame; subsequent frames belong to
+            # live recovery and must be handled in normal timestamp order.
+            actions.extend(self._deliver(event, tx_now))
+            break
         return actions
 
     def _expected_frame_kinds(self) -> tuple[str, ...]:
@@ -280,7 +354,9 @@ class V90DigitalPhase2Adapter:
                 return "tone_a_reversal_after_l2", event.fields
             return None
         if event.kind == "tone_a":
-            if state in (self.controller.WAIT_A_AFTER_PROBE, self.controller.TX_PROBE):
+            if state in (self.controller.WAIT_INFO0A,
+                         self.controller.WAIT_A_AFTER_PROBE,
+                         self.controller.TX_PROBE):
                 return event.kind, event.fields
             if state == self.controller.WAIT_INFO1A_RETRAIN:
                 return event.kind, event.fields

@@ -26,6 +26,7 @@ class Phase2Action:
     value: int | None = None
     latest: int | None = None
     after: str | None = None
+    interrupt_l2: bool = False
 
 
 class V90DigitalPhase2Controller:
@@ -54,7 +55,17 @@ class V90DigitalPhase2Controller:
 
     def __init__(self, *, rtd_samples: int = 0, max_l2_samples: int = 4000,
                  info1a_timeout_retrain: bool = False,
-                 l2_echo_tolerance_samples: int = 0):
+                 l2_echo_tolerance_samples: int = 0,
+                 l2_echo_window_policy: str = "require"):
+        """Create the Phase 2 controller.
+
+        ``advance-after-window`` implements §9.2.1.1.7 for direct digital
+        paths that have no local hybrid echo: after timely Tone A, INFO1d is
+        sent when the 550 ms + RTD observation window expires even if no L2
+        echo was detected. ``on-tone-a`` sends INFO1d as soon as Tone A is
+        detected, cutting off the local L2 at the INFO1d boundary. The
+        conservative ``require`` policy remains the default for hybrid paths.
+        """
         if rtd_samples < 0 or max_l2_samples < 0 or l2_echo_tolerance_samples < 0:
             raise ValueError("sample durations must be nonnegative")
         self.rtd_samples = int(rtd_samples)
@@ -66,6 +77,12 @@ class V90DigitalPhase2Controller:
         # by a sample or more with no change in the line. 0 (the default) keeps the
         # limits exact; a profile may allow a few samples of measurement slack.
         self.l2_echo_tolerance_samples = int(l2_echo_tolerance_samples)
+        if l2_echo_window_policy not in (
+                "require", "advance-after-window", "on-tone-a"):
+            raise ValueError(
+                "L2 echo window policy must be 'require', 'advance-after-window' "
+                "or 'on-tone-a'")
+        self.l2_echo_window_policy = l2_echo_window_policy
         self.max_l2_samples = min(int(max_l2_samples), int(0.500 * FS))
         self.state = self.WAIT_INFO0A
         self.actions: list[Phase2Action] = []
@@ -78,6 +95,8 @@ class V90DigitalPhase2Controller:
         self._started = False
         self._tone_a_during_second_l2 = False
         self._second_l2_echo_complete_at: int | None = None
+        self._l2_echo_window_advanced = False
+        self.events: list[tuple[str, object]] = []
         self._tone_a_deadline_at: int | None = None
         self._second_initial_a_reversal_at: int | None = None
         self._missing_tone_a_reversal_deadline_at: int | None = None
@@ -86,6 +105,7 @@ class V90DigitalPhase2Controller:
         self._pending_retrain_a_reversal: tuple[int, dict] | None = None
         self.missing_tone_a_recovery_started = False
         self.retrain_response_started = False
+        self._info0a_retry_requested = False
 
     @property
     def done(self) -> bool:
@@ -152,6 +172,17 @@ class V90DigitalPhase2Controller:
             return self._begin_missing_tone_a_reversal_recovery(tx_now)
         if event == "info0a":
             self._on_info0a(at, payload or {})
+        elif event == "tone_a" and self.state == self.WAIT_INFO0A:
+            # §9.2.1.2.1: Tone A before a valid INFO0a means the analogue
+            # peer did not synchronize to our first INFO0d. Ask it to repeat
+            # INFO0a, keeping Tone B on the line after the response frame.
+            if self.info0a is None and not self._info0a_retry_requested:
+                self._info0a_retry_requested = True
+                self.actions.extend((
+                    Phase2Action(None, "info0d", 0,
+                                 after="current-info0d-complete"),
+                    Phase2Action(None, "tone_b", after="info0d-complete"),
+                ))
         elif (event == "retrain_tone_a_reversal"
               and self.state == self.WAIT_RETRAIN_TONE_B):
             # The analogue responder reverses Tone A after 50 ms, while our
@@ -192,13 +223,40 @@ class V90DigitalPhase2Controller:
             # the controller waits for the separate L2-echo condition.
             self._tone_a_deadline_at = None
             if self._second_l2_echo_complete_at is not None:
-                self._send_info1d(tx_now)
+                self._send_info1d(
+                    tx_now,
+                    interrupt_l2=self.l2_echo_window_policy == "on-tone-a")
+            elif (self.l2_echo_window_policy == "on-tone-a"
+                  and self.l2_started_at is not None
+                  and max(at, tx_now) >= self.l2_started_at):
+                send_at = max(tx_now, self.l2_started_at)
+                self.events.append(("l2-echo-window-ended-on-tone-a", {
+                    "at": send_at,
+                    "l2_started_at": self.l2_started_at,
+                    "tone_a_at": at,
+                }))
+                self._send_info1d(send_at, allow_missing_echo=True,
+                                  interrupt_l2=True)
+            elif (self.l2_echo_window_policy == "advance-after-window"
+                  and self.l2_started_at is not None
+                  and max(at, tx_now) >= self._l2_echo_deadline_at()):
+                # Tone A can be delivered by the detector after the echo
+                # observation window has elapsed, before the next timer tick.
+                # Advance on this event rather than leaving progress dependent
+                # on a later tick callback.
+                self._advance_after_l2_echo_window(tx_now)
         elif event == "tone_a_reversal_after_l2":
             self._on_l2_a_reversal(at, tx_now)
         elif event == "l2_echo_complete" and self.state == self.TX_PROBE:
             self._second_l2_echo_complete_at = at
             if self._tone_a_during_second_l2:
                 self._send_info1d(tx_now)
+        elif (event == "l2_echo_complete"
+              and self.state in (self.WAIT_INFO1A,
+                                 self.WAIT_INFO1A_RETRAIN)):
+            # The observation window is closed once INFO1d is sent. A late
+            # detector callback is stale input, not a protocol-state error.
+            pass
         elif event == "tone_a" and self.state == self.WAIT_INFO1A_RETRAIN:
             # V.90 §9.2.1.2.6: after the INFO1a deadline, Tone A requests a
             # retrain response under §9.5.1.2. The detector emits this only
@@ -231,12 +289,13 @@ class V90DigitalPhase2Controller:
         if self.state not in (self.WAIT_INFO0A, self.WAIT_A_REV2,
                               self.RX_PROBE, self.WAIT_RETRAIN_A_REV2):
             raise ValueError(f"INFO0a is invalid in state {self.state!r}")
-        repeated = self.info0a is not None
+        repeated = self.info0a is not None or self._info0a_retry_requested
         self.info0a = dict(payload)
         # The normal first INFO0a does not interrupt INFO0d/Tone B. Recovery
         # §9.2.1.2.1 repeats INFO0d with acknowledgement after a duplicate
         # INFO0a demonstrates that the first exchange was not synchronized.
         if repeated:
+            self._info0a_retry_requested = False
             if self.state in (self.WAIT_A_REV2, self.RX_PROBE):
                 # Recovery returns to §9.2.1.1.3: after the acknowledged
                 # INFO0d and resumed Tone B, the next Tone-A reversal is the
@@ -301,6 +360,7 @@ class V90DigitalPhase2Controller:
         # Every Phase 2 retry has a new local L2. Do not let the previous
         # attempt's echo timestamp or Tone-A observation qualify this one.
         self._second_l2_echo_complete_at = None
+        self._l2_echo_window_advanced = False
         self._tone_a_during_second_l2 = False
         nominal = at + int(.040 * FS)
         due = max(now, nominal)
@@ -335,6 +395,7 @@ class V90DigitalPhase2Controller:
         self._missing_tone_a_reversal_deadline_at = None
         self._tone_a_during_second_l2 = False
         self._second_l2_echo_complete_at = None
+        self._l2_echo_window_advanced = False
         self.missing_tone_a_recovery_started = True
         self.state = self.TX_PROBE
         return self.drain_actions()
@@ -371,7 +432,49 @@ class V90DigitalPhase2Controller:
             self.state = self.FAILED
             self._tone_a_deadline_at = None
             self.actions.append(Phase2Action(now, "retrain-timeout"))
+        if (self.state == self.TX_PROBE
+                and self._tone_a_during_second_l2
+                and self.l2_echo_window_policy == "on-tone-a"
+                and self._second_l2_echo_complete_at is None
+                and self.l2_started_at is not None
+                and now >= self.l2_started_at):
+            self.events.append(("l2-echo-window-ended-on-tone-a", {
+                "at": now,
+                "l2_started_at": self.l2_started_at,
+                "tone_a_at": None,
+                "deferred_until_l2_start": True,
+            }))
+            self._send_info1d(now, allow_missing_echo=True,
+                              interrupt_l2=True)
+        if (self.state == self.TX_PROBE
+                and self._tone_a_during_second_l2
+                and self._second_l2_echo_complete_at is None
+                and not self._l2_echo_window_advanced
+                and self.l2_echo_window_policy == "advance-after-window"
+                and self.l2_started_at is not None
+                and now >= self._l2_echo_deadline_at()):
+            self._advance_after_l2_echo_window(now)
         return self.drain_actions()
+
+    def _l2_echo_deadline_at(self) -> int:
+        if self.l2_started_at is None:
+            raise RuntimeError("local L2 has not started")
+        return (self.l2_started_at + int(.550 * FS) + self.rtd_samples
+                + self.l2_echo_tolerance_samples)
+
+    def _advance_after_l2_echo_window(self, now: int) -> None:
+        if self._l2_echo_window_advanced:
+            return
+        self._l2_echo_window_advanced = True
+        deadline = self._l2_echo_deadline_at()
+        self.events.append(("l2-echo-window-elapsed-without-echo", {
+            "at": now,
+            "deadline": deadline,
+            "window_samples": deadline - self.l2_started_at,
+            "window_ms": (deadline - self.l2_started_at) * 1000 / FS,
+            "rtd_samples": self.rtd_samples,
+        }))
+        self._send_info1d(now, allow_missing_echo=True)
 
     def info1d_transmitted(self, complete_at: int) -> None:
         """Arm §9.2.1.2.6 from the actual INFO1d transmit completion sample."""
@@ -385,17 +488,22 @@ class V90DigitalPhase2Controller:
         self._info1a_deadline_at = (complete_at + int(.700 * FS)
                                     + self.rtd_samples)
 
-    def _send_info1d(self, at: int) -> None:
+    def _send_info1d(self, at: int, *, allow_missing_echo: bool = False,
+                     interrupt_l2: bool = False) -> None:
         echo_at = self._second_l2_echo_complete_at
-        if (self.l2_started_at is None or echo_at is None
-                or echo_at < self.l2_started_at or at < self.l2_started_at):
+        if (self.l2_started_at is None
+                or (echo_at is None and not allow_missing_echo)
+                or (echo_at is not None and echo_at < self.l2_started_at)
+                or at < self.l2_started_at):
             raise ValueError("L2 echo cannot complete before local L2 begins")
         # The 550 ms limit applies to the local L2 echo observation. Tone A
         # can arrive later while the peer runs its bounded missing-Tone-B
         # recovery; using that later event time here incorrectly rejects a
         # timely echo and prevents the recovery exchange from completing.
         slack = self.l2_echo_tolerance_samples
-        if echo_at - self.l2_started_at > int(.550 * FS) + self.rtd_samples + slack:
+        if (echo_at is not None
+                and echo_at - self.l2_started_at
+                > int(.550 * FS) + self.rtd_samples + slack):
             self.state = self.FAILED
             self._tone_a_deadline_at = None
             self.actions.append(Phase2Action(at, "retrain-timeout"))
@@ -406,7 +514,8 @@ class V90DigitalPhase2Controller:
             self.actions.append(Phase2Action(at, "retrain-timeout"))
             return
         self._tone_a_deadline_at = None
-        self.actions.extend((Phase2Action(at, "info1d"),
+        self.actions.extend((Phase2Action(at, "info1d",
+                                          interrupt_l2=interrupt_l2),
                              Phase2Action(None, "silence", after="info1d-complete")))
         self.state = self.WAIT_INFO1A
 

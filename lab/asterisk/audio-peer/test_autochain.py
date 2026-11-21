@@ -1,4 +1,5 @@
 """V8Chain: automatic selection between V.34, V.32bis and V.22bis, and the legacy fallback."""
+import os
 import struct
 import unittest
 import math
@@ -44,6 +45,50 @@ def exchange(a, b, seconds, delay=40):
 
 @unittest.skipUnless(v8.available(), "numpy not installed: V.8 tones cannot be generated")
 class ChainTests(unittest.TestCase):
+    def test_digital_answerer_handoff_primes_bounded_v8_receive_history(self):
+        captured = {}
+
+        class Engine:
+            events = []
+
+            def prime_info0a_preroll(self, pcm, *, rx_at):
+                captured.update(pcm=bytes(pcm), rx_at=rx_at)
+                return []
+
+            def tx_samples(self, count):
+                return [0] * count
+
+            def feed_pcm(self, pcm):
+                return b""
+
+            def feed_bytes(self, data):
+                pass
+
+            def feed_g711(self, *args, **kwargs):
+                return b""
+
+            def feed_gap(self, *args, **kwargs):
+                return b""
+
+            def tx_g711(self, count, law):
+                return bytes([0xff if law == "pcmu" else 0xd5]) * count
+
+        chain = V8Chain(
+            False, pcm_availability=V8_PCM_DIGITAL,
+            v90_engine_factory=lambda **_kwargs: Engine())
+        try:
+            history = struct.pack("<160h", *range(160))
+            chain._feed_pcm_negotiating(history)
+            chain._t = 1600
+            chain._choose("v90", v90_role="digital-answerer", v8_result={})
+            self.assertEqual(captured["pcm"], history)
+            self.assertEqual(captured["rx_at"], -1600)
+            self.assertEqual(chain._v90_rx_preroll_samples, 0)
+            self.assertEqual(sum(name == "phase2-info0a-preroll"
+                                 for name, _ in chain.events), 0)
+        finally:
+            chain.close()
+
     def test_no_v8_falls_back_legacy_v34_then_v32_then_v22(self):
         allow = V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22
         for calling in (True, False):
@@ -53,12 +98,7 @@ class ChainTests(unittest.TestCase):
                     # Status 4 is the ANSam-seen, CM/JM-incomplete case;
                     # only that case may enter legacy V.34 Phase 1.
                     chain._v8.status = 4
-                    chain._t = 11 * 8000
-                    chain._step_v8()
-                    self.assertIsNone(chain.engine)
-                    self.assertEqual(chain.kind, "v8")
-
-                    chain._t = 12 * 8000
+                    chain._t = 12 * 8000         # V.8's own JM timeout decides; no call-start gate
                     chain._step_v8()
                     self.assertEqual(chain.kind, "v34")
                     self.assertEqual(chain._no_v8_legacy_next_at, 24 * 8000)
@@ -90,8 +130,190 @@ class ChainTests(unittest.TestCase):
                 finally:
                     chain.close()
 
-    def test_plain_ans_uses_v22_after_ac_wait_and_gates_answer_tone(self):
+    def test_opt_in_no_v8_info0c_tone_b_selects_v34_and_exchanges_payload(self):
+        """A direct V.34 caller can reach the normal answer Phase 2 when enabled."""
+        from v34_modem import V34Modem
+
+        caller = V34Modem(data_rate=9600, min_data_rate=2400, with_v8=False)
+        answer = V8Chain(False, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22,
+                         v34_rate=9600, v34_min_rate=2400,
+                         v34_no_v8_fallback=True)
+        try:
+            detector_lock_states = []
+            engine_lock_states = []
+            detector = answer._no_v8_v34_detector
+            original_detector_feed = detector.feed
+
+            def measured_detector_feed(samples):
+                detector_lock_states.append(answer._lock._is_owned())
+                return original_detector_feed(samples)
+
+            detector.feed = measured_detector_feed
+            from v34_answer_modem import V34AnswerModem
+
+            original_engine_feed = V34AnswerModem.feed_pcm
+
+            def measured_engine_feed(engine, pcm):
+                if engine is answer.engine:
+                    engine_lock_states.append(answer._lock._is_owned())
+                return original_engine_feed(engine, pcm)
+
+            with patch.object(V34AnswerModem, "feed_pcm", measured_engine_feed):
+                caller_rx, answer_rx = exchange(caller, answer, 90)
+
+            self.assertTrue(caller.is_settled())
+            self.assertEqual(answer.kind, "v34")
+            self.assertEqual(caller_rx, b"answerer says hi\r\n")
+            self.assertEqual(answer_rx, b"caller says hi\r\n")
+            self.assertTrue(detector_lock_states)
+            self.assertFalse(any(detector_lock_states))
+            self.assertTrue(engine_lock_states)
+            self.assertFalse(any(engine_lock_states))
+            report = answer._no_v8_v34_detector.report()
+            self.assertGreater(report["crc_valid_info0c_candidates"], 0)
+            self.assertIsNotNone(report["match"])
+            self.assertLess(report["tone_ratio_shortfall"], 0.0)
+            self.assertLessEqual(report["scan_overlap_samples"], 1300)
+            self.assertGreater(report["feed_calls"], 0)
+            self.assertGreaterEqual(report["feed_max_ms"], report["feed_p95_ms"])
+        finally:
+            close_caller = getattr(caller, "close", None)
+            if close_caller is not None:
+                close_caller()
+            answer.close()
+
+    def test_no_v8_v34_fallback_off_preserves_legacy_selection(self):
+        """With the extension disabled, direct V.34 is not mistaken for a connection."""
+        from v34_modem import V34Modem
+
+        caller = V34Modem(data_rate=9600, min_data_rate=2400, with_v8=False)
+        answer = V8Chain(False, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22,
+                         v34_rate=9600, v34_min_rate=2400,
+                         v34_no_v8_fallback=False)
+        try:
+            loop(caller, answer, 25)
+
+            self.assertEqual(answer.kind, "v22")
+            self.assertFalse(caller.is_settled())
+            self.assertFalse(answer.is_settled())
+            self.assertIsNone(answer._no_v8_v34_detector)
+        finally:
+            close_caller = getattr(caller, "close", None)
+            if close_caller is not None:
+                close_caller()
+            answer.close()
+
+    def test_invalid_no_v8_v34_environment_value_is_reported_and_stays_off(self):
+        with patch.dict("os.environ", {"V8CHAIN_V34_NO_V8_FALLBACK": "true"}):
+            chain = V8Chain(False, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22)
+        try:
+            self.assertFalse(chain.v34_no_v8_fallback)
+            self.assertIsNone(chain._no_v8_v34_detector)
+            self.assertTrue(any("ignored invalid V8CHAIN_V34_NO_V8_FALLBACK" in message
+                                for _, message in chain.events))
+        finally:
+            chain.close()
+
+    def test_opt_in_no_v8_detector_rejects_v32_and_v22_callers(self):
+        """Legacy callers must still win their normal startup paths."""
+        import v22
+        from v32_stream import V32Modem
+
+        callers = (
+            ("v32", lambda: V32Modem(fs=8000, my_rates=(9600,),
+                                      use_v8=False, echo=False)),
+            ("v22", lambda: v22.V22Modem(True, 2400, ans_tone_ms=0)),
+        )
+        for expected, make_caller in callers:
+            with self.subTest(expected=expected):
+                caller = make_caller()
+                answer = V8Chain(False, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22,
+                                 v34_rate=9600, v34_min_rate=2400,
+                                 v34_no_v8_fallback=True)
+                try:
+                    caller_rx, answer_rx = exchange(caller, answer, 60)
+
+                    self.assertEqual(answer.kind, expected)
+                    self.assertEqual(caller_rx, b"answerer says hi\r\n")
+                    self.assertEqual(answer_rx, b"caller says hi\r\n")
+                    report = answer._no_v8_v34_detector.report()
+                    self.assertIsNone(report["match"])
+                    self.assertEqual(report["crc_valid_info0c_candidates"], 0)
+                    self.assertEqual(report["tone_ratio_shortfall"], 0.8)
+                    self.assertGreater(report["feed_calls"], 0)
+                finally:
+                    close_caller = getattr(caller, "close", None)
+                    if close_caller is not None:
+                        close_caller()
+                    answer.close()
+
+    def test_v90_answer_profile_does_not_select_v90_without_v8(self):
+        from v90_dce_factory import install_v90_digital_answerer
+
+        blocks = [{} for _ in range(6)]
+        blocks[5] = {"hi_carrier": 1}
+        options = {
+            "allow": V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22,
+            "v90_digital_answerer": {
+                "info0d_fields": {"rate3429": 1, "v90_3429_upstream": 1},
+                "info1d_fields": {"blocks": blocks},
+                "tone_b_peak": 900, "probe_rms": 450,
+                "phase3_rate_mask": 0xFFFF,
+            },
+        }
+        install_v90_digital_answerer(options, tx_role="answer", law="pcmu")
+        chain = V8Chain(False, **options)
+        try:
+            chain._v8.status = 3  # No ANSam/CM: there is no V.8 PCM agreement.
+            chain._t = 12 * 8000
+            chain._step_v8()
+            self.assertEqual(chain.kind, "v32")
+            self.assertFalse(chain.is_settled())
+            self.assertTrue(any("probing legacy V.32 AC" in str(message)
+                                for _, message in chain.events))
+            self.assertFalse(any(kind == "v90" for kind, _ in chain.events))
+        finally:
+            chain.close()
+
+    def test_plain_ans_with_v32_allowed_sends_aa_and_still_watches_for_usb1(self):
+        # V.32 5.4.1: AA after >= 1 s of answer tone; an answerer that wants V.22bis answers with USB1 instead.
         chain = V8Chain(True, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22)
+        try:
+            chain._v8.status = 0
+            chain._v8.plain_ans = True
+            chain._step_v8()
+            self.assertEqual(chain.kind, "v32")
+            self.assertEqual(chain.engine.state, "aa")
+            self.assertTrue(chain._aa_probe)
+            usb1 = [int(3000 * math.cos(2 * math.pi * 2250 * n / 8000)) for n in range(4000)]
+            for i in range(0, 4000, 160):
+                chain.feed_pcm(struct.pack("<160h", *usb1[i:i + 160]))
+            self.assertEqual(chain.kind, "v22")
+            self.assertTrue(any("chose V.22bis" in e[1] for e in chain.events))
+        finally:
+            chain.close()
+
+    def test_usb1_settles_a_cm_that_drew_no_jm(self):
+        # A Patton dial-in line (2026-11-21): its weak-AM tone was taken for ANSam, CM went out, no JM came, and the
+        # chain waited for AC at 9 s instead of answering the USB1 sent right after the tone. A V.8 answerer never
+        # sends USB1, so USB1 while CM is outstanding is the answerer choosing V.22bis.
+        chain = V8Chain(True, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22)
+        try:
+            chain._v8.status, chain._v8._stage = 1, "cm"
+            usb1 = [int(3000 * math.cos(2 * math.pi * 2250 * n / 8000)) for n in range(4000)]
+            for i in range(0, 4000, 160):
+                chain.feed_pcm(struct.pack("<160h", *usb1[i:i + 160]))
+                if chain.kind != "v8":
+                    break
+            self.assertEqual(chain.kind, "v22")
+            self.assertTrue(any("CM drew no JM" in e[1] for e in chain.events))
+        finally:
+            chain.close()
+
+    def test_plain_ans_uses_v22_after_ac_wait_and_gates_answer_tone(self):
+        # V8CHAIN_PLAIN_ANS_AA=0: the previous behaviour (wait for AC, then V.22 with the tone gated).
+        with patch.dict(os.environ, {"V8CHAIN_PLAIN_ANS_AA": "0"}):
+            chain = V8Chain(True, allow=V8_MOD_V34 | V8_MOD_V32 | V8_MOD_V22)
         try:
             chain._v8.status = 0
             chain._v8.plain_ans = True
@@ -140,12 +362,8 @@ class ChainTests(unittest.TestCase):
         try:
             chain._v8.status = 4
             chain._v8._stage = "cm"  # ANSam was recognized; JM/CM response was missed.
+            # V.8 already waited 8 s for JM after CM: legacy V.34 follows at once, whatever the call's age.
             chain._t = 8 * 8000
-            chain._step_v8()
-            self.assertEqual(chain.kind, "v8")
-            self.assertIsNone(chain.engine)
-
-            chain._t = 12 * 8000
             chain._step_v8()
             self.assertEqual(chain.kind, "v34")
             self.assertTrue(any("starting legacy V.34" in str(event)
@@ -210,8 +428,11 @@ class ChainTests(unittest.TestCase):
 
         for calling, local_pcm, negotiated_pcm, expected_role in (
                 (False, V8_PCM_DIGITAL, V8_PCM_DIGITAL, "digital-answerer"),
-                (True, V8_PCM_ANALOG, V8_PCM_ANALOG, "analogue-caller")):
-            with self.subTest(role=expected_role):
+                (True, V8_PCM_ANALOG, V8_PCM_ANALOG, "analogue-caller"),
+                # V.90 sets the PCM role whichever side dialled.
+                (True, V8_PCM_DIGITAL, V8_PCM_DIGITAL, "digital-answerer"),
+                (False, V8_PCM_ANALOG, V8_PCM_ANALOG, "analogue-caller")):
+            with self.subTest(calling=calling, role=expected_role):
                 selected = []
 
                 def factory(*, role, negotiation, media_at, media_origin):
@@ -449,7 +670,7 @@ class ChainTests(unittest.TestCase):
                 self.assertEqual(chain.kind, "v32")
                 self.assertEqual(gb, b"caller says hi\r\n")
                 self.assertEqual(ga, b"answerer says hi\r\n")
-                self.assertTrue(any("legacy V.32" in e[1] for e in chain.events))
+                self.assertTrue(any("legacy V.32" in e[1] or "sending V.32 AA" in e[1] for e in chain.events))
 
     def test_legacy_v32_14400_with_half_second_round_trip(self):
         from v32_stream import V32Modem
@@ -604,6 +825,26 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(gb, b"caller says hi\r\n")
         self.assertEqual(ga, b"answerer says hi\r\n")
 
+
+
+class LateAnswerToneTests(unittest.TestCase):
+    def test_patience_does_not_cut_off_an_answer_tone_already_under_way(self):
+        # A Patton 3120 dial-in began ANSam ~5.2 s after the SIP answer (the DCE saw it later still); the
+        # 6 s patience used to expire mid-tone and fall back to V.22bis without V.8 (2026-11-21).
+        from pathlib import Path
+        import numpy as np
+        fixture = Path(__file__).parent / "fixtures" / "net2600_late_ansam.rx.raw"
+        # 0.6 s lead: the tone is under way when 6 s passes (a reversal at 6.09 s once fooled a coherent check);
+        # 1.0 s lead: the tone starts after 6 s, so patience must count from the far end's first sound (~2.0 s).
+        for lead in (4800, 8000):
+            x = np.concatenate([np.zeros(lead, dtype="<i2"), np.fromfile(fixture, dtype="<i2")])
+            chain = V8Chain(True)
+            for i in range(0, len(x) - 160, 160):
+                chain.tx_samples(160)
+                chain.feed_pcm(x[i:i + 160].astype("<i2").tobytes())
+            self.assertFalse(any("no V.8 partner" in str(e) for e in chain.events), (lead, chain.events))
+            self.assertIsNotNone(chain._v8, lead)
+            self.assertEqual(chain._v8.status, 1, lead)          # ANSam heard, CM going out
 
 if __name__ == "__main__":
     unittest.main()

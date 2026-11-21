@@ -36,6 +36,51 @@ class PhaseFailureDiagnosticsTests(unittest.TestCase):
         self.assertIn("Traceback (most recent call last)", detail)
 
 
+class V92StartupPreparationTests(unittest.TestCase):
+    def test_factory_prepares_opted_in_v92_before_v8_selection(self):
+        configured = profile()
+        configured.update({"v92_pcm_upstream": True,
+                           "v92_info1a_fields": {"uinfo": 67}})
+        prepared = object()
+        with patch("v90_analogue_caller_engine.prepare_v92_analogue_session",
+                   return_value=prepared) as prepare:
+            factory = build_v90_analogue_caller_engine(
+                law="pcmu", profile=configured)
+            prepare.assert_called_once_with(configured, "pcmu")
+            engine = factory(
+                role="analogue-caller",
+                negotiation={"pcm_negotiated_bits": V8_PCM_ANALOG},
+                media_at=0, media_origin=100.0)
+        try:
+            self.assertIs(engine._v92_prepared_session, prepared)
+            self.assertTrue(engine._v92_requested)
+        finally:
+            engine.close()
+
+    def test_v92_prewarm_failure_withdraws_offer_and_keeps_v90(self):
+        configured = profile()
+        configured.update({"v92_pcm_upstream": True,
+                           "v92_info1a_fields": {"uinfo": 67}})
+        with patch("v90_analogue_caller_engine.prepare_v92_analogue_session",
+                   side_effect=ImportError("test missing module")):
+            factory = build_v90_analogue_caller_engine(
+                law="pcmu", profile=configured)
+            engine = factory(
+                role="analogue-caller",
+                negotiation={"pcm_negotiated_bits": V8_PCM_ANALOG},
+                media_at=0, media_origin=100.0)
+        try:
+            self.assertFalse(engine._v92_requested)
+            self.assertFalse(engine._profile["info0a_fields"]["v92"])
+            self.assertEqual(engine._build_info1a(6),
+                             v90.build_info1a_v90(
+                                 mode=6, **engine._profile_info1a_fields))
+            self.assertIn("v92-prewarm-failed",
+                          [name for name, _ in engine.events])
+        finally:
+            engine.close()
+
+
 def profile():
     return {
         "info0a_fields": {"rate3429": 1, "disallow3429": 1},
@@ -57,6 +102,110 @@ class V90AnalogueCallerEngineTests(unittest.TestCase):
             profile=profile() if configured is None else configured)
         engine._phase3_jd_descriptor = {"rate_mask": (1 << 22) - 1}
         return engine
+
+    def v92_profile(self):
+        result = profile()
+        result.update({
+            "v92_pcm_upstream": True,
+            "v92_info1a_fields": {
+                "sections": 3, "max_coeffs_code": 0,
+                "max_section_code": 0, "md_len": 0, "uinfo": 67,
+            },
+        })
+        result["info0a_fields"]["v92"] = True
+        return result
+
+    def test_v92_opt_in_disabled_emits_the_existing_v90_info1a_frame(self):
+        engine = self.make_engine()
+        try:
+            expected = v90.build_info1a_v90(
+                mode=6, **engine._profile["info1a_fields"])
+            self.assertEqual(engine._build_info1a(6), expected)
+            self.assertFalse(engine._v92_requested)
+            self.assertFalse(engine._v92_selected)
+        finally:
+            engine.close()
+
+    def test_v92_pcm_caller_selects_table18_only_when_peer_offers_it_and_lapm(self):
+        from v8 import V8_PROTOCOL_LAPM_V42
+        import v92_info
+
+        engine = V90AnalogueCallerPhase2Engine(
+            role="analogue-caller",
+            negotiation={"pcm_negotiated_bits": V8_PCM_ANALOG,
+                         "protocols": V8_PROTOCOL_LAPM_V42},
+            media_at=0, media_origin=100.0, law="pcmu",
+            profile=self.v92_profile())
+        try:
+            engine._controller.info0d = {"reserved": 2}
+            blocks = [{} for _ in range(6)]
+            blocks[5] = {"hi_carrier": 1, "max_rate": 33600}
+            engine._controller.info1d = {"blocks": blocks}
+            actions = [
+                AnaloguePhase2Action(0, "info1a", 6),
+                AnaloguePhase2Action(None, "handoff-v90-phase3", 6,
+                                     after="info1a-complete"),
+            ]
+            selected = engine._prepare_v90_info1a(actions)
+            self.assertTrue(engine._v92_selected)
+            self.assertEqual(selected[1].signal, "handoff-v92-phase3")
+            self.assertIsNotNone(v92_info.parse_info1a_pcm(
+                engine._build_info1a(6)))
+            event = next(value for name, value in engine.events
+                         if name == "v92-caller-capability-check")
+            self.assertEqual(event["v8_protocols"], V8_PROTOCOL_LAPM_V42)
+            self.assertTrue(event["peer_info0d_v92"])
+            self.assertTrue(event["peer_info1d_pcm_upstream"])
+        finally:
+            engine.close()
+
+    def test_v92_opt_in_falls_back_to_ordinary_v90_info1a_for_non_v92_peer(self):
+        from v8 import V8_PROTOCOL_LAPM_V42
+        import v92_info
+
+        engine = V90AnalogueCallerPhase2Engine(
+            role="analogue-caller",
+            negotiation={"pcm_negotiated_bits": V8_PCM_ANALOG,
+                         "protocols": V8_PROTOCOL_LAPM_V42},
+            media_at=0, media_origin=100.0, law="pcmu",
+            profile=self.v92_profile())
+        try:
+            engine._controller.info0d = {
+                "reserved": 0, "v90_3429_upstream": 1}
+            blocks = [{} for _ in range(6)]
+            blocks[5] = {"hi_carrier": 1, "max_rate": 33600}
+            engine._controller.info1d = {"blocks": blocks}
+            actions = [AnaloguePhase2Action(0, "info1a", 6)]
+            self.assertEqual(engine._prepare_v90_info1a(actions), actions)
+            self.assertFalse(engine._v92_selected)
+            self.assertIsNone(v92_info.parse_info1a_pcm(
+                engine._build_info1a(6)))
+            self.assertTrue(any(name == "v92-caller-fallback-v90"
+                                for name, _ in engine.events))
+        finally:
+            engine.close()
+
+    def test_v92_pcm_opt_in_without_v8_lapm_falls_back_to_v90(self):
+        engine = V90AnalogueCallerPhase2Engine(
+            role="analogue-caller",
+            negotiation={"pcm_negotiated_bits": V8_PCM_ANALOG, "protocols": 0},
+            media_at=0, media_origin=100.0, law="pcmu",
+            profile=self.v92_profile())
+        try:
+            engine._controller.info0d = {"reserved": 2,
+                                          "v90_3429_upstream": 1}
+            blocks = [{} for _ in range(6)]
+            blocks[5] = {"hi_carrier": 1, "max_rate": 33600}
+            engine._controller.info1d = {"blocks": blocks}
+            engine._prepare_v90_info1a([
+                AnaloguePhase2Action(0, "info1a", 6)])
+            self.assertFalse(engine._v92_selected)
+            self.assertIn(
+                ("v92-caller-fallback-v90",
+                 {"reason": "v8-lapm-not-negotiated"}),
+                engine.events)
+        finally:
+            engine.close()
 
     def test_b1d_failure_walks_down_three_jd_rates_via_retrain(self):
         engine = self.make_engine()
@@ -645,6 +794,132 @@ class V90AnalogueCallerEngineTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_v92_data_gap_is_concealed_as_silence_up_to_the_limit(self):
+        from types import SimpleNamespace
+        import v90_analogue_caller_engine as engine_module
+        for samples, conceals in ((160, True), (engine_module.DATA_GAP_FILL_MAX_SAMPLES + 160, False)):
+            with self.subTest(samples=samples):
+                engine = self.make_engine(configured=self.v92_profile())
+                fed = []
+                try:
+                    engine._v92_session = SimpleNamespace(connected=True, lapm=SimpleNamespace(
+                        v42_resolved=True, v42_lost=False))
+                    engine._feed_v92 = lambda data: fed.append(bytes(data)) or b""
+                    engine.feed_gap(samples, "pcmu", {
+                        "sequence": 7, "packet_playout_deadline_monotonic": 100.0})
+                    if conceals:
+                        self.assertFalse(engine._failed)
+                        self.assertEqual(fed, [bytes([0xff]) * samples])
+                        self.assertEqual(engine.events[-1][0], "data-rx-gap-filled")
+                    else:
+                        self.assertTrue(engine._failed)
+                        self.assertEqual(engine.events[-1][0], "v92-caller-failed")
+                finally:
+                    engine.close()
+
+    def test_a_v92_cpt_retrain_still_allows_one_phase2_retrain(self):
+        # Astound answered our CPt-stall retrain and re-ran Phase 2, which then asked for its own retrain; the
+        # single-recovery rule had already spent itself on the CPt retrain and ended the call (2026-11-20).
+        from types import SimpleNamespace
+        for cpt_retrains, phase2_before, allowed in ((1, 0, True), (0, 0, False), (1, 1, False)):
+            with self.subTest(cpt_retrains=cpt_retrains, phase2_before=phase2_before):
+                engine = self.make_engine(configured=self.v92_profile())
+                try:
+                    engine._controller.info0d = {"fields": "retained"}
+                    engine._phase3_retrain_attempts = 1
+                    engine._v92_cpt_retrains = cpt_retrains
+                    engine._phase2_retrain_attempts = phase2_before
+                    started = []
+                    import v90_analogue_caller_engine as engine_module
+                    original = engine_module.V90AnaloguePhase2Adapter.start_v90_retrain_initiation
+                    engine_module.V90AnaloguePhase2Adapter.start_v90_retrain_initiation = (
+                        lambda self, at, info0d: started.append(at) or [])
+                    try:
+                        engine._start_phase2_retrain(SimpleNamespace(signal="handoff-retrain-v90-phase2", at=0))
+                    finally:
+                        engine_module.V90AnaloguePhase2Adapter.start_v90_retrain_initiation = original
+                    names = [name for name, _ in engine.events]
+                    if allowed:
+                        self.assertFalse(engine._failed, engine.events[-3:])
+                        self.assertEqual(len(started), 1)
+                        self.assertEqual(engine._phase2_retrain_attempts, 1)
+                    else:
+                        self.assertTrue(engine._failed)
+                        self.assertIn("phase2-retrain-failed", names)
+                finally:
+                    engine.close()
+
+    def test_v92_downstream_drn_comes_from_the_profile(self):
+        from v90_analogue_caller_engine import prepare_v92_analogue_session
+        configured = self.v92_profile()
+        self.assertEqual(prepare_v92_analogue_session(configured, "pcmu")._drn_down, 2)
+        configured["v92_downstream_drn"] = 22
+        self.assertEqual(prepare_v92_analogue_session(configured, "pcmu")._drn_down, 22)
+        for bad in (0, 23, True, 8.0):
+            configured["v92_downstream_drn"] = bad
+            with self.assertRaises(ValueError):
+                prepare_v92_analogue_session(configured, "pcmu")
+
+    def test_unacknowledged_v92_cpt_retrains_instead_of_failing(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        for retrain_requested in (True, False):
+            with self.subTest(retrain_requested=retrain_requested):
+                engine = self.make_engine(configured=self.v92_profile())
+                try:
+                    stalled = SimpleNamespace(
+                        stage="failed", retrain_requested=retrain_requested,
+                        events=[("v92-phase3-cpt-unacknowledged", {"cpt_frames": 16})],
+                        feed=lambda samples: None, take_received=lambda: b"")
+                    engine._v92_session = stalled
+                    engine._v92_start_at = engine._v92_start_rx_at = engine._v92_tx_cursor = 0
+                    engine.kind = "v92"
+                    engine._rx_at = 160
+                    with mock.patch.object(engine, "_start_phase3_retrain") as retrain:
+                        engine._feed_v92(bytes([0xff]) * 160)
+                    names = [name for name, _ in engine.events]
+                    if retrain_requested:
+                        self.assertFalse(engine._failed)
+                        self.assertIsNone(engine._v92_session)
+                        self.assertEqual(engine.kind, "v90")
+                        self.assertIsNone(engine._v92_tx_cursor)
+                        self.assertIsNotNone(engine._v92_prepared_session)
+                        self.assertIsNot(engine._v92_prepared_session, stalled)
+                        retrain.assert_called_once()
+                        self.assertIn("v92-phase3-retrain", names)
+                        self.assertEqual(engine._v92_cpt_retrains, 1)
+                    else:
+                        self.assertTrue(engine._failed)
+                        retrain.assert_not_called()
+                        self.assertEqual(names[-1], "v92-caller-failed")
+                finally:
+                    engine.close()
+
+    def test_v92_gap_failure_distinguishes_observed_local_backlog(self):
+        for context, expected, backlog in (
+                ({"received_at": 10.0, "dequeued": 10.075},
+                 "local RX backlog/overrun during V.92 analogue-caller data",
+                 0.075),
+                ({"received_at": 10.0, "dequeued": 10.010},
+                 "RTP sample gap with loss location unknown during V.92 analogue-caller data",
+                 0.010),
+                ({}, "RTP sample gap with loss location unknown during V.92 analogue-caller data",
+                 None)):
+            with self.subTest(context=context):
+                engine = self.make_engine(configured=self.v92_profile())
+                try:
+                    engine._v92_session = object()
+                    engine.feed_gap(160, "pcmu", context)
+                    self.assertEqual(engine.events[-1][0], "v92-caller-failed")
+                    self.assertEqual(engine.events[-1][1]["reason"], expected)
+                    if backlog is None:
+                        self.assertIsNone(engine.events[-1][1]["rx_backlog_seconds"])
+                    else:
+                        self.assertAlmostEqual(
+                            engine.events[-1][1]["rx_backlog_seconds"], backlog)
+                finally:
+                    engine.close()
+
     def test_phase2_clock_fit_overrides_remain_profile_scoped(self):
         default_engine = self.make_engine()
         try:
@@ -670,6 +945,35 @@ class V90AnalogueCallerEngineTests(unittest.TestCase):
             self.assertEqual(engine._clock.min_fit_span_samples, 12800)
         finally:
             engine.close()
+
+    def test_v92_caller_clock_tolerates_jitter_like_the_digital_side(self):
+        # One jitter-bent fit used to end a V.92 call mid-data; the caller
+        # now shares the digital side's V.92 defaults and overrides.
+        cases = (({}, 80, 1),
+                 ({"v92_pcm_upstream": True}, 40, 3),
+                 ({"v92_pcm_upstream": True,
+                   "phase2_clock_offset_step_samples": 80,
+                   "phase2_clock_violation_epochs": 1}, 80, 1))
+        for overrides, step, epochs in cases:
+            with self.subTest(overrides=overrides):
+                p = profile()
+                p.update(overrides)
+                engine = V90AnalogueCallerPhase2Engine(
+                    role="analogue-caller",
+                    negotiation={"pcm_negotiated_bits": V8_PCM_ANALOG},
+                    media_at=0, media_origin=100.0, law="pcmu", profile=p)
+                try:
+                    self.assertEqual(engine._clock.offset_step_samples, step)
+                    self.assertEqual(engine._clock.violation_epochs, epochs)
+                finally:
+                    engine.close()
+        p = profile()
+        p["phase2_clock_violation_epochs"] = 0
+        with self.assertRaises(ValueError):
+            V90AnalogueCallerPhase2Engine(
+                role="analogue-caller",
+                negotiation={"pcm_negotiated_bits": V8_PCM_ANALOG},
+                media_at=0, media_origin=100.0, law="pcmu", profile=p)
 
 
     def test_factory_binds_the_profile_and_law(self):

@@ -53,6 +53,22 @@ class DefaultParameterTests(unittest.TestCase):
                     self.assertIsNone(link._enc)
                     self.assertIsNone(link._dec)
 
+    def test_explicit_argument_overrides_the_environment_both_ways(self):
+        # A per-call choice (a configured dial number) must not depend on, or
+        # be overridden by, the process-wide opt-in.
+        for env, explicit, expect_sabme_first in (('0', True, True), ('1', False, False)):
+            with self.subTest(env=env, explicit=explicit), patch.dict(
+                    os.environ, {'V42_DEFAULT_PARAMETERS': env}):
+                a = RecordingLink(True, detect=False, frame_size=32,
+                                  default_parameters=explicit)
+                b = RecordingLink(False, detect=False)
+                a.write(b'payload' * 20)
+                got_a, got_b = pump(a, b, 9600 * 4)
+                self.assertEqual(got_b, b'payload' * 20)
+                self.assertEqual(a.frames[0][1] & 0xEF == SABME, expect_sabme_first)
+                self.assertEqual(any(f[1] & 0xEF == XID for f in a.frames),
+                                 not expect_sabme_first)
+
     def test_first_ua_loss_is_confirmed_by_peer_i_frame(self):
         with patch.dict(os.environ, {'V42_DEFAULT_PARAMETERS': '1'}):
             a, b = RecordingLink(True, detect=False), LoseFirstUa(False, detect=False)

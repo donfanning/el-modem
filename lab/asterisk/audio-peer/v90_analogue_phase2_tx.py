@@ -161,8 +161,18 @@ class V90AnaloguePhase2Transmitter:
             fields = dict(self.info0a_fields)
             if action.value is not None:
                 fields["ack_info0d"] = int(action.value)
-            fields.pop("v92", None)
-            bits = v90.build_info0a(**fields)
+            v92 = bool(fields.pop("v92", False))
+            short_phase2 = bool(fields.pop("short_phase2", False))
+            if v92 or short_phase2:
+                # V.90 reserves INFO0a bits 26–27. A V.92 caller must use the
+                # V.92 interpretation (Table 16), or the capability flag is
+                # silently lost and the digital peer cannot negotiate V.92.
+                import v92_info  # noqa: PLC0415
+
+                bits = v92_info.build_info0a(
+                    v92=v92, short_phase2=short_phase2, **fields)
+            else:
+                bits = v90.build_info0a(**fields)
             modulator = v34_info.InfoModulator("answer", guard=True)
             start_phase = 2 * np.pi * 2400.0 * at / FS
             guard_phase = 2 * np.pi * 1800.0 * at / FS

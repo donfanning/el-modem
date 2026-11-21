@@ -6,8 +6,8 @@ from v90_digital_phase2_rx import Phase2RxEvent
 
 
 class DigitalPhase2ControlTests(unittest.TestCase):
-    def _to_second_probe(self):
-        c = V90DigitalPhase2Controller(max_l2_samples=8000)
+    def _to_second_probe(self, **kwargs):
+        c = V90DigitalPhase2Controller(max_l2_samples=8000, **kwargs)
         actions = c.start(600)
         self.assertEqual([(a.at, a.signal, a.after) for a in actions], [
             (600, "info0d", None), (None, "tone_b", "info0d-complete")])
@@ -139,6 +139,46 @@ class DigitalPhase2ControlTests(unittest.TestCase):
         self.assertEqual(adapter._route(event),
                          ("retrain_tone_a_reversal", {}))
 
+    def test_adapter_routes_early_tone_a_while_waiting_for_info0a(self):
+        c = V90DigitalPhase2Controller()
+        adapter = V90DigitalPhase2Adapter(c, rx_to_media=lambda sample: sample)
+        c.start(600)
+        event = Phase2RxEvent("tone_a", 800, 920, {})
+        self.assertEqual(adapter._route(event), ("tone_a", {}))
+
+    def test_info0a_carrier_tone_a_waits_for_the_frame_scan(self):
+        # Tone A can qualify on the INFO0a carrier before the 200 ms frame
+        # scan reaches the end of the frame. Releasing it on audio received,
+        # rather than audio scanned, made it look like Tone A without INFO0a
+        # and sent a spurious §9.2.1.2.1 INFO0d retry at these alignments.
+        import numpy as np
+        import v34_call
+        import v90_info_reference as v90
+        from v90_analogue_phase2_tx import (AnaloguePhase2Action,
+                                            V90AnaloguePhase2Transmitter)
+        tx = V90AnaloguePhase2Transmitter(
+            info0a_fields={"rate3429": 1, "disallow3429": 1},
+            info1a_builder=lambda mode: v90.build_info1a_v90(
+                md_len=0, uinfo=90, analog_symbol_rate=5,
+                digital_symbol_rate=6, freq_offset=0),
+            probe_builder=v34_call.probing_signal, nominal_peak=1200,
+            probe_rms=300)
+        tx.submit([AnaloguePhase2Action(0, "info0a", 0),
+                   AnaloguePhase2Action(None, "tone_a", after="info0a-complete")])
+        audio = np.asarray(tx.render(8000), dtype=float)
+        for lead in (960, 1120, 1240):
+            with self.subTest(lead=lead):
+                c = V90DigitalPhase2Controller()
+                adapter = V90DigitalPhase2Adapter(c, rx_to_media=lambda at: at)
+                adapter.start(0)
+                line = np.concatenate((np.zeros(lead), audio))
+                signals = []
+                for at in range(0, len(line), 160):
+                    signals += [action.signal for action in adapter.feed(
+                        line[at:at + 160], rx_at=at, tx_now=at + 160)]
+                self.assertIsNotNone(c.info0a)
+                self.assertNotIn("info0d", signals)
+
     def test_info1a_timeout_retrain_is_disabled_by_default(self):
         c = V90DigitalPhase2Controller()
         c.start(0)
@@ -165,13 +205,126 @@ class DigitalPhase2ControlTests(unittest.TestCase):
         self.assertIsNone(c._missing_tone_a_reversal_deadline_at)
 
         # §9.2.1.2.4 conditions the receiver for Tone A and continues through
-        # §9.2.1.1.7. INFO1d still requires both Tone A and the local L2 echo.
+        # §9.2.1.1.7. The default policy still requires the local L2 echo.
         c.feed("tone_a", deadline + 3000)
         echo_at = c.l2_started_at + 400 * 8
         info = c.feed("l2_echo_complete", echo_at)
         self.assertEqual([action.signal for action in info],
                          ["info1d", "silence"])
         self.assertEqual(c.state, c.WAIT_INFO1A)
+
+    def test_no_echo_policy_advances_after_550ms_plus_rtd_window(self):
+        c = self._to_second_probe(l2_echo_window_policy="advance-after-window")
+        c.feed("tone_a_reversal_after_l2", 9500, now=9510)
+        c.feed("tone_a", c.l2_started_at + 1000)
+        deadline = c.l2_started_at + int(.550 * 8000) + c.rtd_samples
+        self.assertEqual(c.tick(deadline - 1), [])
+        self.assertEqual(c.state, c.TX_PROBE)
+
+        actions = c.tick(deadline)
+        self.assertEqual([(action.signal, action.at) for action in actions], [
+            ("info1d", deadline), ("silence", None)])
+        self.assertEqual(c.state, c.WAIT_INFO1A)
+        self.assertEqual(c.events, [("l2-echo-window-elapsed-without-echo", {
+            "at": deadline, "deadline": deadline,
+            "window_samples": deadline - c.l2_started_at,
+            "window_ms": (deadline - c.l2_started_at) * 1000 / 8000,
+            "rtd_samples": c.rtd_samples,
+        })])
+
+    def test_on_tone_a_policy_sends_info1d_and_interrupts_l2_immediately(self):
+        c = self._to_second_probe(l2_echo_window_policy="on-tone-a")
+        c.feed("tone_a_reversal_after_l2", 9500, now=9510)
+        tone_a_at = c.l2_started_at + 900
+
+        actions = c.feed("tone_a", tone_a_at, now=tone_a_at + 16)
+
+        self.assertEqual([(action.signal, action.at, action.interrupt_l2)
+                          for action in actions], [
+            ("info1d", tone_a_at + 16, True),
+            ("silence", None, False),
+        ])
+        self.assertEqual(c.state, c.WAIT_INFO1A)
+        self.assertEqual(c.events, [("l2-echo-window-ended-on-tone-a", {
+            "at": tone_a_at + 16,
+            "l2_started_at": c.l2_started_at,
+            "tone_a_at": tone_a_at,
+        })])
+
+    def test_on_tone_a_before_l2_start_defers_info1d_until_l2_can_start(self):
+        c = self._to_second_probe(l2_echo_window_policy="on-tone-a")
+        c.feed("tone_a_reversal_after_l2", 9500, now=9510)
+        tone_a_at = c.l2_started_at - 80
+        self.assertEqual(c.feed("tone_a", tone_a_at), [])
+        self.assertEqual(c.state, c.TX_PROBE)
+
+        actions = c.tick(c.l2_started_at)
+
+        self.assertEqual([(action.signal, action.at, action.interrupt_l2)
+                          for action in actions], [
+            ("info1d", c.l2_started_at, True),
+            ("silence", None, False),
+        ])
+        self.assertEqual(c.state, c.WAIT_INFO1A)
+        self.assertEqual(c.events[-1], ("l2-echo-window-ended-on-tone-a", {
+            "at": c.l2_started_at,
+            "l2_started_at": c.l2_started_at,
+            "tone_a_at": None,
+            "deferred_until_l2_start": True,
+        }))
+
+    def test_late_tone_a_advances_without_waiting_for_tick_and_ignores_late_echo(self):
+        c = self._to_second_probe(l2_echo_window_policy="advance-after-window")
+        c.feed("tone_a_reversal_after_l2", 9500, now=9510)
+        echo_deadline = c._l2_echo_deadline_at()
+        tone_a_at = echo_deadline + 200
+        self.assertLess(tone_a_at, c._tone_a_deadline_at)
+
+        actions = c.feed("tone_a", tone_a_at, now=tone_a_at + 4)
+        self.assertEqual([action.signal for action in actions],
+                         ["info1d", "silence"])
+        self.assertEqual(c.state, c.WAIT_INFO1A)
+        self.assertEqual(c.events[-1][0],
+                         "l2-echo-window-elapsed-without-echo")
+        self.assertEqual(c.events[-1][1]["at"], tone_a_at + 4)
+
+        # An echo reported after INFO1d belongs to the completed observation
+        # window and must not throw or alter the next state.
+        self.assertEqual(c.feed("l2_echo_complete", tone_a_at + 100), [])
+        self.assertEqual(c.state, c.WAIT_INFO1A)
+
+    def test_no_tone_a_still_times_out_under_advance_policy(self):
+        c = self._to_second_probe(l2_echo_window_policy="advance-after-window")
+        c.feed("tone_a_reversal_after_l2", 9500, now=9510)
+        deadline = c._tone_a_deadline_at
+        actions = c.tick(deadline)
+        self.assertEqual(c.state, c.FAILED)
+        self.assertEqual([action.signal for action in actions],
+                         ["retrain-timeout"])
+        self.assertEqual(c.events, [])
+
+    def test_retry_paths_clear_the_echo_window_advance_flag(self):
+        c = self._to_second_probe(l2_echo_window_policy="advance-after-window")
+        c._l2_echo_window_advanced = True
+        # Ordinary next-attempt start.
+        c.feed("tone_a_reversal_after_l2", 9500, now=9510)
+        self.assertFalse(c._l2_echo_window_advanced)
+
+        # The missing-Tone-A-reversal recovery starts a fresh local L2 too.
+        c = self._to_second_probe(l2_echo_window_policy="advance-after-window")
+        c._l2_echo_window_advanced = True
+        recovery_deadline = c._missing_tone_a_reversal_deadline_at
+        actions = c.tick(recovery_deadline)
+        self.assertTrue(any(action.signal == "l2" for action in actions))
+        self.assertFalse(c._l2_echo_window_advanced)
+
+    def test_default_no_echo_policy_preserves_existing_wait(self):
+        c = self._to_second_probe()
+        c.feed("tone_a_reversal_after_l2", 9500, now=9510)
+        c.feed("tone_a", c.l2_started_at + 1000)
+        deadline = c.l2_started_at + int(.550 * 8000) + c.rtd_samples
+        self.assertEqual(c.tick(deadline), [])
+        self.assertEqual(c.state, c.TX_PROBE)
 
     def test_tone_a_reversal_at_recovery_deadline_takes_recovery_branch(self):
         c = self._to_second_probe()
@@ -195,6 +348,28 @@ class DigitalPhase2ControlTests(unittest.TestCase):
         self.assertEqual(c.state, c.WAIT_INFO1A)
         self.assertEqual([a.signal for a in actions], ["info1d", "silence"])
         self.assertEqual(actions[0].at, tone_a_at)
+
+    def test_tone_a_before_info0a_repeats_info0d_then_acknowledges_retry(self):
+        c = V90DigitalPhase2Controller()
+        c.start(600)
+        first = c.feed("tone_a", 900, now=1000)
+        self.assertEqual(
+            [(action.signal, action.value, action.at, action.after)
+             for action in first],
+            [("info0d", 0, None, "current-info0d-complete"),
+             ("tone_b", None, None, "info0d-complete")])
+        self.assertTrue(c._info0a_retry_requested)
+        self.assertEqual(c.feed("tone_a", 1100, now=1150), [])
+
+        # The first CRC-valid frame after requesting the retry receives the
+        # ACK bit, just like an INFO0a retransmission after a duplicate.
+        retry = c.feed("info0a", 1200, now=1300,
+                       payload={"ack_info0d": 0, "rate3429": 1})
+        self.assertEqual([action.signal for action in retry],
+                         ["info0d", "tone_b"])
+        self.assertEqual(retry[0].value, 1)
+        self.assertFalse(c._info0a_retry_requested)
+        self.assertEqual(c.info0a["rate3429"], 1)
 
     def test_repeated_info0a_requests_deferred_acknowledged_info0d(self):
         c = V90DigitalPhase2Controller()
@@ -406,13 +581,14 @@ class DigitalPhase2ControlTests(unittest.TestCase):
         self.assertEqual([action.signal for action in actions],
                          ["retrain-timeout"])
 
-    def test_events_before_start_and_out_of_order_are_rejected(self):
+    def test_event_before_start_is_rejected_and_early_tone_a_requests_info0a(self):
         c = V90DigitalPhase2Controller()
         with self.assertRaisesRegex(RuntimeError, "start Phase 2"):
             c.feed("tone_a", 0)
         c.start(0)
-        with self.assertRaisesRegex(ValueError, "invalid in state"):
-            c.feed("tone_a", 1)
+        retry = c.feed("tone_a", 1)
+        self.assertEqual([action.signal for action in retry], ["info0d", "tone_b"])
+        self.assertTrue(c._info0a_retry_requested)
 
 
 if __name__ == "__main__":

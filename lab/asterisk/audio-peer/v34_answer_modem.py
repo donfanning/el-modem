@@ -45,6 +45,7 @@ class V34AnswerModem(V42Layer):
         self._tone_b_run = 0
         self.answerer = self._new_answerer()
         self._v8 = V8Negotiator(False, modulations=V8_MOD_V34, protocols=v8_protocols)
+        self._v8_mod_v34 = V8_MOD_V34
         self._phase = "v8"
         if not with_v8:                                     # V.8 already done by the caller of this engine (autochain.py)
             self._v8, self._phase = None, "p2"
@@ -257,6 +258,10 @@ class V34AnswerModem(V42Layer):
             self._v8.rx(x.tolist())
             if self._v8.status == 2:
                 self._ev("V.8 complete: " + str(self._v8.result))
+                if not (int((self._v8.result or {}).get("modulations", 0)) & self._v8_mod_v34):
+                    self._fail("V.8: no common modulation (caller CM does not offer V.34)")
+                    self._rx_media_deadline = None
+                    return b""
                 self._phase = "p2"
                 self.answerer.rx_t = 0
                 self.answerer.t = 0

@@ -52,6 +52,46 @@ _DEFAULT_CP_PROFILE = {
 _DECODERS = {"pcmu": ulaw_to_linear, "pcma": alaw_to_linear}
 _ENCODERS = {"pcmu": linear_to_ulaw, "pcma": linear_to_alaw}
 _SILENCE = {"pcmu": 0xff, "pcma": 0xd5}
+# Longest RTP gap concealed as silence once data flows: 1.4 s, a modem's default S10 carrier-loss time and the V.92
+# downstream erasure limit. The data receivers ride it out and LAPM retransmits (T401 is at least 1.5 s); Phase 2
+# stays fail-closed unless its own policy says otherwise. A 400 ms ZeroTier outage ended a relay call at 300 ms
+# (2026-11-19); a WAN relay path has seen 0.4-3.8 s ones.
+DATA_GAP_FILL_MAX_SAMPLES = 11200
+
+
+def prepare_v92_analogue_session(profile: dict, law: str):
+    """Load and construct opt-in V.92 caller state before real-time media."""
+    import v92_info  # noqa: F401 -- INFO0a/INFO1a support is used by this profile
+    from v92_analogue_session import V92AnalogueSession
+    from v92_qualification_helpers import lapm_detect_required  # noqa: F401
+
+    # The digital-to-analogue rate we request in CPu: (drn + 20) * 8000/6, up to DRN 22 (56,000); the
+    # constellations come from v92_phase4_controller.downstream_cpu_constellations. 2 (29,333) was the
+    # bring-up default.
+    drn_down = profile.get("v92_downstream_drn", 2)
+    if isinstance(drn_down, bool) or not isinstance(drn_down, int) or not 1 <= drn_down <= 22:
+        raise ValueError("v92_downstream_drn must be an integer in 1..22")
+    return V92AnalogueSession(
+        law=law,
+        drn_down=drn_down,
+        dil_ucodes=tuple(profile.get("v92_dil_ucodes", ())),
+        fractional_tx_timing=bool(profile.get("v92_fractional_tx_timing", False)),
+        enable_fast_parameter_exchange=bool(
+            profile.get("v92_fast_parameter_exchange", False)),
+        # Answer a digital modem's rate renegotiation (Rd, clause 9.8): Astound's server starts one about 3.6 s into
+        # data, and a caller that ignores it reads TRN2d as data and loses the link (calls 4 and 5, 2026-11-19).
+        enable_rate_renegotiation=bool(profile.get("v92_rate_renegotiation", False)),
+        # Lab options for a digital modem that rates our upstream too high (v92_phase4_controller.analogue_side).
+        trn2u_noise=float(profile.get("v92_trn2u_noise", 0.0)),
+        pad_aware_upstream=bool(profile.get("v92_pad_aware_upstream", False)),
+        # Strip the runs of marks Astound inserts into a 56000 downstream (v92_analogue_session.DownstreamMarkFill).
+        downstream_mark_fill=bool(profile.get("v92_downstream_mark_fill", False)),
+        # The negotiated V.8 protocol mask is not known until Phase 2. Set the
+        # final LAPM detection policy on this unused session at handoff.
+        lapm_detect=True,
+        v42bis_compression=profile.get("v92_v42bis_compression"),
+        v42_compression_recovery=bool(
+            profile.get("v92_v42_compression_recovery", False)))
 
 
 def _omit_ucode_zero(masks, *, field_name: str):
@@ -191,6 +231,8 @@ class V90AnalogueCallerPhase2Engine:
         the fallback modem's link using the user's configured policy.
         """
         fallback = self._v34_fallback_engine
+        if self._v92_session is not None:
+            return True
         return bool(fallback is not None
                     and getattr(fallback, "supports_v42", True))
 
@@ -205,7 +247,7 @@ class V90AnalogueCallerPhase2Engine:
         # fallback. V.42 §7.2.1.1 derives LAPM roles from the carrier role
         # assigned by the modulation Recommendation, so this side is the
         # LAPM answerer even though it originated the PSTN call.
-        return False
+        return self._v92_session is not None
 
     def start_v42(self, *args, **kwargs) -> None:
         fallback = self._v34_fallback_engine
@@ -218,13 +260,17 @@ class V90AnalogueCallerPhase2Engine:
         fallback = self._v34_fallback_engine
         if fallback is not None:
             return getattr(fallback, "_v42", None)
+        if self._v92_session is not None:
+            return self._v92_session.lapm
         phase4 = self._phase4_controller
         link = None if phase4 is None else phase4.lapm
         return None if link is None else getattr(link, "_v42", None)
 
     def __init__(self, *, role: str, negotiation: dict, media_at: int,
                  media_origin: float, law: str, profile: dict,
-                 phase1_silence_samples: int = 0):
+                 phase1_silence_samples: int = 0,
+                 v92_prepared_session=None,
+                 v92_prepare_error: str | None = None):
         if role != "analogue-caller":
             raise ValueError("caller engine requires the analogue-caller role")
         if int(negotiation.get("pcm_negotiated_bits", 0)) != V8_PCM_ANALOG:
@@ -295,6 +341,14 @@ class V90AnalogueCallerPhase2Engine:
             raise ValueError("phase2_rtp_gap_max_samples must be an integer in 0..1600")
         if phase2_gap_policy == "fill_silence" and phase2_gap_max_samples <= 0:
             raise ValueError("fill_silence requires a positive Phase 2 gap limit")
+        # V.92 Phase 3/4 training under the same fill_silence policy. Filled silence keeps the sample clock, so a
+        # dropout costs training symbols, not alignment; a 60 ms gap ended an Astound call there (2026-11-19).
+        v92_training_gap_max_samples = profile.get(
+            "v92_training_rtp_gap_max_samples", phase2_gap_max_samples)
+        if (isinstance(v92_training_gap_max_samples, bool)
+                or not isinstance(v92_training_gap_max_samples, int)
+                or not 0 <= v92_training_gap_max_samples <= 3200):
+            raise ValueError("v92_training_rtp_gap_max_samples must be an integer in 0..3200")
         clock_low_delay_percentile = profile.get(
             "phase2_clock_low_delay_percentile", 15.0)
         if (isinstance(clock_low_delay_percentile, bool)
@@ -322,12 +376,38 @@ class V90AnalogueCallerPhase2Engine:
                 or not 6400 <= clock_min_fit_span <= 64000):
             raise ValueError(
                 "phase2_clock_min_fit_span_samples must be an integer in 6400..64000")
+        # As on the digital side (v90_dce_factory), a V.92 PCM-upstream call
+        # runs long enough for jitter to bend one clock fit past the envelope;
+        # it defaults to the finer delay-step detector and three epochs.
+        v92_pcm = bool(profile.get("v92_pcm_upstream", False))
+        clock_offset_step = profile.get(
+            "phase2_clock_offset_step_samples", 40 if v92_pcm else 80)
+        if (isinstance(clock_offset_step, bool)
+                or not isinstance(clock_offset_step, int)
+                or not 1 <= clock_offset_step <= 8000):
+            raise ValueError(
+                "phase2_clock_offset_step_samples must be an integer in 1..8000")
+        clock_violation_epochs = profile.get(
+            "phase2_clock_violation_epochs", 3 if v92_pcm else 1)
+        if (isinstance(clock_violation_epochs, bool)
+                or not isinstance(clock_violation_epochs, int)
+                or not 1 <= clock_violation_epochs <= 16):
+            raise ValueError(
+                "phase2_clock_violation_epochs must be an integer in 1..16")
         for key in ("nominal_peak", "probe_rms"):
             value = float(profile[key])
             if not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{key} must be finite and positive")
 
         self.law = law
+        self._negotiation = dict(negotiation)
+        self._v92_requested = bool(profile.get("v92_pcm_upstream", False))
+        self._v92_selected = False
+        self._v92_session = None
+        self._v92_start_at: int | None = None
+        self._v92_start_rx_at: int | None = None
+        self._v92_tx_cursor: int | None = None
+        self._v92_events_reported = 0
         self._decoder = _DECODERS[law]
         self._encoder = _ENCODERS[law]
         self._clock = RtpMediaClock(
@@ -335,7 +415,9 @@ class V90AnalogueCallerPhase2Engine:
             low_delay_percentile=float(clock_low_delay_percentile),
             max_rate_error_ppm=float(clock_max_rate_error_ppm),
             max_anchors=clock_anchor_limit,
-            min_fit_span_samples=clock_min_fit_span)
+            min_fit_span_samples=clock_min_fit_span,
+            offset_step_samples=clock_offset_step,
+            violation_epochs=clock_violation_epochs)
         self._media_at = int(media_at)
         self._rx_at = 0
         self._tx_media = int(media_at)
@@ -343,6 +425,7 @@ class V90AnalogueCallerPhase2Engine:
         self._phase2_start_at = int(media_at) + phase1_silence_samples
         self._phase2_gap_policy = phase2_gap_policy
         self._phase2_gap_max_samples = phase2_gap_max_samples
+        self._v92_training_gap_max_samples = v92_training_gap_max_samples
         self._closed = False
         self._failed = False
         self._lock = threading.RLock()
@@ -368,10 +451,11 @@ class V90AnalogueCallerPhase2Engine:
         # LAPM directly; V42_FORCE_DETECT_AFTER_V8=1 restores ODP/ADP
         # detection for comparison captures. captured peer answered V.34 XID
         # directly but cleared a V.90 call during ODP detection (2026-11-10).
-        v8_lapm = bool(int(negotiation.get("protocols", 0)) & V8_PROTOCOL_LAPM_V42)
-        self._phase4_lapm_detect = (
-            not v8_lapm
-            or os.environ.get("V42_FORCE_DETECT_AFTER_V8", "0") == "1")
+        from v92_qualification_helpers import lapm_detect_required
+        v8_protocols = int(negotiation.get("protocols", 0))
+        self._phase4_lapm_detect = lapm_detect_required(
+            v8_protocols,
+            force_detect=os.environ.get("V42_FORCE_DETECT_AFTER_V8", "0") == "1")
         hold_ms = self._profile.get("phase4_data_fault_hold_ms", 0)
         if (isinstance(hold_ms, bool) or not isinstance(hold_ms, int)
                 or not 0 <= hold_ms <= 10000):
@@ -410,6 +494,9 @@ class V90AnalogueCallerPhase2Engine:
         self._phase3_tx: V90AnaloguePhase3Transmitter | None = None
         self._phase3_retrain_attempts = 0
         self._phase2_retrain_attempts = 0
+        # Phase-3 retrains started because a V.92 digital modem never acknowledged CPt. Such a retrain
+        # re-runs Phase 2, which may still need its own recovery (Astound, 2026-11-20).
+        self._v92_cpt_retrains = 0
         self._phase3_start_at: int | None = None
         self._phase3_start_rx_at: int | None = None
         self._phase3_expected_dil = b""
@@ -429,9 +516,35 @@ class V90AnalogueCallerPhase2Engine:
         self._phase4_timeout_at: int | None = None
         self._phase4_start_at: int | None = None
         self._reported_phase4_events = 0
+        self._v92_prepared_session = v92_prepared_session
+        if self._v92_requested and self._v92_prepared_session is None:
+            # Direct engine users/tests do not go through the DCE factory.
+            # Prepare here before their first media feed.
+            try:
+                self._v92_prepared_session = prepare_v92_analogue_session(
+                    self._profile, self.law)
+            except Exception as exc:  # V.92 is optional; retain V.90 fallback.
+                self._disable_v92_offer()
+                v92_prepare_error = f"{type(exc).__name__}: {exc}"
+        if v92_prepare_error:
+            self.events.append(("v92-prewarm-failed", {
+                "error": v92_prepare_error, "fallback": "v90"}))
+
+    def _disable_v92_offer(self) -> None:
+        self._v92_requested = False
+        self._v92_prepared_session = None
+        info0a = dict(self._profile.get("info0a_fields", {}))
+        info0a["v92"] = False
+        self._profile["info0a_fields"] = info0a
+        self._renderer.info0a_fields = dict(info0a)
 
     def _build_info1a(self, mode: int) -> list[int]:
         """Build the selected protocol's INFO1a frame on the shared 2400-Hz carrier."""
+        if self._v92_selected:
+            from v92_info import build_info1a_pcm
+
+            return build_info1a_pcm(**dict(self._profile.get(
+                "v92_info1a_fields", {})))
         if self._v34_fallback_info1a_fields is not None:
             fields = dict(self._v34_fallback_info1a_fields)
             fields["sym_ans"] = fields["sym_call"] = int(mode)
@@ -440,6 +553,10 @@ class V90AnalogueCallerPhase2Engine:
 
     @property
     def connected(self) -> bool:
+        if self._v92_session is not None:
+            link = self._v92_session.lapm
+            return bool(self._v92_session.connected and link is not None
+                        and link.v42_resolved and not link.v42_lost)
         if self._v34_fallback_engine is not None:
             return bool(self._v34_fallback_engine.connected)
         phase4 = self._phase4_controller
@@ -453,6 +570,9 @@ class V90AnalogueCallerPhase2Engine:
         # The caller's transmit (analogue-to-digital, V.34 upstream) rate.
         if self._v34_fallback_engine is not None:
             return int(self._v34_fallback_engine.bit_rate)
+        if self._v92_session is not None:
+            link = self._v92_session.lapm
+            return 0 if link is None else int(getattr(link, "rate", 0))
         profile = (None if self._phase4_controller is None
                    else self._phase4_controller.upstream_profile)
         return 0 if profile is None else int(round(float(profile.rate)))
@@ -467,6 +587,11 @@ class V90AnalogueCallerPhase2Engine:
         """
         if self._v34_fallback_engine is not None:
             return int(getattr(self._v34_fallback_engine, "rx_bit_rate", 0))
+        if self._v92_session is not None:
+            side = getattr(self._v92_session, "_p4", None)
+            peer = None if side is None else getattr(side, "peer_cp", None)
+            rate = None if not isinstance(peer, dict) else peer.get("rate")
+            return 0 if rate is None else int(round(float(rate)))
         phase4 = self._phase4_controller
         if (phase4 is None or phase4.state != phase4.DATA
                 or not isinstance(phase4.cp_profile, dict)):
@@ -478,6 +603,9 @@ class V90AnalogueCallerPhase2Engine:
     def v42_mode(self) -> str:
         if self._v34_fallback_engine is not None:
             return self._v34_fallback_engine.v42_mode
+        if self._v92_session is not None:
+            link = self._v92_session.lapm
+            return "off" if link is None else link.v42_mode
         link = None if self._phase4_controller is None else self._phase4_controller.lapm
         return "off" if link is None else link.v42_mode
 
@@ -487,6 +615,9 @@ class V90AnalogueCallerPhase2Engine:
         if self._v34_fallback_engine is not None:
             return bool(getattr(self._v34_fallback_engine,
                                 "_v42_ever_established", False))
+        if self._v92_session is not None:
+            link = self._v92_session.lapm
+            return bool(getattr(link, "_v42_ever_established", False))
         phase4 = self._phase4_controller
         lapm = None if phase4 is None else getattr(phase4, "lapm", None)
         return bool(getattr(lapm, "_v42_ever_established", False))
@@ -495,6 +626,8 @@ class V90AnalogueCallerPhase2Engine:
     def v42_lost(self) -> bool:
         if self._v34_fallback_engine is not None:
             return bool(self._v34_fallback_engine.v42_lost)
+        if self._v92_session is not None:
+            return bool(self._v92_session.lapm and self._v92_session.lapm.v42_lost)
         link = None if self._phase4_controller is None else self._phase4_controller.lapm
         return False if link is None else bool(link.v42_lost)
 
@@ -502,6 +635,8 @@ class V90AnalogueCallerPhase2Engine:
     def v42_resolved(self) -> bool:
         if self._v34_fallback_engine is not None:
             return bool(self._v34_fallback_engine.v42_resolved)
+        if self._v92_session is not None:
+            return bool(self._v92_session.lapm and self._v92_session.lapm.v42_resolved)
         link = None if self._phase4_controller is None else self._phase4_controller.lapm
         return bool(link is not None and link.v42_resolved)
 
@@ -509,6 +644,9 @@ class V90AnalogueCallerPhase2Engine:
     def v42_compression(self):
         if self._v34_fallback_engine is not None:
             return self._v34_fallback_engine.v42_compression
+        if self._v92_session is not None:
+            link = self._v92_session.lapm
+            return None if link is None else link.v42_compression
         link = None if self._phase4_controller is None else self._phase4_controller.lapm
         return None if link is None else link.v42_compression
 
@@ -529,10 +667,14 @@ class V90AnalogueCallerPhase2Engine:
     def phase3_state(self) -> str | None:
         if self._v34_fallback_engine is not None:
             return str(self._v34_fallback_engine.answerer.stage)
+        if self._v92_session is not None:
+            return str(self._v92_session.stage)
         return None if self._phase3_controller is None else self._phase3_controller.state
 
     @property
     def phase4_state(self) -> str | None:
+        if self._v92_session is not None:
+            return str(self._v92_session.stage)
         return None if self._phase4_controller is None else self._phase4_controller.state
 
     @property
@@ -667,6 +809,9 @@ class V90AnalogueCallerPhase2Engine:
     def pending_bits(self) -> int:
         if self._v34_fallback_engine is not None:
             return int(self._v34_fallback_engine.pending_bits())
+        if self._v92_session is not None:
+            link = self._v92_session.lapm
+            return 0 if link is None else int(link.pending_bits())
         phase4 = self._phase4_controller
         if phase4 is not None and phase4.lapm is not None:
             return int(phase4.lapm.pending_bits())
@@ -685,6 +830,38 @@ class V90AnalogueCallerPhase2Engine:
                 return samples
             start = self._tx_media
             pcm = self._renderer.render(count)
+            timing_session = self._v92_session or self._v92_prepared_session
+            fractional_tx_timing = bool(
+                timing_session is not None
+                and timing_session._p3.fractional_tx_timing)
+            if self._v92_session is not None:
+                boundary = self._v92_start_at
+                if boundary is None or self._v92_tx_cursor is None:
+                    raise RuntimeError("V.92 caller session lacks its media boundary")
+                offset = max(0, min(count, boundary - start))
+                pcm[offset:] = 0.0
+                if fractional_tx_timing and offset:
+                    # Advance the same fixed-latency TX filter through the
+                    # Phase-2 prefix before the V.92 session filters its tail.
+                    pcm[:offset] = timing_session._apply_tx_fractional_timing(
+                        pcm[:offset], np.zeros(offset, dtype=float))
+                cursor = self._v92_tx_cursor
+                if cursor < start + offset:
+                    late = start + offset - cursor
+                    # TX can reach the INFO1a boundary before the receive
+                    # worker parses the peer's completed frame. Preserve the
+                    # absolute clock and report the missed prefix.
+                    self._v92_session.read(late)
+                    self._v92_tx_cursor += late
+                    self.events.append(("v92-phase3-tx-late", {
+                        "samples": late, "boundary": boundary,
+                        "tx_start": start,
+                    }))
+                active_start = max(start, boundary)
+                active_count = max(0, start + count - active_start)
+                if active_count:
+                    pcm[offset:offset + active_count] += self._v92_session.read(active_count)
+                    self._v92_tx_cursor += active_count
             if self._phase3_tx is not None:
                 cursor = self._phase3_tx.cursor
                 if cursor is None:
@@ -711,6 +888,12 @@ class V90AnalogueCallerPhase2Engine:
                     pcm[offset:] += self._phase3_tx.read_pcm(active_count)
             if self._phase4_media is not None:
                 pcm += self._phase4_media.read_pcm(count)
+            if fractional_tx_timing and self._v92_session is None:
+                # Apply the fixed 18-sample bulk delay from this Phase 2
+                # engine's start, so the fractional phase introduced at V.92
+                # Phase 3 does not insert a new latency step mid-handshake.
+                pcm = timing_session._apply_tx_fractional_timing(
+                    pcm, np.zeros(count, dtype=float))
             self._tx_media += count
             self._pump_timer()
             self._pump_tx_events()
@@ -767,6 +950,11 @@ class V90AnalogueCallerPhase2Engine:
                 self._pump_timer()
                 self._pump_tx_events()
                 self._maybe_start_phase3()
+                if self._v92_session is not None:
+                    if self._controller.state != self._last_state:
+                        self.events.append(("phase2-state", self._controller.state))
+                        self._last_state = self._controller.state
+                    return self._feed_v92(data)
                 self._feed_phase3(data)
                 if self._controller.state != self._last_state:
                     self.events.append(("phase2-state", self._controller.state))
@@ -802,6 +990,38 @@ class V90AnalogueCallerPhase2Engine:
             return actions
         info0d = self._controller.info0d
         info1d = self._controller.info1d
+        if self._v92_requested:
+            from v92_info import info0d_flags, pcm_upstream_supported
+
+            peer_v92 = bool(isinstance(info0d, dict)
+                            and info0d_flags(info0d)["v92"])
+            peer_pcm = False
+            try:
+                peer_pcm = pcm_upstream_supported(info1d)
+            except (KeyError, TypeError, ValueError):
+                pass
+            v8_lapm = bool(int(self._negotiation.get("protocols", 0))
+                           & V8_PROTOCOL_LAPM_V42)
+            self.events.append(("v92-caller-capability-check", {
+                "local_v92_pcm_upstream_opt_in": True,
+                "peer_info0d_v92": peer_v92,
+                "peer_info1d_pcm_upstream": peer_pcm,
+                "v8_protocols": int(self._negotiation.get("protocols", 0)),
+                "v8_lapm_negotiated": v8_lapm,
+            }))
+            self._v92_selected = peer_v92 and peer_pcm and v8_lapm
+            if self._v92_selected:
+                rewritten = [
+                    replace(action, signal="handoff-v92-phase3")
+                    if getattr(action, "signal", None) == "handoff-v90-phase3"
+                    else action for action in actions]
+                self.events.append(("v92-caller-selected", {
+                    "info1a": "table18-pcm-upstream"}))
+                return rewritten
+            reason = ("peer-not-v92" if not peer_v92 else
+                      "peer-no-pcm-upstream" if not peer_pcm else
+                      "v8-lapm-not-negotiated")
+            self.events.append(("v92-caller-fallback-v90", {"reason": reason}))
         preferred = int(self._profile_info1a_fields.get(
             "analog_symbol_rate", 5))
         selected = select_v90_analogue_symbol_rate(
@@ -829,6 +1049,7 @@ class V90AnalogueCallerPhase2Engine:
                         "freq_offset", 0)),
                 }
                 self._controller.mode = v34_selected
+                self._v92_selected = False
                 self.events.append(("phase2-v34-fallback-selected", {
                     "symbol_rate_index": v34_selected,
                     "baud": v34_tx.SYMBOL_RATES[v34_selected],
@@ -894,6 +1115,59 @@ class V90AnalogueCallerPhase2Engine:
                     result = fallback.feed_pcm(concealed.tobytes())
                     self._rx_at += int(samples)
                     return result
+                if (self._in_data_mode() and samples <= DATA_GAP_FILL_MAX_SAMPLES
+                        and not self._closed and not self._failed):
+                    gap_context = dict(context)
+                    gap_context["payload_samples"] = int(samples)
+                    result = self.feed_g711(
+                        bytes((_SILENCE[self.law],)) * int(samples), codec, gap_context)
+                    if not self._failed:
+                        self.events.append(("data-rx-gap-filled", {
+                            "samples": int(samples), "context": dict(context),
+                        }))
+                    return result
+                if self._v92_session is not None:
+                    if (self._phase2_gap_policy == "fill_silence"
+                            and samples <= self._v92_training_gap_max_samples
+                            and not self._closed and not self._failed):
+                        gap_context = dict(context)
+                        gap_context["payload_samples"] = int(samples)
+                        result = self.feed_g711(
+                            bytes((_SILENCE[self.law],)) * int(samples),
+                            codec, gap_context)
+                        if not self._failed:
+                            self.events.append(("v92-rx-gap-filled", {
+                                "samples": int(samples),
+                                "context": dict(context),
+                            }))
+                        return result
+                    self._rx_at += int(samples)
+                    self._failed = True
+                    received_at = context.get("received_at")
+                    dequeued = context.get("dequeued")
+                    rx_backlog_seconds = None
+                    if (isinstance(received_at, (int, float))
+                            and isinstance(dequeued, (int, float))):
+                        rx_backlog_seconds = max(0.0, float(dequeued) - float(received_at))
+                    # A sequence/timestamp gap tells us samples are missing,
+                    # not where they were lost. When the RTP worker is already
+                    # more than two frame periods behind the socket arrival,
+                    # describe the locally observed condition instead of
+                    # blaming the network. Keep the generic wording when the
+                    # arrival/dequeue timestamps do not support attribution.
+                    local_overrun = (rx_backlog_seconds is not None
+                                     and rx_backlog_seconds > 0.040)
+                    self.events.append(("v92-caller-failed", {
+                        "reason": (
+                            "local RX backlog/overrun during V.92 analogue-caller data"
+                            if local_overrun else
+                            "RTP sample gap with loss location unknown during V.92 analogue-caller data"
+                        ),
+                        "samples": int(samples),
+                        "rx_backlog_seconds": rx_backlog_seconds,
+                        "context": dict(context),
+                    }))
+                    return b""
                 if (self._phase3_session is None
                         and self._phase2_gap_policy == "fill_silence"
                         and samples <= self._phase2_gap_max_samples
@@ -927,6 +1201,17 @@ class V90AnalogueCallerPhase2Engine:
                 }))
         return b""
 
+    def _in_data_mode(self) -> bool:
+        """Whether a concealed gap lands in data a receiver can ride out.
+
+        V.92 tolerates erased downstream frames; V.90 does only with ``phase4_data_fault_hold_ms``.
+        """
+        if self._v92_session is not None:
+            return bool(getattr(self._v92_session, "connected", False))
+        controller = self._phase4_controller
+        return (controller is not None and controller.state == controller.DATA
+                and self._phase4_data_fault_hold_frames > 0)
+
     def feed_bytes(self, data: bytes) -> None:
         with self._lock:
             if self._closed:
@@ -934,6 +1219,9 @@ class V90AnalogueCallerPhase2Engine:
             payload = bytes(data)
             if self._v34_fallback_engine is not None:
                 self._v34_fallback_engine.feed_bytes(payload)
+                return
+            if self._v92_session is not None:
+                self._v92_session.feed_bytes(payload)
                 return
             if (self._phase4_controller is not None
                     and self._phase4_controller.lapm is not None):
@@ -988,7 +1276,7 @@ class V90AnalogueCallerPhase2Engine:
         """Restart V.90 Phase 2 once after its bounded recovery handoff."""
         info0d = self._controller.info0d
         if (self._phase2_retrain_attempts >= 1
-                or self._phase3_retrain_attempts >= 1):
+                or self._phase3_retrain_attempts - self._v92_cpt_retrains >= 1):
             self._controller.state = self._controller.FAILED
             self._failed = True
             self.events.append(("phase2-retrain-failed", {
@@ -1242,7 +1530,7 @@ class V90AnalogueCallerPhase2Engine:
             self._failed = True
 
     def _maybe_start_phase3(self) -> None:
-        if self._phase3_session is not None:
+        if self._phase3_session is not None or self._v92_session is not None:
             return
         if (self._controller.state != self._controller.COMPLETE
                 or self._controller.mode != 6
@@ -1250,6 +1538,37 @@ class V90AnalogueCallerPhase2Engine:
             return
         start_at = self._renderer._completion.get("info1a-complete")
         if start_at is None:
+            return
+        if self._v92_selected:
+            protocols = int(self._negotiation.get("protocols", 0))
+            from v92_qualification_helpers import lapm_detect_required
+            # The complete module graph and Phase-3 state were prepared when
+            # this opted-in call's factory ran, before RTP media.
+            self._v92_session = self._v92_prepared_session
+            self._v92_prepared_session = None
+            if self._v92_session is None:
+                # Defensive invariant: never leave the receive callback to
+                # import/construct the V.92 engine on first use.
+                self._v92_selected = False
+                self._failed = True
+                self.events.append(("v92-prewarm-missing", {
+                    "reason": "selected V.92 without prepared session"}))
+                return
+            from v92_qualification_helpers import lapm_detect_required
+            self._v92_session._lapm_detect = lapm_detect_required(
+                protocols)
+            self._v92_start_at = int(start_at)
+            self._v92_start_rx_at = self._clock.media_to_rx(self._v92_start_at)
+            self._v92_tx_cursor = int(start_at)
+            self.kind = "v92"
+            self.events.append(("v92-phase3-start", {
+                "tx_sample": self._v92_start_at,
+                "rx_sample": self._v92_start_rx_at,
+                "direct_lapm": bool(protocols & V8_PROTOCOL_LAPM_V42),
+            }))
+            if self._queued_dte:
+                self._v92_session.feed_bytes(bytes(self._queued_dte))
+                self._queued_dte.clear()
             return
         # The signal builder owns INFO1a fields; the selected baud is the
         # profile's analogue symbol-rate index, and the far-end INFO1d block
@@ -1307,6 +1626,57 @@ class V90AnalogueCallerPhase2Engine:
             "dil_codewords": len(self._phase3_expected_dil),
             "initial_actions": [action.signal for action in actions],
         }))
+
+    def _feed_v92(self, raw_g711: bytes) -> bytes:
+        session = self._v92_session
+        boundary = self._v92_start_rx_at
+        if session is None or boundary is None or not raw_g711:
+            return b""
+        rx_start = self._rx_at - len(raw_g711)
+        if rx_start + len(raw_g711) <= boundary:
+            return b""
+        offset = max(0, boundary - rx_start)
+        payload = raw_g711[offset:]
+        if payload:
+            samples = np.fromiter((self._decoder(value) for value in payload),
+                                  dtype=float, count=len(payload))
+            session.feed(samples)
+        while self._v92_events_reported < len(session.events):
+            name, details = session.events[self._v92_events_reported]
+            self.events.append((str(name), details))
+            self._v92_events_reported += 1
+        if session.stage == "failed":
+            if getattr(session, "retrain_requested", False):
+                received = session.take_received()
+                self._retrain_from_v92_phase3(
+                    getattr(session, "retrain_reason", None)
+                    or "V.92 digital modem did not acknowledge CPt with R-bar-i")
+                return received
+            self._failed = True
+            self.events.append(("v92-caller-failed", {
+                "reason": "V.92 analogue session entered failed state"}))
+        return session.take_received()
+
+    def _retrain_from_v92_phase3(self, reason: str) -> None:
+        """Drop the stalled V.92 session and start an analogue-initiated retrain (V.92 9.5.2.2, 9.7.2.1).
+
+        A fresh session (about 2 ms to build) takes the next Phase 3 if the retrain selects V.92 again; the
+        retrain itself is the bounded V.90 Phase-3 recovery, so a second stall disconnects."""
+        media_at = max(self._clock.tx_now(), self._tx_media)
+        self._v92_session = None
+        self._v92_start_at = self._v92_start_rx_at = self._v92_tx_cursor = None
+        self._v92_events_reported = 0
+        self.kind = "v90"
+        try:
+            self._v92_prepared_session = prepare_v92_analogue_session(self._profile, self.law)
+        except Exception as exc:  # V.92 is optional; the retrain can still select V.90.
+            self._disable_v92_offer()
+            self.events.append(("v92-prewarm-failed", {
+                "error": f"{type(exc).__name__}: {exc}", "fallback": "v90"}))
+        self.events.append(("v92-phase3-retrain", {"reason": reason, "at": int(media_at)}))
+        if self._phase3_retrain_attempts < 1:
+            self._v92_cpt_retrains += 1
+        self._start_phase3_retrain(media_at=media_at, reason=reason)
 
     def _feed_phase3(self, raw_g711: bytes) -> None:
         if (self._phase3_session is None or self._phase3_start_at is None
@@ -1592,12 +1962,29 @@ def build_v90_analogue_caller_engine(*, law: str, profile: dict,
                                      phase1_silence_samples: int = 0):
     """Create a V8Chain factory for an explicitly configured caller profile."""
     configured = dict(profile)
+    prepared_session = None
+    prepare_error = None
+    if configured.get("v92_pcm_upstream", False):
+        try:
+            # This factory is built while OnlineAudioSession is being set up,
+            # before its media threads start. V8Chain invokes the returned
+            # factory from its receive callback later, so do all optional V.92
+            # imports and Phase-3 construction here instead.
+            prepared_session = prepare_v92_analogue_session(configured, law)
+        except Exception as exc:  # fail safe to V.90 when optional setup fails
+            prepare_error = f"{type(exc).__name__}: {exc}"
+            configured["v92_pcm_upstream"] = False
+            info0a = dict(configured.get("info0a_fields", {}))
+            info0a["v92"] = False
+            configured["info0a_fields"] = info0a
 
     def factory(*, role: str, negotiation: dict, media_at: int,
                 media_origin: float):
         return V90AnalogueCallerPhase2Engine(
             role=role, negotiation=negotiation, media_at=media_at,
             media_origin=media_origin, law=law, profile=configured,
-            phase1_silence_samples=phase1_silence_samples)
+            phase1_silence_samples=phase1_silence_samples,
+            v92_prepared_session=prepared_session,
+            v92_prepare_error=prepare_error)
 
     return factory

@@ -79,6 +79,17 @@ class V90MpPolicyTests(unittest.TestCase):
                                   precoder=parsed["precoder"]),
                          REFERENCE_PEER_MP_TYPE1[:192])
 
+    def test_mp_fill_reaches_a_whole_mapper_frame(self):
+        # Table 16: fill to the next multiple of 6 symbols, i.e. S+K bits.
+        for mp_type, frame_bits, length in ((0, 23, 92), (0, 22, 88), (0, 16, 96),
+                                            (1, 23, 207), (0, 6, 90)):
+            with self.subTest(mp_type=mp_type, frame_bits=frame_bits):
+                bits = build_mp(mp_type=mp_type, frame_bits=frame_bits)
+                self.assertEqual(len(bits), length)
+                self.assertTrue(parse_mp(bits))
+        with self.assertRaisesRegex(ValueError, "frame_bits"):
+            build_mp(frame_bits=0)
+
     def test_type1_mp_sets_precoder_nonlinear_and_shaping(self):
         cp = {"kind": "cp", "rate": 33600,
               "analog_rate_mask": (1 << 0) | (1 << 7) | (1 << 12)}

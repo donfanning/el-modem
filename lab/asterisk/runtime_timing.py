@@ -12,11 +12,12 @@ import threading
 class TimingTrace:
     LIMIT = 64
     KINDS = frozenset(('queue', 'queue_data', 'queue_startup', 'rx_processing', 'tx_processing', 'sender_late',
-                       'main_control', 'main_active', 'rtp_arrival_step',
+                       'tx_packet_gap', 'main_control', 'main_active', 'rtp_arrival_step',
                        'rtp_decode_step', 'clock_pair_span', 'clock_offset_step',
                        'tx_watchdog_startup', 'tx_watchdog_data'))
     THRESHOLDS = dict(queue_data=.050, queue_startup=.250, rx_processing=.020,
-                      tx_processing=.020, sender_late=.020, main_control=.020,
+                      tx_processing=.020, sender_late=.020, tx_packet_gap=.040,
+                      main_control=.020,
                       main_active=.040, clock_pair_span=.001, clock_offset_step=.002)
 
     def __init__(self):

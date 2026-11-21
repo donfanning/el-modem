@@ -10,6 +10,9 @@ An experimental, default-off native V.90 caller and digital-answerer path is
 included. The caller has limited live-call qualification; independent
 digital-answerer interoperability and bulk V.90 payload qualification remain
 open. See [V.90 qualification](docs/V90_QUALIFICATION.md).
+An experimental, default-off V.92 caller (PCM upstream) builds on that path. It
+has reached V.92 data with LAPM and a server login prompt on live calls to one
+commercial V.92 server; see [V.92 qualification](docs/V92_QUALIFICATION.md).
 The desktop factory profile requests LAPM and disables compression and echo
 cancellation. IAX2 calling is implemented over UDP with G.711 µ-law and
 automatic registration; configure a reachable IAX2 endpoint before selecting

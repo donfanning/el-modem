@@ -71,6 +71,11 @@ class V90DigitalAnswererPhase3:
             self.set_dil_descriptor(descriptor)
 
     @property
+    def samples_emitted(self) -> int:
+        """Symbols sent since the first Sd symbol; Phase 4 aligns Ri to this grid."""
+        return self._samples_emitted
+
+    @property
     def phase4_ready(self) -> bool:
         return self.state == self.PHASE4_READY
 
@@ -193,6 +198,7 @@ class V90DigitalAnswererPhase3:
             if self.state == self.DIL:
                 chunk = self._dil.read(max_samples - len(out))
                 out.extend(chunk)
+                self._samples_emitted += len(chunk)
                 if not chunk or self._dil.stopped:
                     self.state = self.PHASE4_READY
                     break

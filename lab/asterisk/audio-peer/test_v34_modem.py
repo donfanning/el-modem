@@ -14,6 +14,53 @@ except ImportError:
 
 @unittest.skipIf(numpy is None, "numpy not installed")
 class V34ModemPairTests(unittest.TestCase):
+    def test_v34_caller_rejects_v8_jm_with_no_common_modulation(self) -> None:
+        from v34_modem import V34Modem
+        from v8 import V8Negotiator
+
+        caller = V34Modem(data_rate=9600)
+        # The captured Patton JM selected no modulation from our V.34-only
+        # CM.  Model that standard response with a V.8 answerer that has no
+        # overlapping modulation, and ensure we don't enter V.34 Phase 2.
+        answerer = V8Negotiator(False, modulations=0)
+        for _ in range(400):
+            caller_tx = caller.tx_samples(160)
+            answerer_tx = answerer.tx(160)
+            caller.feed_pcm(struct.pack("<160h", *answerer_tx))
+            answerer.rx(caller_tx)
+            if caller.state == "failed":
+                break
+
+        self.assertEqual(caller._v8.result["modulations"], 0)
+        self.assertEqual(caller._phase, "failed")
+        self.assertEqual(caller.state, "failed")
+        self.assertIn("no common modulation", caller._failed_reason)
+        # V34Modem only mirrors the inner caller's events while in Phase 2;
+        # this failure correctly prevents that sync path from running. Inspect
+        # the source event list directly so the assertion can detect a bad
+        # transition into INFO0c.
+        self.assertFalse(any("sending INFO0c" in event
+                             for _, event in caller.caller.events))
+
+    def test_v34_answerer_rejects_cm_without_v34(self) -> None:
+        from v34_answer_modem import V34AnswerModem
+        from v8 import V8_MOD_V32, V8Negotiator
+
+        caller = V8Negotiator(True, modulations=V8_MOD_V32)
+        answerer = V34AnswerModem(data_rate=9600)
+        for _ in range(400):
+            caller_tx = caller.tx(160)
+            answerer_tx = answerer.tx_samples(160)
+            answerer.feed_pcm(struct.pack("<160h", *caller_tx))
+            caller.rx(answerer_tx)
+            if answerer.state == "failed":
+                break
+
+        self.assertEqual(answerer._v8.result["modulations"], 0)
+        self.assertEqual(answerer._phase, "failed")
+        self.assertEqual(answerer.state, "failed")
+        self.assertIn("no common modulation", answerer.failed_reason)
+
     def test_diagnostic_answer_tx_cap_preserves_receive_offer(self) -> None:
         from v34_answer_modem import V34AnswerModem
 

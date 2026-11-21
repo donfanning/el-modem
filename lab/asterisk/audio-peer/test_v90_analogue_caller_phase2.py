@@ -3,6 +3,8 @@ import os
 import socket
 import struct
 import sys
+import threading
+import queue
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -14,6 +16,7 @@ from v90_analogue_caller_engine import V90AnalogueCallerPhase2Engine
 from v90_analogue_caller_phase3 import V90AnalogueCallerPhase3
 from v90_analogue_downstream_rx import V90AnalogueDownstreamPhase3Receiver
 from v90_analogue_phase2_rx import (V90AnaloguePhase2Adapter,
+                                    V90AnaloguePhase2FrameRx,
                                     V90AnaloguePhase2SignalRx,
                                     AnaloguePhase2RxEvent)
 from v90_analogue_phase2_tx import (AnaloguePhase2Action,
@@ -31,6 +34,7 @@ import v34_data
 import v34_g711
 import v34_tx
 import v90_info_reference as v90
+import v92_info
 from g711 import alaw_to_linear, linear_to_alaw, linear_to_ulaw, ulaw_to_linear
 from v90_cp import parse_cp
 from v8 import V8_PCM_ANALOG, V8_PCM_DIGITAL, V8_PROTOCOL_LAPM_V42
@@ -517,6 +521,57 @@ def _start_to_tone_b_reversal_wait(*, late_l2_echo_policy="fail",
     return c
 
 
+class AnaloguePhase2V92InfoTests(unittest.TestCase):
+    def _info0a_bits(self, fields):
+        captured = {}
+
+        def capture(_self, bits, *args, **kwargs):
+            captured["bits"] = list(bits)
+            return np.zeros(1)
+
+        tx = V90AnaloguePhase2Transmitter(
+            info0a_fields=fields, info1a_builder=lambda mode: [0] * 70,
+            probe_builder=lambda duration, rms: np.zeros(1),
+            nominal_peak=1200, probe_rms=300)
+        with mock.patch("v34_info.InfoModulator.modulate", autospec=True,
+                        side_effect=capture):
+            tx._make_array(AnaloguePhase2Action(0, "info0a"), 0)
+        return captured["bits"]
+
+    def test_v92_caller_info0a_advertises_capability_bit(self):
+        bits = self._info0a_bits({"rate3429": 1, "disallow3429": 1,
+                                  "v92": True})
+        parsed = v92_info.parse_info0a(bits)
+        self.assertIsNotNone(parsed)
+        self.assertTrue(v92_info.info0a_flags(parsed)["v92"])
+        self.assertIsNone(v90.parse_info0a(bits))
+
+    def test_ordinary_v90_info0a_keeps_reserved_bits_clear(self):
+        bits = self._info0a_bits({"rate3429": 1, "disallow3429": 1})
+        self.assertIsNotNone(v90.parse_info0a(bits))
+        self.assertFalse(v92_info.info0a_flags(v92_info.parse_info0a(bits))["v92"])
+
+
+class AnaloguePhase2FrameRxTests(unittest.TestCase):
+    def test_repeated_info0d_frames_are_each_reported_once(self):
+        # A peer repeating INFO0d leaves several valid frames in one scan
+        # window; later scans must not report the earlier ones again.
+        frame = V90DigitalPhase2Signals().modulate_info0d()
+        line = np.zeros(12000)
+        starts = (1000, 2000, 3000)
+        for start in starts:
+            line[start:start + len(frame)] += frame
+        rx = V90AnaloguePhase2FrameRx()
+        events = []
+        for at in range(0, len(line), 160):
+            events.extend(rx.feed(line[at:at + 160], rx_at=at,
+                                  kinds=("info0d",)))
+        self.assertEqual(len(events), len(starts))
+        for event, start in zip(events, starts):
+            self.assertEqual(event.kind, "info0d")
+            self.assertLessEqual(abs(event.at - start), 50)
+
+
 class AnaloguePhase2SignalRxTests(unittest.TestCase):
     def test_g711_tone_b_reversal_at_live_boundary_under_both_laws(self):
         # The local SIP failures timed out after the caller reversed Tone A at
@@ -550,6 +605,252 @@ class AnaloguePhase2SignalRxTests(unittest.TestCase):
 
 
 class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
+    def test_production_v92_analogue_caller_pcmu_pcma_and_fpe(self):
+        upstream = bytes((index * 37 + 11) & 0xff for index in range(2048))
+        downstream = bytes((index * 53 + 7) & 0xff for index in range(2048))
+        for law in ("pcmu", "pcma"):
+            for fpe in (False, True):
+                with self.subTest(law=law, fpe=fpe):
+                    caller, answerer, rtp = self._run_production_paired_phase2(
+                        law, echo_delay_samples=320, echo_gain=0.25,
+                        answerer_echo_gain=0.25,
+                        paired_duration_samples=40 * 8000,
+                        v92_pcm_caller=True, v92_fpe=fpe,
+                        v92_payloads=(upstream, downstream))
+                    try:
+                        self.assertTrue(caller._v92_selected, caller.events[-20:])
+                        capability = next(
+                            details for name, details in caller.events
+                            if name == "v92-caller-capability-check")
+                        self.assertTrue(capability["peer_info0d_v92"])
+                        self.assertTrue(capability["peer_info1d_pcm_upstream"])
+                        self.assertIsNotNone(v92_info.parse_info1a_pcm(
+                            caller._build_info1a(6)))
+                        self.assertTrue(caller.connected, {
+                            "phase2": caller._controller.state,
+                            "caller_stage": (None if caller._v92_session is None
+                                             else caller._v92_session.stage),
+                            "caller_events": (caller.events[-20:]),
+                            "caller_session_events": (None if caller._v92_session is None
+                                                       else caller._v92_session.events[-20:]),
+                            "caller_lapm": (None if caller._v92_session is None
+                                            or caller._v92_session.lapm is None
+                                            else caller._v92_session.lapm.diagnostics()),
+                            "peer_state": answerer.phase3_state,
+                            "peer_events": (None if answerer._phase3 is None
+                                            else answerer._phase3.events[-20:]),
+                            "peer_lapm": (None if answerer._phase3 is None
+                                          or answerer._phase3.lapm is None
+                                          else answerer._phase3.lapm.diagnostics()),
+                        })
+                        self.assertEqual(caller._test_v92_caller_payload_rx,
+                                         downstream)
+                        self.assertEqual(caller._test_v92_answerer_payload_rx,
+                                         upstream)
+                        self.assertEqual(answerer._phase3.state, "data")
+                        analogue_lapm = caller._v92_session.lapm
+                        digital_lapm = answerer._phase3.lapm
+                        for link, payload_length in (
+                                (analogue_lapm, len(upstream)),
+                                (digital_lapm, len(downstream))):
+                            stats = link._v42.stats
+                            self.assertEqual(stats["wire_acked"], payload_length)
+                            self.assertEqual(stats.get("fcs_errors", 0), 0)
+                            self.assertEqual(stats.get("i_resent", 0), 0)
+                            self.assertEqual(stats.get("t401_expiries", 0), 0)
+                        self.assertFalse(getattr(analogue_lapm._v42,
+                                                 "_unacked", ()))
+                        self.assertFalse(getattr(digital_lapm._v42,
+                                                 "_unacked", ()))
+                        self.assertEqual(
+                            rtp._rtp_counts["late_or_duplicate_packets"], 0)
+                        self.assertEqual(rtp._rtp_counts["concealed_samples"], 0)
+                        self.assertEqual(rtp._rtp_counts["timestamp_gap_samples"], 0)
+                        if fpe:
+                            self.assertTrue(any(
+                                name == "v92-fpe-complete"
+                                for name, _ in caller._v92_session.events))
+                            self.assertTrue(any(
+                                name == "v92-fpe-complete"
+                                for name, _ in answerer._phase3.events))
+                    finally:
+                        rtp.stop()
+                        rtp._sock.close()
+                        caller.close()
+                        answerer.close()
+
+    def test_production_v92_paired_udp_wallclock_gate(self):
+        """Exercise production V.92 engines and DCE RTP ingress on real paced UDP."""
+        upstream = bytes((index * 29 + 3) & 0xff for index in range(512))
+        downstream = bytes((index * 47 + 9) & 0xff for index in range(512))
+        caller, answerer, rtp = self._run_production_paired_phase2(
+            "pcmu", echo_delay_samples=320, echo_gain=0.25,
+            answerer_echo_gain=0.25, paired_duration_samples=40 * 8000,
+            v92_pcm_caller=True, v92_payloads=(upstream, downstream),
+            wall_clock_paced=True, socket_transport=True)
+        try:
+            self.assertTrue(caller.connected, caller.events[-20:])
+            self.assertEqual(caller._test_v92_caller_payload_rx, downstream)
+            self.assertEqual(caller._test_v92_answerer_payload_rx, upstream)
+            metrics = caller._test_v92_realtime
+            self.assertTrue(metrics["socket_transport"])
+            self.assertTrue(metrics["wall_clock_paced"])
+            self.assertLessEqual(metrics["max_tick_lateness_seconds"], 0.040,
+                                 metrics)
+            for direction, durations in metrics["rx_processing_seconds"].items():
+                self.assertTrue(durations, direction)
+                self.assertLessEqual(max(durations), 0.020,
+                                     (direction, max(durations), metrics))
+            for direction, sends in metrics["tx_send_times"].items():
+                self.assertGreater(len(sends), 1, direction)
+                self.assertLessEqual(max(b - a for a, b in zip(sends, sends[1:])),
+                                     0.040, (direction, metrics))
+            for side in metrics["rtp_counts"].values():
+                self.assertEqual(side["timestamp_gap_samples"], 0)
+                self.assertEqual(side["concealed_samples"], 0)
+                self.assertEqual(side["late_or_duplicate_packets"], 0)
+            for link in (caller._v92_session.lapm, answerer._phase3.lapm):
+                self.assertEqual(link._v42.stats["wire_acked"], len(upstream))
+                self.assertEqual(link._v42.stats.get("fcs_errors", 0), 0)
+                self.assertEqual(link._v42.stats.get("i_resent", 0), 0)
+                self.assertFalse(link._v42._unacked)
+        finally:
+            rtp.stop()
+            rtp._sock.close()
+            caller.close()
+            answerer.close()
+
+    def test_production_v92_fractional_jp_phase4_exact_payload(self):
+        upstream = bytes((index * 31 + 19) & 0xff for index in range(1024))
+        downstream = bytes((index * 43 + 5) & 0xff for index in range(1024))
+        caller, answerer, rtp = self._run_production_paired_phase2(
+            "pcmu", echo_delay_samples=320, echo_gain=0.25,
+            answerer_echo_gain=0.25, paired_duration_samples=30 * 8000,
+            v92_pcm_caller=True, v92_fractional_tx_timing=True,
+            v92_payloads=(upstream, downstream))
+        try:
+            self.assertTrue(caller.connected, caller.events[-20:])
+            self.assertEqual(caller._test_v92_caller_payload_rx, downstream)
+            self.assertEqual(caller._test_v92_answerer_payload_rx, upstream)
+            phase = next(value for name, value in answerer._phase3.events
+                         if name == "phase3-su-phase")
+            self.assertAlmostEqual(phase["delay_samples"], 0.5, delta=0.01)
+            self.assertLess(abs(phase["jp_fraction"] - 0x8000), 64)
+            self.assertTrue(any(name == "phase3-trn1u-2"
+                                for name, _ in answerer._phase3.events))
+            self.assertAlmostEqual(caller._v92_session._p3._tx_fractional_delay,
+                                   1.0, delta=0.002)
+            self.assertEqual(answerer._phase3.state, "data")
+            for link in (caller._v92_session.lapm, answerer._phase3.lapm):
+                self.assertEqual(link._v42.stats["wire_acked"], len(upstream))
+                self.assertEqual(link._v42.stats.get("fcs_errors", 0), 0)
+                self.assertEqual(link._v42.stats.get("i_resent", 0), 0)
+        finally:
+            rtp.stop()
+            rtp._sock.close()
+            caller.close()
+            answerer.close()
+
+    def test_production_v92_paired_threaded_socket_wallclock_gate(self):
+        """Keep independent RTP TX/RX workers paced while production DSP runs."""
+        upstream = bytes((index * 29 + 3) & 0xff for index in range(512))
+        downstream = bytes((index * 47 + 9) & 0xff for index in range(512))
+        caller, answerer, rtp = self._run_production_paired_phase2(
+            "pcmu", echo_delay_samples=320, echo_gain=0.25,
+            answerer_echo_gain=0.25, paired_duration_samples=40 * 8000,
+            v92_pcm_caller=True, v92_fractional_tx_timing=True,
+            v92_payloads=(upstream, downstream),
+            wall_clock_paced=True, socket_transport=True,
+            threaded_v92_transport=True)
+        try:
+            self.assertTrue(caller.connected, caller.events[-30:])
+            self.assertEqual(caller._test_v92_answerer_payload_rx, upstream)
+            self.assertEqual(caller._test_v92_caller_payload_rx, downstream)
+            metrics = caller._test_v92_realtime
+            gate_report = {
+                "peaks": metrics["peaks"],
+                "max_rx_backlog_seconds": metrics["max_rx_backlog_seconds"],
+                "max_tx_send_gap_seconds": metrics["max_tx_send_gap_seconds"],
+                "frames_sent": metrics["frames_sent"],
+                "frames_received": metrics["frames_received"],
+                "rx_cpu_peak": metrics["peaks"]["rx_thread_cpu"],
+                "tx_cpu_peak": metrics["peaks"]["tx_thread_cpu"],
+                "rtp_counts": metrics["rtp_counts"],
+            }
+            self.assertTrue(metrics["threaded_transport"])
+            self.assertLessEqual(metrics["max_rx_backlog_seconds"], 0.040,
+                                 gate_report)
+            self.assertLessEqual(metrics["max_tx_send_gap_seconds"], 0.040,
+                                 gate_report)
+            self.assertGreaterEqual(
+                min(metrics["frames_sent"].values()), 500, gate_report)
+            for direction, durations in metrics["rx_processing_seconds"].items():
+                self.assertTrue(durations, direction)
+                self.assertLessEqual(max(durations), 0.040,
+                                     (direction, metrics["peaks"]["rx_processing"][direction],
+                                      gate_report))
+            for side in metrics["rtp_counts"].values():
+                self.assertEqual(side["timestamp_gap_samples"], 0)
+                self.assertEqual(side["concealed_samples"], 0)
+                self.assertEqual(side["late_or_duplicate_packets"], 0)
+            for link in (caller._v92_session.lapm, answerer._phase3.lapm):
+                self.assertEqual(link._v42.stats["wire_acked"], len(upstream))
+                self.assertEqual(link._v42.stats.get("fcs_errors", 0), 0)
+                self.assertEqual(link._v42.stats.get("i_resent", 0), 0)
+                self.assertFalse(link._v42._unacked)
+        finally:
+            rtp.stop()
+            rtp._sock.close()
+            caller.close()
+            answerer.close()
+
+    def test_production_v92_threaded_socket_without_hybrid_echo(self):
+        """Qualify the spec-bounded Phase-2 path on an echo-free SIP-like link."""
+        upstream = bytes((index * 29 + 3) & 0xff for index in range(512))
+        downstream = bytes((index * 47 + 9) & 0xff for index in range(512))
+        caller, answerer, rtp = self._run_production_paired_phase2(
+            "pcmu", echo_delay_samples=320, echo_gain=0.0,
+            answerer_echo_gain=0.0, paired_duration_samples=40 * 8000,
+            v92_pcm_caller=True, v92_payloads=(upstream, downstream),
+            wall_clock_paced=True, socket_transport=True,
+            threaded_v92_transport=True,
+            phase2_late_l2_echo_policy="advance-after-window",
+            answerer_l2_echo_window_policy="advance-after-window")
+        try:
+            self.assertTrue(caller.connected, caller.events[-30:])
+            self.assertEqual(caller._test_v92_answerer_payload_rx, upstream)
+            self.assertEqual(caller._test_v92_caller_payload_rx, downstream)
+            self.assertTrue(any(
+                name == "phase2-l2-echo-window-elapsed-without-echo"
+                for name, _ in answerer.events), answerer.events[-20:])
+            metrics = caller._test_v92_realtime
+            gate_report = {
+                "peaks": metrics["peaks"],
+                "frames_sent": metrics["frames_sent"],
+                "frames_received": metrics["frames_received"],
+                "rtp_counts": metrics["rtp_counts"],
+            }
+            self.assertLessEqual(metrics["max_rx_backlog_seconds"], 0.040,
+                                 gate_report)
+            self.assertLessEqual(metrics["max_tx_send_gap_seconds"], 0.040,
+                                 gate_report)
+            self.assertGreaterEqual(
+                min(metrics["frames_sent"].values()), 500, gate_report)
+            for side in metrics["rtp_counts"].values():
+                self.assertEqual(side["timestamp_gap_samples"], 0)
+                self.assertEqual(side["concealed_samples"], 0)
+                self.assertEqual(side["late_or_duplicate_packets"], 0)
+            for link in (caller._v92_session.lapm, answerer._phase3.lapm):
+                self.assertEqual(link._v42.stats["wire_acked"], len(upstream))
+                self.assertEqual(link._v42.stats.get("fcs_errors", 0), 0)
+                self.assertEqual(link._v42.stats.get("i_resent", 0), 0)
+                self.assertFalse(link._v42._unacked)
+        finally:
+            rtp.stop()
+            rtp._sock.close()
+            caller.close()
+            answerer.close()
+
     def test_paired_v90_dil_accepts_only_pcmu_zero_sign_equivalence(self):
         """The real paired Phase 2/3 path survives observable PCMU zero."""
         for law in ("pcmu", "pcma"):
@@ -610,6 +911,18 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                         if action.signal == "reverse-tone-a")
         self.assertEqual(reversal, l2_start + 600 * 8 + rtde)
         self.assertEqual(reversal - echo_window_end, 50 * 8)
+
+    def test_late_tone_b_reversal_keeps_10ms_of_reversed_tone_a_before_l1(self):
+        caller = _start_to_tone_b_reversal_wait()
+        reversal_at = 2020
+        late_now = reversal_at + 90 * 8
+        actions = caller.feed("tone_b_reversal", reversal_at, now=late_now)
+        times = {action.signal: action.at for action in actions
+                 if action.at is not None}
+        self.assertEqual(caller.rtde_samples, 800)
+        self.assertEqual(times["reverse-tone-a"], late_now)
+        self.assertEqual(times["l1"], late_now + 10 * 8)
+        self.assertEqual(caller._local_l2_start_at, late_now + 170 * 8)
 
     def test_info1d_timeout_opt_in_initiates_one_v90_retrain(self):
         info0d = {"rate3429": 1, "v90_3429_upstream": 0}
@@ -4905,8 +5218,10 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                          "protocols": V8_PROTOCOL_LAPM_V42},
             media_at=0, media_origin=media_origin, law=law,
             info0d_fields={"rate3429": 1, "v90_3429_upstream": 1},
+            # Explicit zeros: an uncapped block now offers its V.34 ceiling, and the echo-stress cases were
+            # calibrated on this INFO1d content (whether the caller decodes it under a gain-2 self-echo).
             info1d_fields={
-                "blocks": ([{"hi_carrier": 0} for _ in range(5)]
+                "blocks": ([{"hi_carrier": 0, "max_rate": 0} for _ in range(5)]
                            + [{"hi_carrier": 0, "max_rate": 12}]),
                 "freq_offset": 0,
             },
@@ -5070,7 +5385,14 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                                       answerer_echo_use_configured_delay_all_phases=False,
                                       answerer_echo_gain_during_phase3_phase2_probe=None,
                                       answerer_info1a_timeout_retrain=False,
-                                      caller_phase2_retrain_hybrid_echo=False):
+                                      answerer_l2_echo_window_policy="require",
+                                      caller_phase2_retrain_hybrid_echo=False,
+                                      v92_pcm_caller=False, v92_fpe=False,
+                                      v92_fractional_tx_timing=False,
+                                      v92_payloads=None,
+                                      wall_clock_paced=False, socket_transport=False,
+                                      threaded_v92_transport=False,
+                                      line_delay_samples=0):
         force_detect = fallback_force_v42_detection_after_v8
         if isinstance(force_detect, bool):
             force_detect_by_endpoint = (force_detect, force_detect)
@@ -5105,11 +5427,50 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
             "phase2_clock_anchor_limit": 128,
             "phase2_clock_min_fit_span_samples": 12800,
         }
-        media_origin = time.monotonic()
+        if v92_pcm_caller:
+            profile["info0a_fields"]["v92"] = 1
+            profile.update({
+                "v92_pcm_upstream": True,
+                "v92_fast_parameter_exchange": bool(v92_fpe),
+                "v92_fractional_tx_timing": bool(v92_fractional_tx_timing),
+                "v92_info1a_fields": {
+                    "sections": 3, "max_coeffs_code": 0,
+                    "max_section_code": 0, "md_len": 0, "uinfo": 67,
+                },
+            })
+        elif v92_fpe or v92_payloads is not None:
+            raise ValueError("V.92 FPE/payload options require v92_pcm_caller")
+        if v92_payloads is not None and (
+                not isinstance(v92_payloads, tuple) or len(v92_payloads) != 2
+                or any(not isinstance(item, bytes) for item in v92_payloads)):
+            raise ValueError("v92_payloads must be a pair of byte strings")
+        # Start the media epoch after the test has had time to create both
+        # production engines, sockets, and capture buffers. Without this
+        # lead, packet 0 can already be overdue before the workers start.
+        media_origin = time.monotonic() + (0.250 if wall_clock_paced else 0.0)
         caller = V90AnalogueCallerPhase2Engine(
             role="analogue-caller",
-            negotiation={"pcm_negotiated_bits": V8_PCM_ANALOG},
+            negotiation={"pcm_negotiated_bits": V8_PCM_ANALOG,
+                         "protocols": (V8_PROTOCOL_LAPM_V42
+                                       if v92_pcm_caller else 0)},
             media_at=0, media_origin=media_origin, law=law, profile=profile)
+        peer_info0d = dict(peer_info0d_fields or {
+            "rate3429": 1, "v90_3429_upstream": 1,
+        })
+        peer_info1d_blocks = (peer_info1d_blocks or
+                              ([{"hi_carrier": 0} for _ in range(5)]
+                               + [{"hi_carrier": 0, "max_rate": 12}]))
+        peer_info1d_blocks = [dict(block) for block in peer_info1d_blocks]
+        peer_phase3_factory = None
+        if v92_pcm_caller:
+            peer_info0d["reserved"] = int(peer_info0d.get("reserved", 0)) | 2
+            peer_info1d_blocks[5]["hi_carrier"] = 1
+            import v92_digital_session as peer_v92
+            peer_phase3_factory = peer_v92.factory(
+                law=law, enable_lapm=True, async_design=False,
+                enable_fast_parameter_exchange=bool(v92_fpe),
+                enable_fast_parameter_exchange_response=bool(v92_fpe),
+                lapm_detect=False)
         answerer = V90DigitalAnswererPhase2Engine(
             role="digital-answerer",
             # Native V.90 LAPM starts only when V.8 negotiated it (9797c7c4);
@@ -5117,17 +5478,16 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
             negotiation={"pcm_negotiated_bits": V8_PCM_DIGITAL,
                          "protocols": V8_PROTOCOL_LAPM_V42},
             media_at=0, media_origin=media_origin, law=law,
-            info0d_fields=(peer_info0d_fields or {
-                "rate3429": 1, "v90_3429_upstream": 1,
-            }),
-            info1d_fields={"blocks": (peer_info1d_blocks or
-                                       ([{"hi_carrier": 0} for _ in range(5)]
-                                        + [{"hi_carrier": 0, "max_rate": 12}])),
+            info0d_fields=peer_info0d,
+            info1d_fields={"blocks": peer_info1d_blocks,
                            "freq_offset": 0},
             tone_b_peak=800, probe_rms=300,
             probe_builder=v34_call.probing_signal,
-            phase3_rate_mask=0xFFFF, phase3_enable_lapm=True,
-            phase2_info1a_timeout_retrain=answerer_info1a_timeout_retrain)
+            phase3_factory=peer_phase3_factory,
+            phase3_rate_mask=None if v92_pcm_caller else 0xFFFF,
+            phase3_enable_lapm=True, v92=bool(v92_pcm_caller),
+            phase2_info1a_timeout_retrain=answerer_info1a_timeout_retrain,
+            phase2_l2_echo_window_policy=answerer_l2_echo_window_policy)
         apply_measured = answerer._apply_measured_info1d_offset
 
         def apply_fixture_probe_quality(actions):
@@ -5148,15 +5508,43 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                     dropped_info1d_ranges.append((int(action.at), int(complete)))
 
         answerer._submit_phase2_actions = track_info1d
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        rtp = OnlineAudioSession(
-            sock, ("127.0.0.1", 9), "originate", "answer",
-            line_mode="bell103", g711_codec=law)
+        answerer_rtp = None
+        socket_pair = None
+        if socket_transport:
+            # Keep the protocol engines and DCE RTP ingress path intact, but
+            # move both directions over real loopback UDP datagrams. The
+            # offline control below remains the fast default for ordinary
+            # unit tests.
+            caller_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            answerer_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            caller_sock.bind(("127.0.0.1", 0))
+            answerer_sock.bind(("127.0.0.1", 0))
+            caller_sock.settimeout(1.0)
+            answerer_sock.settimeout(1.0)
+            socket_pair = (caller_sock, answerer_sock)
+            rtp = OnlineAudioSession(
+                caller_sock, answerer_sock.getsockname(), "originate", "answer",
+                line_mode="bell103", g711_codec=law)
+            answerer_rtp = OnlineAudioSession(
+                answerer_sock, caller_sock.getsockname(), "answer", "originate",
+                line_mode="bell103", g711_codec=law)
+            answerer_rtp._rtp_jitter_samples = 0
+            answerer_rtp.set_raw_g711_receiver(answerer)
+            answerer_rtp._stop.set()
+        else:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            rtp = OnlineAudioSession(
+                sock, ("127.0.0.1", 9), "originate", "answer",
+                line_mode="bell103", g711_codec=law)
         rtp._rtp_jitter_samples = 0
         rtp.set_raw_g711_receiver(caller)
         # This helper exercises only synchronous ingress. Keep the regular
         # RTP transmit loop from sending unrelated media to the test socket.
         rtp._stop.set()
+        media_pace_origin = media_origin
+        wall_clock_lateness = []
+        rx_processing_seconds = {"caller": [], "answerer": []}
+        tx_send_times = {"caller": [], "answerer": []}
 
         history_samples = int(paired_duration_samples) + max(
             20000, int(echo_delay_samples)) + 160
@@ -5178,6 +5566,11 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
         answerer_payload_rx = bytearray()
         fallback_payloads_started = False
         fallback_payloads_after_retrain_started = False
+        v92_payloads_started = False
+        v92_payload_start_sample = None
+        v92_caller_payload_rx = bytearray()
+        v92_answerer_payload_rx = bytearray()
+        v92_fpe_started = False
         fallback_v42_started = False
         fallback_v42_started_sample = None
         fallback_v42_start_origin_sample = None
@@ -5238,7 +5631,295 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                     })
                 last_lapm_state[label] = (link.state, counters, tx_state)
 
+        if threaded_v92_transport:
+            if not (v92_pcm_caller and socket_transport and wall_clock_paced
+                    and v92_payloads is not None and answerer_rtp is not None):
+                raise ValueError(
+                    "threaded V.92 transport requires V.92 payloads, paced "
+                    "real UDP sockets and both RTP endpoints")
+
+            # Match the production concurrency shape: each endpoint has an
+            # independent media pacer and an independent receive worker. The
+            # media pacers never wait for the peer's RX handler. This is what
+            # the earlier synchronous UDP fixture did not model.
+            frame_count = int(paired_duration_samples) // 160
+            packet_times = {}
+            packet_times_lock = threading.Lock()
+            output_lock = threading.Lock()
+            metrics_lock = threading.Lock()
+            worker_errors = queue.Queue()
+            threaded_stop = threading.Event()
+            threaded_start = threading.Event()
+            frame_counts = {"caller": 0, "answerer": 0}
+            tx_processing_seconds = {"caller": [], "answerer": []}
+            tx_thread_cpu_seconds = {"caller": [], "answerer": []}
+            rx_backlog_seconds = {"caller": [], "answerer": []}
+            rx_thread_cpu_seconds = {"caller": [], "answerer": []}
+            rx_received = {"caller": 0, "answerer": 0}
+            history_lock = threading.Lock()
+
+            def transmit(label, engine, local_rtp, local_sock, destination,
+                         sequence_base):
+                try:
+                    threaded_start.wait()
+                    for frame_index in range(frame_count):
+                        if threaded_stop.is_set():
+                            return
+                        deadline = media_pace_origin + frame_index * 0.020
+                        delay = deadline - time.monotonic()
+                        if delay > 0:
+                            time.sleep(delay)
+                        if threaded_stop.is_set():
+                            return
+                        started = time.monotonic()
+                        cpu_started = time.thread_time()
+                        if label == "caller":
+                            pcm = np.asarray(engine.tx_samples(160), dtype=float)
+                            media = bytes(v34_g711.encode(pcm, law))
+                        else:
+                            media = engine.tx_g711(160, law)
+                        sample = frame_index * 160
+                        tx_pcm = (np.asarray(pcm, dtype=float) if label == "caller"
+                                  else v34_g711.decode(
+                                      np.frombuffer(media, dtype=np.uint8), law
+                                  ).astype(float))
+                        history = (caller_tx_history if label == "caller"
+                                   else answerer_tx_history)
+                        with history_lock:
+                            history[sample:sample + len(tx_pcm)] = tx_pcm
+                        sequence = (sequence_base + frame_index) & 0xffff
+                        sent_at = time.monotonic()
+                        packet = struct.pack(
+                            "!BBHII", 0x80, local_rtp._rtp_payload_type,
+                            sequence, sample & 0xffffffff,
+                            0x12345678 if label == "caller" else 0x87654321)
+                        packet += media
+                        with packet_times_lock:
+                            packet_times[(label, sequence)] = sent_at
+                        local_sock.sendto(packet, destination)
+                        if label == "caller" and caller_tx_capture is not None:
+                            caller_tx_capture.append(tx_pcm.astype("<i2"))
+                        elif (label == "answerer"
+                              and answerer_tx_capture is not None):
+                            answerer_tx_capture.append(tx_pcm.astype("<i2"))
+                        elapsed = time.monotonic() - started
+                        cpu_elapsed = time.thread_time() - cpu_started
+                        with metrics_lock:
+                            tx_send_times[label].append(sent_at)
+                            tx_processing_seconds[label].append(elapsed)
+                            tx_thread_cpu_seconds[label].append(cpu_elapsed)
+                            wall_clock_lateness.append(max(
+                                0.0, sent_at - deadline))
+                            frame_counts[label] += 1
+                except BaseException as exc:
+                    worker_errors.put(("tx-" + label, exc))
+                    threaded_stop.set()
+
+            def receive(label, sender_label, session, local_sock):
+                local_sock.settimeout(0.100)
+                try:
+                    while not threaded_stop.is_set():
+                        try:
+                            packet, source = local_sock.recvfrom(2048)
+                        except socket.timeout:
+                            continue
+                        started = time.monotonic()
+                        cpu_started = time.thread_time()
+                        sequence = struct.unpack_from("!H", packet, 2)[0]
+                        with packet_times_lock:
+                            sent_at = packet_times.pop(
+                                (sender_label, sequence), None)
+                        if sent_at is None:
+                            raise AssertionError(
+                                f"{label} received RTP sequence {sequence} "
+                                "without a matching sender timestamp")
+                        timestamp = struct.unpack_from("!I", packet, 4)[0]
+                        media_deadline = media_pace_origin + timestamp / 8000.0
+                        backlog = max(0.0, started - media_deadline)
+                        # A real PCM-upstream Phase 3 has no two-wire hybrid
+                        # echo. Before that switch, preserve the same delayed
+                        # hybrid echo used by the synchronous paired fixture.
+                        pcm_upstream_active = caller._v92_session is not None
+                        received_pcm = v34_g711.decode(
+                            np.frombuffer(packet[12:], dtype=np.uint8), law
+                        ).astype(float)
+                        if not pcm_upstream_active:
+                            sample = int(timestamp)
+                            if label == "caller":
+                                echo = _delayed_echo(
+                                    caller_tx_history, sample, len(received_pcm),
+                                    delay_samples=int(echo_delay_samples),
+                                    gain=float(echo_gain))
+                            else:
+                                echo = _delayed_echo(
+                                    answerer_tx_history, sample,
+                                    len(received_pcm),
+                                    delay_samples=int(answerer_echo_delay_samples),
+                                    gain=float(answerer_echo_gain))
+                            received_pcm += echo
+                        received_pcm = np.clip(
+                            np.rint(received_pcm), -32768, 32767).astype(np.int32)
+                        packet = packet[:12] + bytes(
+                            v34_g711.encode(received_pcm, law))
+                        output = session.handle_rtp_datagram(
+                            source, packet, received_at=started)
+                        if label == "caller" and caller_rx_capture is not None:
+                            caller_rx_capture.append(received_pcm.astype("<i2"))
+                        elif (label == "answerer"
+                              and answerer_rx_capture is not None):
+                            answerer_rx_capture.append(received_pcm.astype("<i2"))
+                        elapsed = time.monotonic() - started
+                        cpu_elapsed = time.thread_time() - cpu_started
+                        with output_lock:
+                            if label == "caller":
+                                v92_answerer_payload_rx.extend(output)
+                            else:
+                                v92_caller_payload_rx.extend(output)
+                        with metrics_lock:
+                            rx_backlog_seconds[label].append(backlog)
+                            rx_processing_seconds[label].append(elapsed)
+                            rx_thread_cpu_seconds[label].append(cpu_elapsed)
+                            rx_received[label] += 1
+                except BaseException as exc:
+                    worker_errors.put(("rx-" + label, exc))
+                    threaded_stop.set()
+
+            workers = [
+                threading.Thread(target=receive,
+                                 args=("caller", "answerer", rtp,
+                                       socket_pair[0]),
+                                 name="v92-caller-rx", daemon=True),
+                threading.Thread(target=receive,
+                                 args=("answerer", "caller", answerer_rtp,
+                                       socket_pair[1]),
+                                 name="v92-answerer-rx", daemon=True),
+                threading.Thread(target=transmit,
+                                 args=("caller", caller, rtp, socket_pair[0],
+                                       socket_pair[1].getsockname(), 100),
+                                 name="v92-caller-tx", daemon=True),
+                threading.Thread(target=transmit,
+                                 args=("answerer", answerer, answerer_rtp,
+                                       socket_pair[1],
+                                       socket_pair[0].getsockname(), 500),
+                                 name="v92-answerer-tx", daemon=True),
+            ]
+            for worker in workers:
+                worker.start()
+            threaded_start.set()
+            deadline = media_pace_origin + frame_count * 0.020 + 2.0
+            while time.monotonic() < deadline:
+                if not worker_errors.empty():
+                    break
+                if (not v92_payloads_started
+                        and caller._v92_session is not None
+                        and caller._v92_session.connected
+                        and answerer._phase3 is not None
+                        and answerer._phase3.state == "data"
+                        and caller._v92_session.lapm is not None
+                        and answerer._phase3.lapm is not None
+                        and caller._v92_session.lapm.v42_resolved
+                        and answerer._phase3.lapm.v42_resolved):
+                    caller.feed_bytes(v92_payloads[0])
+                    answerer.feed_bytes(v92_payloads[1])
+                    v92_payloads_started = True
+                    v92_payload_start_sample = int(
+                        min(frame_counts.values()) * 160)
+                if v92_payloads_started:
+                    with output_lock:
+                        payloads_complete = (
+                            bytes(v92_caller_payload_rx) == v92_payloads[0]
+                            and bytes(v92_answerer_payload_rx) == v92_payloads[1])
+                    caller_link = caller._v92_session.lapm
+                    answerer_link = answerer._phase3.lapm
+                    # Keep the media path alive after the short payload has
+                    # drained so the gate measures a useful sustained window.
+                    if (payloads_complete
+                            and min(frame_counts.values()) >= 500
+                            and caller_link is not None
+                            and answerer_link is not None
+                            and not caller_link._v42._unacked
+                            and not answerer_link._v42._unacked
+                            and caller_link._v42.stats.get("wire_acked")
+                            == len(v92_payloads[0])
+                            and answerer_link._v42.stats.get("wire_acked")
+                            == len(v92_payloads[1])):
+                        break
+                time.sleep(0.002)
+            threaded_stop.set()
+            for worker in workers:
+                worker.join(timeout=1.0)
+            if not worker_errors.empty():
+                where, exc = worker_errors.get_nowait()
+                raise AssertionError(f"{where} worker failed: {exc!r}") from exc
+            if any(worker.is_alive() for worker in workers):
+                raise AssertionError("threaded V.92 media workers did not stop")
+
+            caller._test_v92_caller_payload_rx = bytes(v92_answerer_payload_rx)
+            caller._test_v92_answerer_payload_rx = bytes(v92_caller_payload_rx)
+            caller._test_v92_payloads_started = v92_payloads_started
+            caller._test_v92_fpe_started = False
+            if capture_fallback_pcm:
+                caller._test_rx_pcm = np.concatenate(caller_rx_capture)
+                answerer._test_rx_pcm = np.concatenate(answerer_rx_capture)
+                caller._test_tx_pcm = np.concatenate(caller_tx_capture)
+                answerer._test_tx_pcm = np.concatenate(answerer_tx_capture)
+            def peak(values):
+                index = max(range(len(values)), key=values.__getitem__) if values else None
+                return {"seconds": 0.0 if index is None else values[index],
+                        "packet_index": index}
+
+            caller._test_v92_realtime = {
+                "threaded_transport": True,
+                "wall_clock_paced": True,
+                "socket_transport": True,
+                "max_tick_lateness_seconds": max(
+                    wall_clock_lateness, default=0.0),
+                "max_rx_backlog_seconds": max(
+                    (max(values, default=0.0)
+                     for values in rx_backlog_seconds.values()), default=0.0),
+                "max_tx_send_gap_seconds": max(
+                    (max((b - a for a, b in zip(values, values[1:])),
+                         default=0.0)
+                     for values in tx_send_times.values()), default=0.0),
+                "frames_sent": dict(frame_counts),
+                "frames_received": dict(rx_received),
+                "rx_backlog_seconds": rx_backlog_seconds,
+                "rx_processing_seconds": rx_processing_seconds,
+                "rx_thread_cpu_seconds": rx_thread_cpu_seconds,
+                "tx_processing_seconds": tx_processing_seconds,
+                "tx_thread_cpu_seconds": tx_thread_cpu_seconds,
+                "tx_send_times": tx_send_times,
+                "peaks": {
+                    "rx_backlog": {label: peak(values)
+                                   for label, values in rx_backlog_seconds.items()},
+                    "rx_processing": {label: peak(values)
+                                      for label, values in rx_processing_seconds.items()},
+                    "rx_thread_cpu": {label: peak(values)
+                                      for label, values in rx_thread_cpu_seconds.items()},
+                    "tx_processing": {label: peak(values)
+                                      for label, values in tx_processing_seconds.items()},
+                    "tx_thread_cpu": {label: peak(values)
+                                      for label, values in tx_thread_cpu_seconds.items()},
+                    "tx_send_gap": {label: peak([
+                        b - a for a, b in zip(values, values[1:])])
+                                    for label, values in tx_send_times.items()},
+                },
+                "rtp_counts": {
+                    "caller": dict(rtp._rtp_counts),
+                    "answerer": dict(answerer_rtp._rtp_counts),
+                },
+                "payloads_started": v92_payloads_started,
+            }
+            answerer_rtp._sock.close()
+            return caller, answerer, rtp
+
         for start in range(0, int(paired_duration_samples), 160):
+            if wall_clock_paced:
+                tick_deadline = media_pace_origin + start / 8000.0
+                remaining = tick_deadline - time.monotonic()
+                if remaining > 0:
+                    time.sleep(remaining)
+                wall_clock_lateness.append(max(0.0, time.monotonic() - tick_deadline))
             if (caller._v34_fallback_engine is not None
                     and answerer._v34_fallback_engine is not None):
                 # A V.90 retrain may temporarily retire one fallback engine.
@@ -5324,6 +6005,24 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                 caller.feed_bytes(fallback_payloads[0])
                 answerer.feed_bytes(fallback_payloads[1])
                 fallback_payloads_started = True
+            if (v92_payloads is not None and not v92_payloads_started
+                    and caller._v92_session is not None
+                    and answerer._phase3 is not None
+                    and caller._v92_session.connected
+                    and answerer._phase3.state == "data"
+                    and caller._v92_session.lapm is not None
+                    and answerer._phase3.lapm is not None
+                    and caller._v92_session.lapm.v42_resolved
+                    and answerer._phase3.lapm.v42_resolved):
+                caller.feed_bytes(v92_payloads[0])
+                answerer.feed_bytes(v92_payloads[1])
+                v92_payloads_started = True
+                v92_payload_start_sample = int(start)
+            if (v92_payloads_started and v92_fpe and not v92_fpe_started
+                    and v92_payload_start_sample is not None
+                    and start - v92_payload_start_sample >= 8000):
+                caller._v92_session.request_fast_parameter_exchange()
+                v92_fpe_started = True
             if (fallback_payloads is not None
                     and not fallback_payloads_after_rtp_gap
                     and fallback_payloads_after_lapm_samples is not None
@@ -5357,6 +6056,15 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                 answerer_tx_capture.append(answerer_pcm.astype("<i2"))
             caller_tx_history[start:start + 160] = caller_pcm
             answerer_tx_history[start:start + 160] = answerer_pcm
+            if line_delay_samples:
+                # One-way transport delay in each direction, as on a VoIP
+                # path with jitter buffers; the local hybrids stay undelayed.
+                caller_pcm = _delayed_echo(
+                    caller_tx_history, start, 160,
+                    delay_samples=int(line_delay_samples), gain=1.0)
+                answerer_pcm = _delayed_echo(
+                    answerer_tx_history, start, 160,
+                    delay_samples=int(line_delay_samples), gain=1.0)
             v90_retrain_media = (
                 answerer._retrain is not None
                 if continue_v34_fallback else False)
@@ -5366,8 +6074,12 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                     or caller._phase2_retrain_attempts > 0)
             phase3_echo_active = (
                 caller._phase3_controller is not None
-                or caller._phase3_retrain_attempts > 0)
-            if v90_retrain_media:
+                or caller._phase3_retrain_attempts > 0
+                or caller._v92_session is not None)
+            if v92_pcm_caller and caller._v92_session is not None:
+                # The PCM-upstream pair has no two-wire hybrid echo.
+                caller_echo = np.zeros(160)
+            elif v90_retrain_media:
                 # Retrain returns to V.90 Phase 2, whose L2-echo observation
                 # is required before INFO1d. Model each local hybrid with a
                 # short, ordinary return; do not carry the long initial
@@ -5424,7 +6136,9 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                         delay_samples=(answerer_echo_delay_samples
                                        + int(relative_delay)),
                         gain=float(path_gain))
-            if (cancel_synthetic_echo_after_fallback
+            if v92_pcm_caller and caller._v92_session is not None:
+                answerer_echo = np.zeros(160)
+            elif (cancel_synthetic_echo_after_fallback
                     and fallback_media_path_entered
                     and not v90_retrain_media):
                 answerer_echo = np.zeros(160)
@@ -5454,8 +6168,23 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                 "payload_samples": 160,
                 "timestamp": start,
             }
-            answerer_output = answerer.feed_g711(
-                bytes(v34_g711.encode(answerer_rx_pcm, law)), law, context)
+            answerer_media = bytes(v34_g711.encode(answerer_rx_pcm, law))
+            if socket_transport:
+                answerer_packet = struct.pack(
+                    "!BBHII", 0x80, rtp._rtp_payload_type,
+                    (500 + start // 160) & 0xFFFF,
+                    start & 0xFFFFFFFF, 0x87654321) + answerer_media
+                send_at = time.monotonic()
+                socket_pair[0].sendto(answerer_packet, socket_pair[1].getsockname())
+                tx_send_times["caller"].append(send_at)
+                packet, source = socket_pair[1].recvfrom(2048)
+                rx_started = time.monotonic()
+                answerer_output = answerer_rtp.handle_rtp_datagram(
+                    source, packet,
+                    received_at=media_origin + start / 8000.0 + 0.020)
+                rx_processing_seconds["answerer"].append(time.monotonic() - rx_started)
+            else:
+                answerer_output = answerer.feed_g711(answerer_media, law, context)
             if (peer_v34_mp_request is not None
                     and not peer_v34_mp_request_applied
                     and answerer._v34_fallback_engine is not None):
@@ -5469,6 +6198,8 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                 peer_v34_mp_request_applied = True
             if fallback_payloads_started:
                 answerer_payload_rx.extend(answerer_output)
+            if v92_payloads_started:
+                v92_caller_payload_rx.extend(answerer_output)
 
             if start in dropped:
                 record_lapm_media_state(start, injected_gap=True)
@@ -5480,13 +6211,48 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
             packet_index = start // 160
             arrival_jitter = ((packet_index % 4) - 1.5) * (
                 float(arrival_jitter_ms) / 1000.0)
-            caller_output = rtp.handle_rtp_packet(
-                packet, received_at=(media_origin
-                                     + start / 8000
-                                     * (1.0 + float(arrival_clock_ppm) * 1e-6)
-                                     + 0.020 + arrival_jitter))
+            if socket_transport:
+                send_at = time.monotonic()
+                socket_pair[1].sendto(packet, socket_pair[0].getsockname())
+                tx_send_times["answerer"].append(send_at)
+                received_packet, source = socket_pair[0].recvfrom(2048)
+                rx_started = time.monotonic()
+                caller_output = rtp.handle_rtp_datagram(
+                    source, received_packet,
+                    received_at=media_origin
+                    + start / 8000 * (1.0 + float(arrival_clock_ppm) * 1e-6)
+                    + 0.020 + arrival_jitter)
+                rx_processing_seconds["caller"].append(time.monotonic() - rx_started)
+            else:
+                caller_output = rtp.handle_rtp_packet(
+                    packet, received_at=(media_origin
+                                         + start / 8000
+                                         * (1.0 + float(arrival_clock_ppm) * 1e-6)
+                                         + 0.020 + arrival_jitter))
             if fallback_payloads_started:
                 caller_payload_rx.extend(caller_output)
+            if v92_payloads_started:
+                v92_answerer_payload_rx.extend(caller_output)
+
+            if v92_payloads_started:
+                caller_lapm = caller._v92_session.lapm
+                answerer_lapm = answerer._phase3.lapm
+                payloads_complete = (
+                    bytes(v92_caller_payload_rx) == v92_payloads[0]
+                    and bytes(v92_answerer_payload_rx) == v92_payloads[1])
+                acknowledged = (
+                    caller_lapm is not None and answerer_lapm is not None
+                    and not getattr(caller_lapm._v42, "_unacked", ())
+                    and not getattr(answerer_lapm._v42, "_unacked", ())
+                    and caller_lapm._v42.stats.get("wire_acked") == len(v92_payloads[0])
+                    and answerer_lapm._v42.stats.get("wire_acked") == len(v92_payloads[1]))
+                fpe_complete = (not v92_fpe or (
+                    any(name == "v92-fpe-complete"
+                        for name, _ in caller._v92_session.events)
+                    and any(name == "v92-fpe-complete"
+                            for name, _ in answerer._phase3.events)))
+                if payloads_complete and acknowledged and fpe_complete:
+                    break
 
             if (fallback_payloads_after_retrain is not None
                     and postconnect_v90_retrain_requested
@@ -5620,7 +6386,8 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
                         dce_sock.close()
                         dce_peer.close()
                 fallback_dce_connect_emitted = True
-            if caller._controller.done and answerer._phase2.done:
+            if (not v92_pcm_caller and caller._controller.done
+                    and answerer._phase2.done):
                 if not continue_v34_fallback:
                     break
                 handoff = next((item for item in caller._renderer.handoffs
@@ -5706,6 +6473,27 @@ class AnalogueCallerPhase2RecoveryTests(unittest.TestCase):
         answerer._test_dropped_info1d_ranges = list(dropped_info1d_ranges)
         caller._test_dropped_phase3_ranges = list(dropped_phase3_ranges)
         answerer._test_v90_tx_history = answerer_tx_history
+        caller._test_v92_caller_payload_rx = bytes(v92_answerer_payload_rx)
+        caller._test_v92_answerer_payload_rx = bytes(v92_caller_payload_rx)
+        caller._test_v92_payloads_started = v92_payloads_started
+        caller._test_v92_fpe_started = v92_fpe_started
+        if wall_clock_paced or socket_transport:
+            caller._test_v92_realtime = {
+                "wall_clock_paced": bool(wall_clock_paced),
+                "socket_transport": bool(socket_transport),
+                "max_tick_lateness_seconds": max(wall_clock_lateness, default=0.0),
+                "rx_processing_seconds": rx_processing_seconds,
+                "tx_send_times": tx_send_times,
+                "rtp_counts": {
+                    "caller": dict(rtp._rtp_counts),
+                    "answerer": (None if answerer_rtp is None else
+                                 dict(answerer_rtp._rtp_counts)),
+                },
+            }
+        if answerer_rtp is not None:
+            answerer_rtp._sock.close()
+        if socket_pair is not None:
+            socket_pair[0].close()
         return caller, answerer, rtp
 
     def _start_fallback_v42_via_dce(self, engine, *, tx_role, rx_role, law,

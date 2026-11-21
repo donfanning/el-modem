@@ -100,6 +100,24 @@ class V90DigitalPhase3Tests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Jd"):
             tx.jprime_d()
 
+    def test_dil_can_be_prepared_at_ja_and_started_only_after_jprime(self):
+        descriptor = {
+            "N": 1, "SP": [1], "TP": [1], "H": [0] * 8,
+            "REF": [0] * 8, "Ucodes": [1],
+        }
+        tx = v90tx.V90DigitalPhase3Transmitter(90, "pcmu")
+        prepared = tx.prepare_dil_stream(descriptor)
+        self.assertIsNotNone(prepared)
+        self.assertFalse(tx.jprime_sent)
+        with self.assertRaisesRegex(RuntimeError, "J'_d"):
+            tx.dil_stream(descriptor, prepared=prepared)
+        tx.trn1d()
+        tx.jd_frame(1)
+        tx.jprime_d()
+        self.assertIs(tx.dil_stream(descriptor, prepared=prepared), prepared)
+        self.assertEqual(prepared.read(6), v90tx.V90DILCodewordStream(
+            descriptor, "pcmu").read(6))
+
 
 if __name__ == "__main__":
     unittest.main()

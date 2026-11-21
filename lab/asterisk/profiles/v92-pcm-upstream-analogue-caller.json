@@ -1,0 +1,32 @@
+{
+  "prefer_v90": true,
+  "info0a_fields": {
+    "rate3429": 1,
+    "disallow3429": 1
+  },
+  "info1a_fields": {
+    "md_len": 0,
+    "uinfo": 90,
+    "analog_symbol_rate": 5,
+    "digital_symbol_rate": 6,
+    "freq_offset": 0
+  },
+  "nominal_peak": 1200,
+  "probe_rms": 300,
+  "v92_pcm_upstream": true,
+  "v92_info1a_fields": {
+    "sections": 3,
+    "max_coeffs_code": 0,
+    "max_section_code": 0,
+    "md_len": 0,
+    "uinfo": 67
+  },
+  "v92_fast_parameter_exchange": false,
+  "v92_rate_renegotiation": true,
+  "v92_trn2u_noise": 0.015,
+  "v92_pad_aware_upstream": true,
+  "v92_downstream_drn": 22,
+  "phase2_rtp_gap_policy": "fill_silence",
+  "phase2_rtp_gap_max_samples": 800,
+  "v92_training_rtp_gap_max_samples": 1280
+}

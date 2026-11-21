@@ -3,6 +3,7 @@ from pathlib import Path
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -272,13 +273,37 @@ class V90DigitalAnswererPhase2EngineTests(unittest.TestCase):
                 clock.observe(rx_at, {
                     "packet_playout_deadline_monotonic": deadline})
 
+    def test_clock_violation_epochs_discard_one_bent_fit_but_reject_a_wrong_rate(self):
+        # Arm 12d (local SmartLink, 256 KiB): ~40-sample arrival-delay steps bent one fit to -2.2 % and killed the call.
+        fixture = json.loads((Path(__file__).parent / "testdata" /
+                              "v92_arm12d_clock_delay_steps_20261117.json").read_text())
+
+        def feed(clock, anchors):
+            for rx_sample, deadline in anchors:
+                clock.observe(int(rx_sample), {"packet_playout_deadline_monotonic": 200.0 + deadline})
+
+        with self.assertRaisesRegex(ValueError, "exceeds configured V.90 timing"):
+            feed(RtpMediaClock(origin=200.0, media_at=0, offset_step_samples=40), fixture["anchors"])
+        tolerant = RtpMediaClock(origin=200.0, media_at=0, offset_step_samples=40, violation_epochs=3)
+        feed(tolerant, fixture["anchors"])
+        self.assertEqual(len(tolerant.discarded_fits), 1)
+        self.assertLess(abs(tolerant.last_fit["error_ppm"]), 1000)
+        # A sample clock that is really 3 % fast fails every fresh epoch, so it is still rejected.
+        wrong = [(i * 160, i * 160 / 8000.0 / 1.03) for i in range(800)]
+        with self.assertRaisesRegex(ValueError, "exceeds configured V.90 timing"):
+            feed(RtpMediaClock(origin=200.0, media_at=0, violation_epochs=3), wrong)
+        with self.assertRaises(ValueError):
+            RtpMediaClock(origin=200.0, media_at=0, violation_epochs=0)
+
     def test_rtp_engine_pumps_missing_tone_a_retrain_deadline(self):
-        engine = self.engine(media_at=0, media_origin=1000.0)
+        # tx_now() reads the host's monotonic clock: put the origin in its past (WSL can be up < 1000 s).
+        origin = time.monotonic() - 10.0
+        engine = self.engine(media_at=0, media_origin=origin)
         engine._phase2.state = engine._phase2.TX_PROBE
         engine._phase2.l2_started_at = 0
         engine._phase2._tone_a_deadline_at = 5200
         engine.feed_g711(bytes([0xff]) * 160, "pcmu", {
-            "packet_playout_deadline_monotonic": 1000.25,
+            "packet_playout_deadline_monotonic": origin + 0.25,
             "payload_samples": 160,
         })
         self.assertEqual(engine.phase2_state, engine._phase2.FAILED)
@@ -303,11 +328,30 @@ class V90DigitalAnswererPhase2EngineTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_v8_preroll_seeds_early_info0a_without_replaying_tones(self):
+        engine = self.engine(media_at=16000, media_origin=time.monotonic() - 10.0)    # tx_now() must not be negative
+        try:
+            frame = v34_info.InfoModulator(
+                "answer", amplitude=3000, guard=True).modulate(
+                    v34_info.build_info0(rate3429=1, ack=0), tail_bits=2)
+            history = np.concatenate((np.zeros(800), frame, np.zeros(2400)))
+            actions = engine.prime_info0a_preroll(
+                history.astype("<i2").tobytes(), rx_at=-len(history))
+            self.assertEqual(actions, [])
+            self.assertEqual(engine._phase2.info0a["rate3429"], 1)
+            self.assertEqual(engine._rx_at, 0)
+            self.assertEqual(engine.events[-1][0], "phase2-info0a-preroll")
+            self.assertTrue(engine.events[-1][1]["decoded"])
+            self.assertEqual(engine.feed_pcm(bytes(320)), b"")
+            self.assertEqual(engine._rx_at, 160)
+        finally:
+            engine.close()
+
     @staticmethod
     def engine(law="pcmu", *, media_at=16000, media_origin=1000.0,
                phase3_factory=None, phase3_rate_mask=None,
                info1d_fields=None, phase3_enable_lapm=False,
-               phase1_silence_samples=0, protocols=0):
+               phase1_silence_samples=0, protocols=0, v92=False):
         return V90DigitalAnswererPhase2Engine(
             role="digital-answerer",
             negotiation={"pcm_negotiated_bits": V8_PCM_DIGITAL,
@@ -320,6 +364,7 @@ class V90DigitalAnswererPhase2EngineTests(unittest.TestCase):
             phase3_rate_mask=phase3_rate_mask,
             phase3_enable_lapm=phase3_enable_lapm,
             phase1_silence_samples=phase1_silence_samples,
+            v92=v92,
         )
 
     def test_fallback_preserves_lapm_establishment_history(self):
@@ -349,20 +394,19 @@ class V90DigitalAnswererPhase2EngineTests(unittest.TestCase):
         self.assertEqual(engine.v42_mode, "off")
         engine.close()
 
-    def test_v90_profile_does_not_start_lapm_without_v8_agreement(self):
+    def test_v90_profile_detects_v42_without_v8_agreement(self):
         engine = self.engine(phase3_rate_mask=0xFFFF,
                              phase3_enable_lapm=True,
                              protocols=0)
         try:
             self.assertTrue(engine._phase3_lapm_configured)
             self.assertFalse(engine._v8_lapm_negotiated)
-            self.assertFalse(engine._phase3_enable_lapm)
-            self.assertFalse(engine.supports_v42)
+            self.assertTrue(engine._phase3_enable_lapm)
+            self.assertTrue(engine.supports_v42)
 
-            # Exercise the actual V.90 Phase-3 factory boundary, not only the
-            # pre-handoff capability flags. A local profile may enable LAPM,
-            # but without mutual V.8 LAPM negotiation the selected session
-            # must not install a LAPM link.
+            # Exercise the actual V.90 Phase-3 factory boundary. A CM with no
+            # protocols octet (SmartLink at AT+MS=90) still gets the V.42
+            # detection phase, which settles LAPM or plain async.
             engine._phase2.info0a = {"clock": 0}  # no peer digital PCM capability
             engine._phase2.info1a = {
                 "v90_uinfo": 67,
@@ -372,12 +416,43 @@ class V90DigitalAnswererPhase2EngineTests(unittest.TestCase):
             handoff = type("Handoff", (), {"at": 0})()
             engine._start_phase3(handoff)
             self.assertIsNotNone(engine._phase3)
-            self.assertFalse(engine._phase3.enable_lapm)
-            self.assertIsNone(engine._phase3.lapm)
+            self.assertTrue(engine._phase3.enable_lapm)
+            self.assertTrue(engine._phase3.lapm_detect)
         finally:
             engine.close()
 
 
+    def test_v92_profile_serves_a_v90_only_peer_with_plain_v90_phase3(self):
+        from v90_digital_phase3_session import V90DigitalAnswererPhase3Session
+
+        def v92_factory(**kwargs):
+            raise AssertionError("the V.92 session needs a peer that negotiated V.92")
+
+        engine = self.engine(phase3_factory=v92_factory, phase3_rate_mask=0xFFFF, v92=True)
+        try:
+            engine._phase2.info0a = {"clock": 0}    # the peer did not advertise V.92
+            engine._phase2.info1a = {"v90_uinfo": 67, "v90_analog_symbol_rate": 5, "v90_digital_symbol_rate": 6}
+            engine._start_phase3(type("Handoff", (), {"at": 0})())
+            self.assertIsInstance(engine._phase3, V90DigitalAnswererPhase3Session)
+            self.assertIn(("v92-not-negotiated", "plain V.90 Phase 3"), engine.events)
+        finally:
+            engine.close()
+
+    def test_v92_peer_still_gets_the_v92_phase3_session(self):
+        made = []
+        engine = self.engine(phase3_factory=lambda **kwargs: made.append(kwargs), phase3_rate_mask=0xFFFF, v92=True)
+        try:
+            engine._phase2.info0a = {"clock": 1}
+            engine._phase2.info1a = {"v90_uinfo": 67, "v90_analog_symbol_rate": 5, "v90_digital_symbol_rate": 6}
+            with self.assertRaises(TypeError):    # the stub returns no session; it was the one called
+                engine._start_phase3(type("Handoff", (), {"at": 0})())
+            self.assertEqual(len(made), 1)
+        finally:
+            engine.close()
+
+    def test_without_v92_factory_and_mask_are_still_exclusive(self):
+        with self.assertRaisesRegex(ValueError, "not both"):
+            self.engine(phase3_factory=lambda **kwargs: None, phase3_rate_mask=0xFFFF)
 
     def test_default_factory_uses_its_info1d_probe_offset_for_upstream(self):
         blocks = [{} for _ in range(6)]
@@ -432,6 +507,36 @@ class V90DigitalAnswererPhase2EngineTests(unittest.TestCase):
         self.assertIn(("phase2-probe-quality", {"snr_db": 20.0}),
                       engine.events)
         engine.close()
+
+    def test_timer_driven_info1d_is_projected_before_transmit(self):
+        blocks = [{"max_rate": 10, "preemph": 2} for _ in range(6)]
+        blocks[3]["hi_carrier"] = 1
+        engine = self.engine(info1d_fields={"blocks": blocks})
+        engine._phase2.info0a = {
+            "rate2743": 0, "rate2800": 1, "rate3429": 1,
+            "lo3000": 1, "hi3000": 0,
+            "lo3200": 0, "hi3200": 1,
+            "allow3429": 0, "pts1664": 0,
+        }
+        engine._adapter.signals.probe_quality = {"snr_db": 20.0}
+        timer_action = Phase2Action(engine._renderer.cursor + 10, "info1d")
+        try:
+            # Model the bounded timer fallback used when no L2 echo arrives.
+            with patch.object(engine._phase2, "tick", return_value=[timer_action]):
+                with patch.object(engine, "_submit_phase2_actions") as submit:
+                    engine._advance_phase2_timer(engine._renderer.cursor)
+                    submit.assert_called_once_with([timer_action])
+
+            selected = engine._signals.info1d_fields["blocks"]
+            self.assertEqual(selected[1]["max_rate"], 0)
+            self.assertEqual((selected[3]["hi_carrier"], selected[3]["max_rate"]),
+                             (0, 5))
+            self.assertEqual((selected[4]["hi_carrier"], selected[4]["max_rate"]),
+                             (1, 5))
+            self.assertTrue(any(event == "phase2-info1d-projection"
+                                for event, _ in engine.events))
+        finally:
+            engine.close()
 
     def test_explicit_profile_can_use_configured_info1d_caps_without_probe_projection(self):
         blocks = [{"max_rate": 12} for _ in range(6)]
@@ -625,6 +730,55 @@ class V90DigitalAnswererPhase2EngineTests(unittest.TestCase):
         self.assertIsNone(engine._phase3)
         engine.close()
 
+    def test_phase3_rx_exception_records_trace_and_stops_both_directions(self):
+        class BadRxPhase3:
+            transmit_ready = True
+            state = "phase4"
+            stage = "phase4"
+            failure = None
+
+            def feed_pcm(self, samples, *, sample_at):
+                raise TypeError("'NoneType' object is not iterable")
+
+            def read_g711(self, count, law):
+                return bytes([0xff]) * count
+
+        engine = self.engine(phase3_factory=lambda **kwargs: BadRxPhase3())
+        try:
+            engine._phase2.info1a = {
+                "v90_uinfo": 90,
+                "v90_analog_symbol_rate": 5,
+                "v90_digital_symbol_rate": 6,
+            }
+            from v90_digital_phase2_tx import RenderedHandoff
+            engine._start_phase3(RenderedHandoff(24000, "handoff-v90-phase3", 6))
+            engine._phase2.state = engine._phase2.COMPLETE
+            engine._rx_at = 123
+            engine._tx_media = 456
+            with patch("sys.stderr"):
+                result = engine.feed_g711(bytes([0xff]) * 160, "pcmu", {
+                    "sequence": 9, "timestamp": 123, "payload_samples": 160,
+                    "packet_playout_deadline_monotonic": engine._clock.origin,
+                })
+            self.assertEqual(result, b"")
+            self.assertTrue(engine._failed)
+            self.assertEqual(engine.events[-1][0], "phase3-failed")
+            self.assertEqual(len(engine._failure_diagnostics), 1)
+            diagnostic = engine._failure_diagnostics[0]
+            self.assertEqual(diagnostic["direction"], "phase3-rx")
+            self.assertEqual(diagnostic["error_type"], "TypeError")
+            self.assertEqual(diagnostic["rx_sample"], 123)
+            self.assertEqual(diagnostic["tx_sample"], 456)
+            self.assertEqual(diagnostic["phase3_state"], "phase4")
+            self.assertEqual(diagnostic["phase3_stage"], "phase4")
+            self.assertEqual(diagnostic["rtp_context"]["sequence"], 9)
+            self.assertIn("test_v90_digital_phase2_engine.py", diagnostic["traceback"])
+            self.assertIn("'NoneType' object is not iterable", diagnostic["traceback"])
+            self.assertEqual(engine.feed_g711(bytes([0xff]) * 160, "pcmu", {}), b"")
+            self.assertEqual(engine.tx_g711(4, "pcmu"), bytes([0xff]) * 4)
+        finally:
+            engine.close()
+
     def test_bad_phase3_transmit_fails_closed_to_law_silence(self):
         class BadPhase3:
             transmit_ready = True
@@ -673,6 +827,32 @@ class V90DigitalAnswererPhase2EngineTests(unittest.TestCase):
         self.assertTrue(starts[0]["initiating"])
         self.assertEqual(starts[0]["reason"], TimedOutPhase3.failure_reason)
         self.assertEqual(engine.retrain_count, 1)
+        engine.close()
+
+    def test_retrain_snapshot_retains_v92_phase3_receiver_and_tx_cursor(self):
+        engine = self.engine()
+        protocol_rx = SimpleNamespace(
+            state="failed", _rx=[0.0] * 128, _raw=[0.0] * 128,
+            ru_flip_at=12, trn1u_start=None, ja_start=None, ja=None,
+            _pos=320, events=[("ru-flip", 12), ("no-trn1u", 0.94)],
+            _tx=SimpleNamespace(state="ru", trn1d_sent=False,
+                                jd_frames_sent=0, jprime_sent=False))
+        engine._phase3_started_at = 8000
+        engine._phase3 = SimpleNamespace(
+            state="failed", stage="failed", failure="no-trn1u",
+            upstream=None, upstream_data=None, _p4=None, _p3=protocol_rx,
+            phase4=SimpleNamespace(state="running", events=[],
+                                   transmitter=SimpleNamespace()),
+            phase4_receiver=None, phase4_profiles=[],
+            _phase4_receive_armed=False, _phase4_cpt_acquired=False)
+
+        snapshot = engine._phase3_retrain_snapshot()
+        self.assertEqual(snapshot["v92_phase3"]["state"], "failed")
+        self.assertEqual(snapshot["v92_phase3"]["rx_samples"], 128)
+        self.assertEqual(snapshot["v92_phase3"]["tx_start_sample"], 8000)
+        self.assertEqual(snapshot["v92_phase3"]["tx_sample_cursor"], 320)
+        self.assertEqual(snapshot["v92_phase3"]["tx_absolute_sample_cursor"], 8320)
+        self.assertEqual(snapshot["v92_phase3"]["events"][-1], ("no-trn1u", 0.94))
         engine.close()
 
     def test_rate_mask_rejects_non_integer_configuration(self):

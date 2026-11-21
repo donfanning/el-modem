@@ -7,11 +7,14 @@ round-tripping through signed-linear PCM would erase PCMU negative zero.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 
 import v34_g711 as g711
 
 
+@lru_cache(maxsize=2)
 def g711_ucode_codewords(law: str) -> np.ndarray:
     """Return the 128 positive G.711 codewords in V.90 Ucode order."""
     law = law.lower()
@@ -24,16 +27,14 @@ def g711_ucode_codewords(law: str) -> np.ndarray:
     codes.sort(key=lambda code: int(levels[code]))
     if len(codes) < 128 or len({int(levels[code]) for code in codes[:128]}) != 128:
         raise ValueError(f"could not derive 128 distinct positive Ucodes for {law}")
-    return np.asarray(codes[:128], dtype=np.uint8)
+    result = np.asarray(codes[:128], dtype=np.uint8)
+    result.setflags(write=False)
+    return result
 
 
-def expand_dil(descriptor: dict) -> list[dict]:
-    """Expand one valid Ja descriptor into its ordered DIL symbols.
-
-    The descriptor must be the parsed form from ``v90_info_reference``. Each
-    DIL symbol is one 8 kHz G.711 codeword. SP and TP restart at every segment;
-    their bits repeat independently when a segment is longer than a pattern.
-    """
+def _dil_fields(descriptor: dict) -> tuple[int, list[int], list[int], list[int],
+                                            list[int], list[int]]:
+    """Validate the parsed Ja fields used by both diagnostic and live DIL paths."""
     n = int(descriptor["N"])
     signs, training = descriptor["SP"], descriptor["TP"]
     h, references = descriptor["H"], descriptor["REF"]
@@ -47,6 +48,17 @@ def expand_dil(descriptor: dict) -> list[dict]:
         raise ValueError("SP and TP entries must be bits")
     if any(not 0 <= int(value) <= 127 for value in h + references + ucodes):
         raise ValueError("DIL H/REF/Ucode values must be 7-bit integers")
+    return n, signs, training, h, references, ucodes
+
+
+def expand_dil(descriptor: dict) -> list[dict]:
+    """Expand one valid Ja descriptor into its ordered DIL symbols.
+
+    The descriptor must be the parsed form from ``v90_info_reference``. Each
+    DIL symbol is one 8 kHz G.711 codeword. SP and TP restart at every segment;
+    their bits repeat independently when a segment is longer than a pattern.
+    """
+    n, signs, training, h, references, ucodes = _dil_fields(descriptor)
 
     out = []
     for segment, ucode_value in enumerate(ucodes):
@@ -95,23 +107,27 @@ def dil_codewords_match(expected: bytes, received: bytes, law: str) -> bool:
 
 def dil_g711_segments(descriptor: dict, law: str) -> list[bytes]:
     """Return each requested DIL segment separately as exact G.711 octets."""
+    n, signs, training, h, references, ucodes = _dil_fields(descriptor)
     table = g711_ucode_codewords(law)
-    symbols = expand_dil(descriptor)
-    if not symbols:
+    if not n:
         return []
+    # Build each segment directly. expand_dil() is intentionally a readable
+    # symbol-by-symbol reference, but its per-symbol dictionaries made live DIL
+    # setup take tens of milliseconds at the J-prime boundary.
     segments = []
-    current_segment = symbols[0]["segment"]
-    codes = []
-    for item in symbols:
-        if item["segment"] != current_segment:
-            segments.append(bytes(codes))
-            codes = []
-            current_segment = item["segment"]
-        code = int(table[item["ucode"]])
-        if item["sign"] < 0:
-            code ^= 0x80
-        codes.append(code)
-    segments.append(bytes(codes))
+    for ucode_value in ucodes:
+        ucode = int(ucode_value)
+        chord = ucode // 16
+        count = (int(h[chord]) + 1) * 6
+        reference = int(references[chord])
+        codes = bytearray(count)
+        for symbol in range(count):
+            value = ucode if training[symbol % len(training)] else reference
+            code = int(table[value])
+            if not signs[symbol % len(signs)]:
+                code ^= 0x80
+            codes[symbol] = code
+        segments.append(bytes(codes))
     return segments
 
 

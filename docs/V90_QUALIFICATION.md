@@ -25,4 +25,5 @@ recovery while the V.90 answerer is receiving a Phase-2 probe. These are
 V.8/startup behavior changes. The ANSam detector change is global and applies
 to all calls, whether or not a V.90 profile is configured. The V.90
 digital-answerer protocol path is integrated, but independent high-rate
-answerer interoperability has not been qualified. V.92 is not included.
+answerer interoperability has not been qualified. The V.92 caller built on
+this path is described in [V.92 qualification](V92_QUALIFICATION.md).

@@ -12,8 +12,10 @@ qualification are still required before enabling a production V.90 profile.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
+import traceback
 from collections import deque
 
 import numpy as np
@@ -108,12 +110,15 @@ class V90DigitalAnswererPhase2Engine:
                  phase3_enable_lapm: bool = False,
                  phase3_upstream_equalizer_mu: float | None = None,
                  phase2_l2_echo_tolerance_samples: int = 0,
+                 phase2_l2_echo_window_policy: str = "require",
                  retrain_on_failure: bool = False, max_retrains: int = 2,
                  phase1_silence_samples: int = 0,
                  phase2_info1a_timeout_retrain: bool = False,
                  phase2_project_info1d_rates_from_probe: bool = True,
                  phase2_clock_offset_step_samples: int = 80,
-                 phase4_mp_profile: dict | None = None):
+                 phase2_clock_violation_epochs: int = 1,
+                 phase4_mp_profile: dict | None = None,
+                 v92: bool = False):
         if role != "digital-answerer":
             raise ValueError("this engine implements only the V.90 digital answerer")
         if int(negotiation.get("pcm_negotiated_bits", 0)) != V8_PCM_DIGITAL:
@@ -131,11 +136,15 @@ class V90DigitalAnswererPhase2Engine:
         self._phase1_silence_samples = phase1_silence_samples
         self._clock = RtpMediaClock(
             origin=media_origin, media_at=media_at,
-            offset_step_samples=phase2_clock_offset_step_samples)
+            offset_step_samples=phase2_clock_offset_step_samples,
+            violation_epochs=phase2_clock_violation_epochs)
         self._rx_at = 0
         self._failed = False
+        self._failure_diagnostics: list[dict] = []
         self._closed = False
         self._lock = threading.RLock()
+        self._v92_timing_enabled = os.environ.get("V92_DSP_STAGE_TIMING") == "1"
+        self._v92_lock_timings: dict[str, dict] = {}
         self._split_fallback_tx_lock = (
             os.environ.get("V90_V34_SPLIT_TX_LOCK") == "1")
         self._fallback_tx_condition = threading.Condition()
@@ -156,9 +165,12 @@ class V90DigitalAnswererPhase2Engine:
         self._reported_handoffs = 0
         self._reported_deadlines = 0
         self._reported_phase2_failure = False
+        self._reported_phase2_controller_events = 0
         if phase3_factory is not None and not callable(phase3_factory):
             raise TypeError("phase3_factory must be callable")
-        if phase3_factory is not None and phase3_rate_mask is not None:
+        if phase3_factory is not None and phase3_rate_mask is not None and not v92:
+            # With V.92 advertised, the factory is the V.92 PCM session and the mask builds plain V.90 for a peer
+            # that does not negotiate V.92.
             raise ValueError("choose phase3_factory or phase3_rate_mask, not both")
         if phase3_span not in (12, 24):
             raise ValueError("phase3_span must be 12 or 24")
@@ -182,6 +194,11 @@ class V90DigitalAnswererPhase2Engine:
                 or not isinstance(phase2_l2_echo_tolerance_samples, int)
                 or not 0 <= phase2_l2_echo_tolerance_samples <= 80):
             raise ValueError("phase2_l2_echo_tolerance_samples must be an integer in 0..80")
+        if phase2_l2_echo_window_policy not in (
+                "require", "advance-after-window", "on-tone-a"):
+            raise ValueError(
+                "phase2_l2_echo_window_policy must be 'require' or "
+                "'advance-after-window' or 'on-tone-a'")
         if phase3_upstream_equalizer_mu is not None and not (
                 isinstance(phase3_upstream_equalizer_mu, (int, float))
                 and not isinstance(phase3_upstream_equalizer_mu, bool)
@@ -203,19 +220,70 @@ class V90DigitalAnswererPhase2Engine:
         self._phase3_upstream_equalizer_mu = (
             None if phase3_upstream_equalizer_mu is None
             else float(phase3_upstream_equalizer_mu))
-        # The local profile may implement LAPM, but native V.90 must not
-        # start it unless V.8 actually negotiated the common protocol.
+        # A V.8 LAPM agreement only lets V.42 skip ODP/ADP detection. Without
+        # it the detection phase picks LAPM or plain async (V.42 7.2): SmartLink
+        # at AT+MS=90 sends a CM with no protocols octet, and with no link our
+        # downstream went to codec idle after B1d (2026-11-18).
         self._v8_protocols = int(negotiation.get("protocols", 0))
         self._v8_lapm_negotiated = bool(
             self._v8_protocols & V8_PROTOCOL_LAPM_V42)
         self._phase3_lapm_configured = bool(phase3_enable_lapm)
-        self._phase3_enable_lapm = (
-            self._phase3_lapm_configured and self._v8_lapm_negotiated)
+        self._phase3_enable_lapm = self._phase3_lapm_configured
         self._phase3_info1d = dict(info1d_fields)
         self._phase2_project_info1d_rates_from_probe = bool(
             phase2_project_info1d_rates_from_probe)
         self._phase3 = None
         self._v34_fallback_engine = None
+        if type(v92) is not bool:
+            raise ValueError("v92 must be boolean")
+        self.v92_advertised = v92
+        self._test_v92_renegotiate_after_ms = None
+        self._test_v92_renegotiate_drn_up = None
+        self._test_v92_renegotiate_silent_period = False
+        self._test_v92_renegotiate_silent_early_rt_after = None
+        self._test_v92_data_started_at = None
+        self._test_v92_renegotiate_fired = False
+        self._test_v92_renegotiate_kind = "rate"
+        test_trigger = os.environ.get("EL_MODEM_TEST_V92_RENEGOTIATE_AFTER_MS")
+        test_options_present = any(os.environ.get(name) is not None for name in (
+            "EL_MODEM_TEST_V92_RENEGOTIATE_AFTER_MS",
+            "EL_MODEM_TEST_V92_RENEGOTIATE_DRN_UP",
+            "EL_MODEM_TEST_V92_RENEGOTIATE_SILENT_PERIOD",
+            "EL_MODEM_TEST_V92_RENEGOTIATE_EARLY_RT_AFTER",
+            "EL_MODEM_TEST_V92_RENEGOTIATE_KIND"))
+        if test_options_present and (not v92 or self._phase3_factory is None):
+            # These environment variables belong to the V.92 test harness. A
+            # stale worker setting must not abort an ordinary V.90 call.
+            self.events.append(("v92-test-hook-ignored",
+                                "no advertised V.92 PCM session"))
+        elif test_trigger is not None:
+            try:
+                delay_ms = int(os.environ["EL_MODEM_TEST_V92_RENEGOTIATE_AFTER_MS"])
+                drn_up = int(os.environ.get("EL_MODEM_TEST_V92_RENEGOTIATE_DRN_UP", "8"))
+                silent = os.environ.get("EL_MODEM_TEST_V92_RENEGOTIATE_SILENT_PERIOD", "0")
+                early_rt = int(os.environ.get("EL_MODEM_TEST_V92_RENEGOTIATE_EARLY_RT_AFTER", "0"))
+            except ValueError as exc:
+                raise ValueError("V.92 test renegotiation settings must be integers") from exc
+            if delay_ms < 0 or not 1 <= drn_up <= 19:
+                raise ValueError("V.92 test renegotiation delay must be nonnegative and DRN must be 1..19")
+            if silent not in ("0", "1"):
+                raise ValueError("V.92 test silent-period setting must be 0 or 1")
+            if early_rt and (silent != "1" or not 2400 <= early_rt < 8004):
+                raise ValueError("early R-t probe requires silent period and a value in 2400..8003")
+            if not v92 or self._phase3_factory is None:
+                raise ValueError("V.92 test renegotiation requires an advertised V.92 PCM session")
+            # "fpe": a fast parameter exchange (V.92 9.9) instead of a rate renegotiation; DRN and silent are unused.
+            kind = os.environ.get("EL_MODEM_TEST_V92_RENEGOTIATE_KIND", "rate")
+            if kind not in ("rate", "fpe"):
+                raise ValueError("V.92 test renegotiation kind must be rate or fpe")
+            self._test_v92_renegotiate_kind = kind
+            self._test_v92_renegotiate_after_ms = delay_ms
+            self._test_v92_renegotiate_drn_up = drn_up
+            self._test_v92_renegotiate_silent_period = silent == "1"
+            self._test_v92_renegotiate_silent_early_rt_after = early_rt or None
+        elif (os.environ.get("EL_MODEM_TEST_V92_RENEGOTIATE_SILENT_PERIOD") not in (None, "0")
+              or os.environ.get("EL_MODEM_TEST_V92_RENEGOTIATE_EARLY_RT_AFTER") not in (None, "0")):
+            raise ValueError("V.92 test silent-period settings require the test renegotiation trigger")
         info0 = dict(info0d_fields)
         expected_alaw = int(law == "pcma")
         if "alaw" in info0 and int(info0["alaw"]) != expected_alaw:
@@ -227,7 +295,8 @@ class V90DigitalAnswererPhase2Engine:
             tone_b_peak=float(tone_b_peak), probe_rms=float(probe_rms),
             max_l2_samples=max_l2_samples,
             info1a_timeout_retrain=phase2_info1a_timeout_retrain,
-            l2_echo_tolerance_samples=phase2_l2_echo_tolerance_samples)
+            l2_echo_tolerance_samples=phase2_l2_echo_tolerance_samples,
+            l2_echo_window_policy=phase2_l2_echo_window_policy)
         self._tx_media = int(media_at)
         self._retrain: RetrainPreamble | None = None
         self._retrain_listener: RetrainPreamble | None = None
@@ -247,21 +316,58 @@ class V90DigitalAnswererPhase2Engine:
         self._retrain_rx_base = 0
         self._build_phase2(int(media_at), phase1_silence_samples)
 
+    def _record_engine_failure(self, direction: str, exc: Exception, context=None) -> dict:
+        """Retain the traceback and media state for a swallowed engine exception."""
+        phase3 = self._phase3
+        rtp_context = {}
+        if isinstance(context, dict):
+            for key in ("sequence", "timestamp", "payload_samples", "received_at",
+                        "packet_playout_deadline_monotonic"):
+                value = context.get(key)
+                if value is None or isinstance(value, (str, int, float, bool)):
+                    rtp_context[key] = value
+        diagnostic = {
+            "direction": str(direction),
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(limit=32),
+            "rx_sample": int(self._rx_at),
+            "tx_sample": int(self._tx_media),
+            "phase2_state": str(getattr(self._phase2, "state", "unknown")),
+            "phase3_state": (None if phase3 is None else
+                             str(getattr(phase3, "state", "unknown"))),
+            "phase3_stage": (None if phase3 is None else
+                             str(getattr(phase3, "stage", "unknown"))),
+            "phase3_failure": (None if phase3 is None else
+                               getattr(phase3, "failure", None)),
+            "rtp_context": rtp_context,
+        }
+        self._failure_diagnostics.append(diagnostic)
+        print(f"[v90] {direction} exception at rx_sample={diagnostic['rx_sample']} "
+              f"tx_sample={diagnostic['tx_sample']} phase2={diagnostic['phase2_state']} "
+              f"phase3={diagnostic['phase3_state']}/{diagnostic['phase3_stage']}: "
+              f"{diagnostic['error']}\n{diagnostic['traceback']}",
+              file=sys.stderr, flush=True)
+        return diagnostic
+
     def _build_phase2(self, start_at: int,
                       phase1_silence_samples: int = 0, *,
                       retrain_info0a: dict | None = None,
                       retrain_a_reversal_at: int | None = None) -> None:
         """(Re)create the Phase 2 controller, signals, renderer and adapter at ``start_at``."""
         build = self._phase2_build
+        self._reported_phase2_controller_events = 0
         phase2_start_at = int(start_at) + int(phase1_silence_samples)
         self._phase2_start_at = phase2_start_at
         self._phase3_info1d = dict(build["info1d"])
         self._phase2 = V90DigitalPhase2Controller(
             max_l2_samples=build["max_l2_samples"],
             info1a_timeout_retrain=build["info1a_timeout_retrain"],
-            l2_echo_tolerance_samples=build["l2_echo_tolerance_samples"])
+            l2_echo_tolerance_samples=build["l2_echo_tolerance_samples"],
+            l2_echo_window_policy=build["l2_echo_window_policy"])
         self._signals = V90DigitalPhase2Signals(
-            info0d=dict(build["info0d"]), info1d=dict(build["info1d"]))
+            info0d=dict(build["info0d"]), info1d=dict(build["info1d"]),
+            v92=self.v92_advertised)
         self._renderer = V90DigitalPhase2Transmitter(
             signals=self._signals, probe_builder=build["probe_builder"],
             tone_b_peak=build["tone_b_peak"], probe_rms=build["probe_rms"],
@@ -311,6 +417,22 @@ class V90DigitalAnswererPhase2Engine:
                 self._v34_fallback_engine = None
                 self._dce_v34_fallback_dsp_capture = None
             self._begin_retrain(initiating=True, reason=reason)
+            return True
+
+    def request_v92_rate_renegotiation(self, drn_up: int, *, silent_period: bool = False,
+                                       silent_early_rt_after: int | None = None) -> bool:
+        """Request a V.92 rate change only from an active V.92 phase-3 session."""
+        with self._lock:
+            if self._closed:
+                return False
+            request = getattr(self._phase3, "request_rate_renegotiation", None)
+            if not callable(request):
+                return False
+            request(drn_up, silent_period=silent_period,
+                    silent_early_rt_after=silent_early_rt_after)
+            self.events.append(("v92-rate-renegotiation-requested", {
+                "drn_up": int(drn_up), "silent_period": bool(silent_period),
+                "silent_early_rt_after": silent_early_rt_after}))
             return True
 
     @property
@@ -379,6 +501,43 @@ class V90DigitalAnswererPhase2Engine:
         phase4 = getattr(phase3, "phase4", None)
         phase4_tx = getattr(phase4, "transmitter", None)
         phase4_rx = getattr(phase3, "phase4_receiver", None)
+        phase3_digital = getattr(phase3, "_p3", None)
+        # V.92's session intentionally has no V.90 ``upstream`` object. Its
+        # Phase-3 receiver is DigitalSide (``_p3``), so the V.90-only fields
+        # below are all None exactly when we most need to diagnose a V.92
+        # retrain. Preserve a compact, bounded snapshot of that receiver and
+        # its TX cursor before _begin_retrain retires the session.
+        v92_tx = getattr(phase3_digital, "_tx", None)
+        v92_phase3 = (None if phase3_digital is None else {
+            "state": getattr(phase3_digital, "state", None),
+            "rx_samples": len(getattr(phase3_digital, "_rx", ())),
+            "raw_samples": len(getattr(phase3_digital, "_raw", ())),
+            "ru_flip_at": getattr(phase3_digital, "ru_flip_at", None),
+            "trn1u_start": getattr(phase3_digital, "trn1u_start", None),
+            "ja_start": getattr(phase3_digital, "ja_start", None),
+            "ja_descriptor_bits": (None if getattr(phase3_digital, "ja", None) is None
+                                   else int(phase3_digital.ja.get("bits", 0))),
+            "tx_sample_cursor": getattr(phase3_digital, "_pos", None),
+            "tx_start_sample": self._phase3_started_at,
+            "tx_absolute_sample_cursor": (
+                None if self._phase3_started_at is None
+                or getattr(phase3_digital, "_pos", None) is None
+                else int(self._phase3_started_at) + int(phase3_digital._pos)),
+            "tx_state": getattr(v92_tx, "state", None),
+            "tx_trn1d_sent": getattr(v92_tx, "trn1d_sent", None),
+            "tx_jd_frames_sent": getattr(v92_tx, "jd_frames_sent", None),
+            "tx_jprime_sent": getattr(v92_tx, "jprime_sent", None),
+            "fractional_rx_reacquisition": getattr(
+                phase3_digital, "fractional_rx_reacquisition", None),
+            "dsp_stage_timing": (
+                phase3_digital.stage_timing_report()
+                if callable(getattr(phase3_digital, "stage_timing_report", None))
+                else None),
+            "engine_lock_timing": self.v92_lock_timing_report(),
+            "events": list(getattr(phase3_digital, "events", ())[-32:]),
+        })
+        fractional_rx_report = getattr(
+            phase3_digital, "fractional_rx_timing_diagnostics", None)
         try:
             timing_state = timing() if callable(timing) else None
         except Exception as exc:  # diagnostics must not interrupt call recovery
@@ -405,6 +564,8 @@ class V90DigitalAnswererPhase2Engine:
             "upstream_data_failure_reason": getattr(
                 upstream_data, "failure_reason", None),
             "upstream_next_symbol": getattr(upstream_data, "next_symbol", None),
+            "v92_phase3": v92_phase3,
+            "session_failure": getattr(phase3, "failure", None),
             # Preserve the opposite (downstream) Phase 4 boundary as well.
             # A V.90 call can finish the analogue Phase 3 exchange, then
             # retrain because CPt/CP or B1d never completes; without these
@@ -413,6 +574,8 @@ class V90DigitalAnswererPhase2Engine:
             "phase4_state": getattr(phase4, "state", None),
             "phase4_tx_state": getattr(phase4_tx, "state", None),
             "phase4_events": list(getattr(phase4, "events", ())),
+            "phase3_events": [event for event in getattr(phase3, "events", ())
+                              if event[0] in ("s-detected", "s-transition", "dil-stop-requested")],
             "phase4_tx_output_octets": (None if phase4 is None else
                                         len(getattr(phase4, "_output", ()))),
             "phase4_initial_ri_remaining": getattr(
@@ -430,6 +593,8 @@ class V90DigitalAnswererPhase2Engine:
                 phase3, "_phase4_receive_armed", False)),
             "phase4_cpt_acquired": bool(getattr(
                 phase3, "_phase4_cpt_acquired", False)),
+            "fractional_rx_timing": (
+                fractional_rx_report() if callable(fractional_rx_report) else None),
             "timing": timing_state,
             "pcm_upstream_rx": (None if pcm_rx is None else {
                 **{name: getattr(pcm_rx, name, None) for name in (
@@ -593,6 +758,20 @@ class V90DigitalAnswererPhase2Engine:
                     or (link is not None and link.v42_lost))
 
     @property
+    def v92_report(self) -> dict:
+        """Expose capability negotiation and compact FPE diagnostics."""
+        info0a = getattr(self._phase2, "info0a", None)
+        peer = None if info0a is None else bool(int(info0a.get("clock", 0)) & 1)
+        events = [
+            {"event": name, "details": value}
+            for name, value in getattr(self._phase3, "events", ())
+            if "fpe" in name
+        ]
+        return {"advertised": self.v92_advertised, "peer_capable": peer,
+                "negotiated": bool(self.v92_advertised and peer),
+                "fast_parameter_exchange_events": events}
+
+    @property
     def v42_compression(self):
         if self._v34_fallback_engine is not None:
             return self._v34_fallback_engine.v42_compression
@@ -661,11 +840,76 @@ class V90DigitalAnswererPhase2Engine:
             used, output = self._tx_v34_fallback_without_engine_lock(count)
             if used:
                 return output
-        with self._lock:
+        lock = (self._timed_v92_lock("tx_g711") if self._v92_timing_enabled
+                else self._lock)
+        with lock:
             start = self._tx_media
             output = self._tx_g711_locked(count)
             self._tx_media += count
             return output
+
+    class _V92TimedLock:
+        def __init__(self, engine, stage: str):
+            self.engine = engine
+            self.stage = stage
+            self.wait_started = 0
+            self.acquired = 0
+
+        def __enter__(self):
+            self.wait_started = time.perf_counter_ns()
+            self.engine._lock.acquire()
+            self.acquired = time.perf_counter_ns()
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            released = time.perf_counter_ns()
+            self.engine._record_v92_lock_timing(
+                self.stage, self.acquired - self.wait_started,
+                released - self.acquired)
+            self.engine._lock.release()
+            return False
+
+    def _timed_v92_lock(self, stage: str):
+        return self._V92TimedLock(self, stage)
+
+    def _record_v92_lock_timing(self, stage: str, wait_ns: int,
+                                hold_ns: int) -> None:
+        record = self._v92_lock_timings.setdefault(stage, {
+            "count": 0, "wait_total_ns": 0, "wait_max_ns": 0,
+            "hold_total_ns": 0, "hold_max_ns": 0,
+            "max_context": None,
+        })
+        record["count"] += 1
+        record["wait_total_ns"] += wait_ns
+        record["hold_total_ns"] += hold_ns
+        if wait_ns > record["wait_max_ns"] or hold_ns > record["hold_max_ns"]:
+            record["wait_max_ns"] = max(record["wait_max_ns"], wait_ns)
+            record["hold_max_ns"] = max(record["hold_max_ns"], hold_ns)
+            phase3 = self._phase3
+            record["max_context"] = {
+                "tx_media": self._tx_media,
+                "rx_at": self._rx_at,
+                "phase3_stage": getattr(phase3, "stage", None),
+                "phase3_state": getattr(phase3, "state", None),
+            }
+
+    def v92_lock_timing_report(self) -> dict:
+        def ms(value: int) -> float:
+            return value / 1_000_000.0
+        return {
+            "enabled": self._v92_timing_enabled,
+            "stages": {
+                name: {
+                    "count": row["count"],
+                    "wait_total_ms": ms(row["wait_total_ns"]),
+                    "wait_max_ms": ms(row["wait_max_ns"]),
+                    "hold_total_ms": ms(row["hold_total_ns"]),
+                    "hold_max_ms": ms(row["hold_max_ns"]),
+                    "max_context": row["max_context"],
+                }
+                for name, row in self._v92_lock_timings.items()
+            },
+        }
 
     def _publish_fallback_tx(self, fallback) -> None:
         with self._fallback_tx_condition:
@@ -742,6 +986,26 @@ class V90DigitalAnswererPhase2Engine:
                 return bytes(self._encoder(int(sample)) for sample in clipped)
         self._advance_phase2_timer()
         if self._phase3 is not None and self._phase3.transmit_ready:
+            if (self._test_v92_renegotiate_after_ms is not None
+                    and not self._test_v92_renegotiate_fired
+                    and getattr(self._phase3, "stage", None) == "data"
+                    and getattr(getattr(self._phase3, "lapm", None), "v42_mode", None) == "lapm"):
+                if self._test_v92_data_started_at is None:
+                    self._test_v92_data_started_at = self._tx_media
+                elif (self._tx_media - self._test_v92_data_started_at
+                      >= self._test_v92_renegotiate_after_ms * 8):
+                    try:
+                        if self._test_v92_renegotiate_kind == "fpe":
+                            self._phase3.request_fast_parameter_exchange()
+                            self.events.append(("v92-fast-parameter-exchange-requested", None))
+                        else:
+                            self.request_v92_rate_renegotiation(
+                                self._test_v92_renegotiate_drn_up,
+                                silent_period=self._test_v92_renegotiate_silent_period,
+                                silent_early_rt_after=self._test_v92_renegotiate_silent_early_rt_after)
+                    except (RuntimeError, NotImplementedError, ValueError) as exc:
+                        self.events.append(("v92-test-rate-renegotiation-failed", str(exc)))
+                    self._test_v92_renegotiate_fired = True
             try:
                 if (self._phase3_enable_lapm
                         and getattr(self._phase3, "lapm", None) is not None):
@@ -753,6 +1017,7 @@ class V90DigitalAnswererPhase2Engine:
                 if not isinstance(payload, bytes) or len(payload) > count:
                     raise RuntimeError("Phase 3 returned an invalid G.711 payload")
             except (TypeError, ValueError, RuntimeError) as exc:
+                self._record_engine_failure("phase3-tx", exc)
                 self._failed = True
                 self.events.append(("phase3-failed", str(exc)))
                 return bytes((_G711_SILENCE[self.law],)) * count
@@ -772,7 +1037,9 @@ class V90DigitalAnswererPhase2Engine:
         data = bytes(payload)
         if not data:
             return b""
-        with self._lock:
+        lock = (self._timed_v92_lock("feed_g711") if self._v92_timing_enabled
+                else self._lock)
+        with lock:
             if self._closed or self._failed:
                 return b""
             try:
@@ -851,6 +1118,8 @@ class V90DigitalAnswererPhase2Engine:
                         self._start_v34_fallback()
                 return b""  # Phase 2 has no DTE payload.
             except (TypeError, ValueError, RuntimeError, KeyError, IndexError) as exc:
+                self._record_engine_failure(
+                    "phase3-rx" if self._phase3 is not None else "phase2-rx", exc, context)
                 self._failed = True
                 if self._phase3 is not None:
                     self.events.append(("phase3-failed", str(exc)))
@@ -914,7 +1183,16 @@ class V90DigitalAnswererPhase2Engine:
                         self._renderer.cursor)
         actions = self._phase2.tick(media_now)
         if actions:
+            # Timer-driven INFO1d (the bounded no-L2-echo path) must use the
+            # same live INFO0a and probe measurements as INFO1d returned from
+            # adapter.feed(). Otherwise it transmits the unprojected profile.
+            self._apply_measured_info1d_offset(actions)
             self._submit_phase2_actions(actions)
+        while self._reported_phase2_controller_events < len(self._phase2.events):
+            event, detail = self._phase2.events[
+                self._reported_phase2_controller_events]
+            self.events.append((f"phase2-{event}", detail))
+            self._reported_phase2_controller_events += 1
         if (self._phase2.done
                 and self._reported_done_state != self._phase2.state):
             self.events.append(("phase2-state", self._phase2.state))
@@ -937,14 +1215,24 @@ class V90DigitalAnswererPhase2Engine:
         if self._phase3_factory is None:
             self.events.append(("phase3-unavailable", "no Phase 3 factory configured"))
             return
+        factory = self._phase3_factory
+        if (factory != self._default_phase3_factory and self._phase3_rate_mask is not None
+                and not self.v92_report["negotiated"]):
+            # A V.90-only peer (SmartLink at AT+MS=90, 2026-11-18): the V.92 session would wait for TRN1u forever.
+            factory = self._default_phase3_factory
+            self.events.append(("v92-not-negotiated", "plain V.90 Phase 3"))
         info1a = dict(self._phase2.info1a or {})
         required = ("v90_uinfo", "v90_analog_symbol_rate", "v90_digital_symbol_rate")
         if any(key not in info1a for key in required):
             raise ValueError("V.90 handoff lacks decoded V.90 INFO1a fields")
         if int(info1a["v90_digital_symbol_rate"]) != 6:
             raise ValueError("V.90 handoff has an invalid digital symbol-rate selector")
-        lapm_detect = self._phase3_enable_lapm
-        session = self._phase3_factory(
+        # This detector flag only has an effect when ``_phase3_enable_lapm``
+        # is true. The V.92 PCM factory receives its independently negotiated
+        # LAPM setting; plain V.90 always runs ODP/ADP detection.
+        lapm_detect = not (
+            self._v8_lapm_negotiated and bool(self.v92_report["negotiated"]))
+        session = factory(
             info1a=info1a, law=self.law, handoff_at=int(handoff.at),
             media_origin=self._clock.origin, media_clock=self._clock,
             lapm_detect=lapm_detect)
@@ -1285,6 +1573,37 @@ class V90DigitalAnswererPhase2Engine:
             "packet_playout_deadline_monotonic": deadline,
             "payload_samples": len(payload),
         })
+
+    def prime_info0a_preroll(self, pcm: bytes, *, rx_at: int) -> list:
+        """Back-search V.8 receive history for an early CRC-valid INFO0a.
+
+        The history precedes this engine's V.8-to-Phase-2 media origin. It is
+        used only to seed the INFO frame decoder; old tone/probe detections
+        must not trigger protocol actions after the handoff.
+        """
+        data = bytes(pcm)
+        if len(data) % 2 or not data:
+            raise ValueError("INFO0a pre-roll must contain complete PCM samples")
+        if rx_at >= 0 or self._rx_at != 0 or self._adapter.rx_origin is not None:
+            raise ValueError("INFO0a pre-roll must precede the first live RX chunk")
+        samples = np.frombuffer(data, dtype="<i2").astype(float)
+        deadline = self._clock.origin + int(rx_at) / FS
+        self._clock.observe(int(rx_at), {
+            "packet_playout_deadline_monotonic": deadline,
+            "payload_samples": len(samples),
+        })
+        actions = self._adapter.prime_info0a_preroll(
+            samples, rx_at=int(rx_at), tx_now=self._clock.tx_now())
+        if actions:
+            self._submit_phase2_actions(actions)
+        self._rx_at = int(rx_at) + len(samples)
+        self.events.append(("phase2-info0a-preroll", {
+            "samples": int(len(samples)),
+            "rx_start": int(rx_at),
+            "rx_end": int(self._rx_at),
+            "decoded": self._phase2.info0a is not None,
+        }))
+        return actions
 
     def feed_bytes(self, data: bytes) -> None:
         payload = bytes(data)
