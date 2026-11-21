@@ -339,7 +339,11 @@ class V90AnalogueCallerPhase2:
                 self._arm_info1d_deadline(at)
                 return self.drain_actions()
             self.l2_samples = self.l2_base_samples + self.rtde_samples
-            due = at + 40 * FS // 1000
+            # A reversal detected after its 40 ms slot goes out now. L1 and
+            # the L2 timeline follow the reversal actually sent: anchored to
+            # the missed slot instead, a late reversal and L1 land on one
+            # sample and the peer never sees the reversal (§9.2.2.1.4).
+            due = max(at + 40 * FS // 1000, tx_now)
             self.actions.extend((
                 AnaloguePhase2Action(due, "reverse-tone-a",
                                      latest=at + 41 * FS // 1000,

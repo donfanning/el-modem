@@ -549,6 +549,10 @@ class _V22Transmitter:
     def pending(self) -> int:
         return self._modem.pending_bits()
 
+    def flow_state(self):
+        state = getattr(self._modem, "v42_flow_state", None)
+        return state() if state is not None else None
+
     def feed_bits(self, bits) -> None:
         self._modem.feed_bits(bits)
 
@@ -706,6 +710,7 @@ class OnlineAudioSession:
         v42_frame_size: int = 32,
         v42bis: bool = False,
         v42_xid_fallback: bool = True,
+        v42_default_parameters: bool = False,
         mnp: bool = False,
         carrier_loss_seconds: float = CARRIER_LOSS_SECONDS,
         v32_rates: tuple[int, ...] = (9600, 7200, 4800),
@@ -769,13 +774,23 @@ class OnlineAudioSession:
         self._rtp_jitter_fixed: int | None = None if line_mode == "chain" else (2 * RTP_SAMPLES_PER_FRAME if line_mode == "v34" else 0)
         if os.environ.get('EL_MODEM_RTP_JITTER_MS') is not None:
             milliseconds=int(os.environ['EL_MODEM_RTP_JITTER_MS'])
-            if milliseconds not in (0,20,40):raise ValueError('RTP jitter must be 0, 20 or 40 ms')
+            # Whole 20 ms frames; a deeper hold rides out sender/relay scheduling jitter at the cost of delay.
+            if milliseconds % 20 or not 0 <= milliseconds <= 200:raise ValueError('RTP jitter must be a multiple of 20 ms in 0..200')
             self._rtp_jitter_fixed=milliseconds*8
         self._rtp_buffer: dict[int, bytes] = {}
         self._rtp_deadline_drain = os.environ.get('EL_MODEM_RTP_DEADLINE_DRAIN') == '1'
         self._rtp_counts=dict(received_packets=0,decoded_packets=0,late_or_duplicate_packets=0,
             concealed_samples=0,timestamp_gap_samples=0,maximum_buffered_packets=0,
-            deadline_drain_enabled=self._rtp_deadline_drain,deadline_released_packets=0)
+            deadline_drain_enabled=self._rtp_deadline_drain,deadline_released_packets=0,
+            rejected_foreign_source=0,rejected_ssrc_restart=0)
+        # Default: requalify an SSRC change from the pinned address/port on three consecutive packets of the new
+        # stream even when its sequence/timestamp do not continue the old one. Confirmed on a Patton dial-in line
+        # (2026-11-21): the stream to us restarts ~2 s into the answer tone on some calls, and the contiguous-only rule
+        # dropped all 2134 later packets. EL_MODEM_RTP_SSRC_RESTART=contiguous restores that strict rule.
+        restart = os.environ.get('EL_MODEM_RTP_SSRC_RESTART', 'requalify')
+        if restart not in ('contiguous', 'requalify'):
+            raise ValueError('EL_MODEM_RTP_SSRC_RESTART must be contiguous or requalify')
+        self._rtp_ssrc_requalify = restart == 'requalify'
         self._rx_pcm_sum_squares = 0
         self._rx_pcm_samples = 0
         self._rtp_latest: int | None = None
@@ -791,6 +806,7 @@ class OnlineAudioSession:
         self._v42_frame_size = v42_frame_size
         self._v42bis = v42bis
         self._v42_xid_fallback = bool(v42_xid_fallback)
+        self._v42_default_parameters = bool(v42_default_parameters)
         self._carrier_loss_seconds = carrier_loss_seconds
         self._was_up = False
         self._carrier_down_at = None
@@ -817,7 +833,10 @@ class OnlineAudioSession:
             # and modem selection are unchanged.
             from v90_dce_factory import install_v90_digital_answerer  # noqa: PLC0415
             install_v90_digital_answerer(
-                chain_options, tx_role=tx_role, law=self._g711_codec)
+                chain_options, tx_role=tx_role, law=self._g711_codec,
+                v42bis=self._v42bis,
+                compression_recovery=(self._v42bis
+                                      and os.environ.get("V42_CERROR_RECOVERY", "0") == "1"))
             from v90_dce_factory import install_v90_analogue_caller  # noqa: PLC0415
             install_v90_analogue_caller(
                 chain_options, tx_role=tx_role, law=self._g711_codec)
@@ -1342,6 +1361,8 @@ class OnlineAudioSession:
                     str(value) for name, value in getattr(eng, "events", ())
                     if name in ("phase2-failed", "phase3-failed")
                 ],
+                "engine_failure_diagnostics": list(getattr(
+                    eng, "_failure_diagnostics", ())),
                 "v34_fallback_startup": [
                     value for name, value in getattr(eng, "events", ())
                     if name == "phase3-v34-fallback-started"
@@ -1355,6 +1376,7 @@ class OnlineAudioSession:
                     for name, value in getattr(eng, "events", ())
                     if name in ("phase3-rx-gap", "retrain-rx-gap")
                 ],
+                "v92": getattr(eng, "v92_report", None),
                 "phase2_history": [dict(h) for h in getattr(eng, "phase2_history", ())],
                 "phase2_start_at": getattr(eng, "_phase2_start_at", None),
                 "media_clock": {
@@ -1378,6 +1400,7 @@ class OnlineAudioSession:
                 ],
             }
             phase3 = getattr(eng, "_phase3", None)
+            phase3_digital = getattr(phase3, "_p3", None)
             v34_fallback_engine = getattr(eng, "_v34_fallback_engine", None)
             v34_fallback_caller = getattr(v34_fallback_engine, "caller", None)
             v34_fallback_receiver = getattr(v34_fallback_caller, "_p4rcv", None)
@@ -1397,9 +1420,27 @@ class OnlineAudioSession:
                           else str(getattr(phase3, "state", "unknown"))),
                 "transmit_ready": (None if phase3 is None else bool(
                     getattr(phase3, "transmit_ready", False))),
+                "fractional_rx_timing": (
+                    None if phase3_digital is None or not hasattr(
+                        phase3_digital, "fractional_rx_timing_diagnostics")
+                    else phase3_digital.fractional_rx_timing_diagnostics()),
+                "fractional_rx_reacquisition": getattr(
+                    phase3_digital, "fractional_rx_reacquisition", None),
+                "dsp_stage_timing": (
+                    None if phase3_digital is None or not callable(getattr(
+                        phase3_digital, "stage_timing_report", None))
+                    else phase3_digital.stage_timing_report()),
+                "engine_lock_timing": (
+                    eng.v92_lock_timing_report()
+                    if callable(getattr(eng, "v92_lock_timing_report", None))
+                    else None),
                 "phase3_events": ([] if phase3 is None else [
                     {"event": name, "details": value}
                     for name, value in getattr(phase3, "events", ())]),
+                "engine_failures": [
+                    {"event": name, "details": value}
+                    for name, value in getattr(eng, "events", ())
+                    if name in ("phase2-failed", "phase3-failed")],
                 "phase4_state": (None if phase3 is None
                                  or getattr(phase3, "phase4", None) is None
                                  else str(phase3.phase4.state)),
@@ -1527,7 +1568,8 @@ class OnlineAudioSession:
                         for key in ("state", "frames", "lost_frames",
                                     "consecutive_lost_frames",
                                     "max_consecutive_lost_frames", "b1_errors",
-                                    "trellis_violations", "failure")}),
+                                    "trellis_violations", "failure",
+                                    "loss_trace")}),
                 "upstream_data_state": (None if phase3 is None
                                         or getattr(phase3, "upstream_data", None) is None
                                         else str(phase3.upstream_data.state)),
@@ -1640,6 +1682,28 @@ class OnlineAudioSession:
                                  str(getattr(phase4_controller, "state", "unknown"))),
                 "phase4_events": ([] if phase4_controller is None else
                                   list(getattr(phase4_controller, "events", ()))),
+                "v92_pcm_upstream": {
+                    "requested": bool(getattr(eng, "_v92_requested", False)),
+                    "selected": bool(getattr(eng, "_v92_selected", False)),
+                    "stage": (None if getattr(eng, "_v92_session", None) is None
+                              else getattr(eng._v92_session, "stage", None)),
+                    "phase4_diagnostics": (None if getattr(eng, "_v92_session", None) is None
+                                            else eng._v92_session.phase4_diagnostics()),
+                    "events": ([] if getattr(eng, "_v92_session", None) is None
+                               else list(getattr(eng._v92_session, "events", ()))),
+                    "lapm": (None if getattr(eng, "_v92_session", None) is None
+                             or getattr(eng._v92_session, "lapm", None) is None
+                             else eng._v92_session.lapm.diagnostics()),
+                    "pending_bits": (None if getattr(eng, "_v92_session", None) is None
+                                     or getattr(eng._v92_session, "lapm", None) is None
+                                     else int(eng._v92_session.lapm.pending_bits())),
+                    "phase2_peer_capabilities": [
+                        {"event": name, "details": value}
+                        for name, value in getattr(eng, "events", ())
+                        if name in ("v92-caller-capability-check",
+                                    "v92-caller-selected",
+                                    "v92-caller-fallback-v90")],
+                },
                 "lapm_diagnostics": (None if phase4_controller is None
                                      or getattr(phase4_controller, "lapm", None) is None
                                      else phase4_controller.lapm.diagnostics()),
@@ -1757,6 +1821,11 @@ class OnlineAudioSession:
             report = lapm_trace()
             if report is not None:
                 stats["v42_lapm_bad_frame_trace"] = report
+        event_trace = getattr(link, "lapm_event_trace_report", None)
+        if callable(event_trace):
+            report = event_trace()
+            if report is not None:
+                stats["v42_lapm_event_trace"] = report
         for part in ("caller", "answerer"):
             core=getattr(eng,part,None)
             baud = getattr(core, "call_baud", None)
@@ -1963,8 +2032,8 @@ class OnlineAudioSession:
                     # Diagnostics must not terminate an otherwise live call.
                     rx_power = "n/a"
                 print(
-                    f"[v22 +{time.monotonic() - self._created:5.2f}s] {name}"
-                    f" mode={self._auto.state if self._auto else 'v22'}"
+                    f"[modem +{time.monotonic() - self._created:5.2f}s] {name}"
+                    f" mode={self._auto.state if self._auto else self._line_mode}"
                     f" rate={self._v22.bit_rate}"
                     f" rxpower={rx_power}",
                     file=sys.stderr,
@@ -2030,11 +2099,21 @@ class OnlineAudioSession:
                 os.environ.get("V42_FORCE_DETECT_AFTER_V8", "0") == "1")
             if v8_lapm:
                 v42_options["detect"] = force_v42_detection
+            if getattr(self, "_v42_default_parameters", False) and not self._want_mnp:
+                # Configured for this number: some peers never answer XID and
+                # hang up before the unanswered-XID fallback reaches SABME, so
+                # establish with the V.42 standard defaults (SABME first).
+                # Compression is negotiated only by XID, so none is offered.
+                v42_options["default_parameters"] = True
+                v42_options.pop("compression", None)
+                v42_options["compression_recovery"] = False
             self._v22.start_v42(**v42_options)
             self._v42_started = True
             self._v42_started_from_v8 = v8_lapm
             if self.debug:
                 start_mode = (
+                    "LAPM with standard defaults (no XID) for this number"
+                    if v42_options.get("default_parameters") else
                     "detection despite V.8 LAPM agreement"
                     if v8_lapm and force_v42_detection else
                     "LAPM directly from V.8 agreement"
@@ -2165,6 +2244,47 @@ class OnlineAudioSession:
                 if not callable(getattr(receiver, method, None)):
                     raise TypeError(f"raw G.711 receiver must provide {method}()")
         self._raw_g711_receiver = receiver
+
+    def _endpoint_name(self) -> str:
+        role = getattr(self, "_tx_role", None)
+        if role == "originate":
+            return "caller"
+        if role == "answer":
+            return "answerer"
+        return "unknown"
+
+    def _media_phase(self) -> str:
+        """Return the active modem phase for timing attribution.
+
+        ``connected`` is too coarse for PCM V.90/V.92: those engines can spend
+        many seconds exchanging Phase 2/3/4 media before CONNECT. Preserve the
+        protocol phase in timing rows instead of marking all training as an
+        undifferentiated startup period.
+        """
+        chain = self._v22
+        if chain is None:
+            return "startup"
+        kind = getattr(chain, "kind", None)
+        engine = getattr(chain, "engine", None)
+        if kind in ("v90", "v92") or type(engine).__name__.startswith("V90"):
+            session = getattr(engine, "_v92_session", None)
+            if session is None:
+                session = getattr(engine, "_phase3_session", None)
+            if session is None:
+                session = getattr(engine, "_phase3", None)
+            stage = getattr(session, "stage", None)
+            if stage in ("phase3", "phase4", "data"):
+                return stage
+            phase4 = getattr(engine, "_phase4_controller", None)
+            if phase4 is not None:
+                if (str(getattr(phase4, "state", "")).lower() == "data"
+                        or bool(getattr(engine, "connected", False))):
+                    return "data"
+                return "phase4"
+            return "phase2"
+        if bool(getattr(chain, "connected", False)):
+            return "data"
+        return "startup"
 
     def _feed_raw_g711(self, payload: bytes) -> bytes | None:
         receiver = getattr(self, "_raw_g711_receiver", None)
@@ -2442,11 +2562,18 @@ class OnlineAudioSession:
         (e.g. the ARQ session's own send queue) so flow control reacts to
         the real end-to-end backlog, not just what has reached the
         transmitter's bit queue."""
-        pending = self.transmitter.pending() + extra_pending_bits
-        if not self.xoff_asserted and pending > FLOW_XOFF_HIGH_WATER_BITS:
+        state = getattr(self.transmitter, "flow_state", None)
+        state = state() if state is not None else None
+        if state is not None:                   # LAPM: unsent backlog against frame-sized watermarks
+            pending, high, low = state
+            pending += extra_pending_bits
+        else:
+            pending = self.transmitter.pending() + extra_pending_bits
+            high, low = FLOW_XOFF_HIGH_WATER_BITS, FLOW_XON_LOW_WATER_BITS
+        if not self.xoff_asserted and pending > high:
             self.xoff_asserted = True
             return bytes((XOFF,))
-        if self.xoff_asserted and pending < FLOW_XON_LOW_WATER_BITS:
+        if self.xoff_asserted and pending < low:
             self.xoff_asserted = False
             return bytes((XON,))
         return None
@@ -2489,13 +2616,15 @@ class OnlineAudioSession:
             ended = time.monotonic()
             thread_cpu_seconds=(time.thread_time()-rx_thread_started
                                 if rx_thread_started is not None else None)
-            data_phase = bool(getattr(self._v22, "connected", False))
+            phase = self._media_phase()
+            data_phase = phase == "data"
             self.realtime.add("rx_seconds", ended - started, data=data_phase)
             if thread_cpu_seconds is not None:
                 self.realtime.add("rx_thread_cpu_seconds",
                                   thread_cpu_seconds, data=data_phase)
             if timing_trace is not None:
-                row = dict(self._rx_context, raw_g711=True,
+                row = dict(self._rx_context, endpoint=self._endpoint_name(),
+                           phase=phase, raw_g711=True,
                            payload_samples=len(payload), started=started,
                            ended=ended)
                 row['thread_cpu_seconds']=(
@@ -2577,7 +2706,8 @@ class OnlineAudioSession:
         # the opt-in trace is active.
         thread_cpu_started=time.thread_time() if self.timing_trace is not None else None
 
-        data_phase=bool(getattr(self._v22,'connected',False))
+        phase = self._media_phase()
+        data_phase = phase == "data"
         age = None
         if self._rx_arrival is not None:
             age=max(0.,started-self._rx_arrival-self._rtp_jitter_samples/8000)
@@ -2618,7 +2748,8 @@ class OnlineAudioSession:
             self.realtime.add('rx_thread_cpu_seconds',time.thread_time()-rx_thread_started,
                               data=data_phase)
         if self.timing_trace is not None:
-            row = dict(self._rx_context, started=started, ended=ended,
+            row = dict(self._rx_context, endpoint=self._endpoint_name(), phase=phase,
+                       started=started, ended=ended,
                        samples=len(pcm)//2, data=data_phase, queue_age=age)
             row['thread_cpu_seconds']=thread_cpu_seconds
             self.timing_trace.threshold('rx_processing', ended-started, row)
@@ -2866,20 +2997,27 @@ class OnlineAudioSession:
             # that endpoint is accepted only as a contiguous stream restart.
             if peer[0] != self._rtp_peer[0]:
                 self._rtp_candidate.clear()
+                self._rtp_counts['rejected_foreign_source'] += 1
                 return []
             if self._rtp_candidate:
                 old_peer, old_seq, old_timestamp, old_samples, old_at, _ = self._rtp_candidate[-1]
                 continuous = (peer == old_peer
                               and seq == (old_seq + 1) & 0xffff
-                              and timestamp == (old_timestamp + old_samples) & 0xffffffff
+                              and (self._rtp_ssrc_requalify
+                                   or timestamp == (old_timestamp + old_samples) & 0xffffffff)
                               and 0 <= now - old_at <= 1)
             else:
                 previous = self._rtp_source_last
-                continuous = (previous is not None
-                              and seq == (previous[0] + 1) & 0xffff
-                              and timestamp == (previous[1] + previous[2]) & 0xffffffff)
+                continuous = (self._rtp_ssrc_requalify
+                              or (previous is not None
+                                  and seq == (previous[0] + 1) & 0xffff
+                                  and timestamp == (previous[1] + previous[2]) & 0xffffffff))
             if not continuous:
                 self._rtp_candidate.clear()
+                self._rtp_counts['rejected_ssrc_restart'] += 1
+                if not self._rtp_ssrc_requalify:
+                    return []
+                self._rtp_candidate.append((peer, seq, timestamp, len(packet) - 12, now, row))
                 return []
             self._rtp_candidate.append(
                 (peer, seq, timestamp, len(packet) - 12, now, row)
@@ -2968,6 +3106,7 @@ class OnlineAudioSession:
 
     def _send_loop(self) -> None:
         next_frame = time.monotonic()
+        last_packet_sent_at = None
         while not self._stop.is_set():
             started=time.monotonic()
             tx_thread_started=(time.thread_time()
@@ -2975,7 +3114,8 @@ class OnlineAudioSession:
                                           'thread_timing', False) is True else None)
             trace = self.timing_trace
             stamps = [(started,time.thread_time())] if trace is not None else None
-            data_phase=bool(getattr(self._v22,'connected',False))
+            phase = self._media_phase()
+            data_phase = phase == "data"
             if self._tx_watchdog is not None:
                 self._tx_active = (started,self._sequence,data_phase,'samples')
             linear = self._next_frame_samples(next_frame)
@@ -3005,6 +3145,26 @@ class OnlineAudioSession:
             except OSError:
                 self._tx_active = None
                 return
+            sent_at = time.monotonic()
+            start_lateness = max(0., started - next_frame)
+            send_lateness = max(0., sent_at - next_frame)
+            packet_gap = (None if last_packet_sent_at is None else
+                          max(0., sent_at - last_packet_sent_at))
+            last_packet_sent_at = sent_at
+            self.realtime.add('sender_start_lateness_seconds', start_lateness,
+                              data=data_phase)
+            self.realtime.add('sender_lateness_seconds', send_lateness,
+                              data=data_phase)
+            if packet_gap is not None:
+                self.realtime.add('tx_packet_gap_seconds', packet_gap,
+                                  data=data_phase)
+                if self.timing_trace is not None:
+                    self.timing_trace.threshold('tx_packet_gap', packet_gap,
+                        dict(endpoint=self._endpoint_name(), phase=phase,
+                             sequence=self._sequence, timestamp=self._timestamp,
+                             deadline=next_frame, started=started,
+                             sent_at=sent_at, packet_gap_seconds=packet_gap,
+                             data=data_phase))
             if capture is not None:
                 try:
                     local_addr = self._sock.getsockname()
@@ -3034,11 +3194,14 @@ class OnlineAudioSession:
             if tx_thread_started is not None:
                 self.realtime.add('tx_thread_cpu_seconds',time.thread_time()-tx_thread_started,
                                   data=data_phase)
-            self.realtime.add('sender_lateness_seconds',max(0.,started-next_frame),data=data_phase)
             if self.timing_trace is not None:
                 stamps.append((ended,time.thread_time()))
-                row = dict(sequence=self._sequence, timestamp=self._timestamp, deadline=next_frame,
-                           started=started, ended=ended, data=data_phase)
+                row = dict(sequence=self._sequence, timestamp=self._timestamp,
+                           endpoint=self._endpoint_name(), phase=phase,
+                           deadline=next_frame, started=started, sent_at=sent_at,
+                           ended=ended, start_lateness_seconds=start_lateness,
+                           send_lateness_seconds=send_lateness,
+                           packet_gap_seconds=packet_gap, data=data_phase)
                 names = ('samples','g711','recording','send','reference')
                 row['stages_seconds'] = {name:stamps[i+1][0]-stamps[i][0]
                                          for i,name in enumerate(names)}
@@ -3047,7 +3210,7 @@ class OnlineAudioSession:
                 row['engine_timing'] = getattr(self._v22,'_tx_timing',None)
                 self.timing_trace.record('tx', row)
                 self.timing_trace.threshold('tx_processing', ended-started, row)
-                self.timing_trace.threshold('sender_late', max(0.,started-next_frame), row)
+                self.timing_trace.threshold('sender_late', send_lateness, row)
             self._sequence = (self._sequence + 1) & 0xFFFF
             self._timestamp = (self._timestamp + self._rtp_frame_samples) & 0xFFFFFFFF
             next_frame += self._rtp_frame_seconds
@@ -4760,8 +4923,11 @@ def attach_v90_digital_answerer_profile(session_args: dict,
     configured = dict(session_args)
     if profile is None:
         return configured
-    if tx_role != "answer":
-        raise ValueError("V.90 digital-answerer profile requires answer role")
+    from v90_dce_factory import v90_profile_call_roles
+
+    if tx_role not in v90_profile_call_roles(profile, "answer"):
+        raise ValueError(
+            f"V.90 digital-answerer profile call_roles do not include the {tx_role} role")
     if configured.get("line_mode") != "chain":
         raise ValueError("V.90 digital answerer requires V.8 chain automode")
     chain = dict(configured.get("chain") or {})
@@ -4780,12 +4946,13 @@ def load_v90_digital_answerer_profile(path: str | None, *, law: str) -> dict | N
         profile = json.load(stream)
     if not isinstance(profile, dict):
         raise ValueError("V.90 digital-answerer profile file must contain a JSON object")
-    from v90_dce_factory import install_v90_digital_answerer
+    from v90_dce_factory import install_v90_digital_answerer, v90_profile_call_roles
 
     # Run the same validation used when V8Chain is created, so malformed or
     # incompatible profiles fail before the modem accepts calls.
-    probe = {"v90_digital_answerer": profile}
-    install_v90_digital_answerer(probe, tx_role="answer", law=law)
+    for role in v90_profile_call_roles(profile, "answer"):
+        probe = {"v90_digital_answerer": profile}
+        install_v90_digital_answerer(probe, tx_role=role, law=law)
     return profile
 
 
@@ -4821,16 +4988,24 @@ def load_v90_analogue_caller_profile(path: str | None, *, law: str) -> dict | No
         profile = json.load(stream)
     if not isinstance(profile, dict):
         raise ValueError("V.90 analogue-caller profile file must contain a JSON object")
-    from v90_dce_factory import install_v90_analogue_caller
+    from v90_dce_factory import install_v90_analogue_caller, v90_profile_call_roles
 
     probe = {"v90_analogue_caller": profile}
-    install_v90_analogue_caller(probe, tx_role="originate", law=law)
+    install_v90_analogue_caller(
+        probe, tx_role=v90_profile_call_roles(profile, "originate")[0], law=law)
     engine = probe["v90_engine_factory"](
         role="analogue-caller",
         negotiation={"pcm_negotiated_bits": 1 << 5},
         media_at=0, media_origin=0.0)
     engine.close()
     return profile
+
+
+def v42_default_parameters_for(tx_role: str, number: str,
+                                numbers: tuple[str, ...]) -> bool:
+    """Whether an originated call to ``number`` starts LAPM with standard defaults."""
+    return (tx_role == "originate" and bool(number)
+            and normalize_dial_number(number) in {normalize_dial_number(n) for n in numbers})
 
 
 def normalize_dial_number(dial_string: str) -> str:
@@ -4885,6 +5060,7 @@ def run_pty(
     line_mode: str = "bell103",
     v22_rate: int = 1200,
     v42_frame_size: int = 32,
+    v42_default_parameters_numbers: tuple[str, ...] = (),
     tcp_listen: str | None = None,
     tcp_baud_control: bool = False,
     serial_tcp: str | None = None,
@@ -4912,7 +5088,7 @@ def run_pty(
         raise ValueError("V.90 digital answerer profile requires the SIP user agent")
     if v90_digital_answerer_profile_file and line_mode not in ("chain", "ms"):
         raise ValueError("V.90 digital answerer profile requires --line-mode chain or ms")
-    if v90_analogue_caller_profile_file and (not sip_host or not dial_host):
+    if v90_analogue_caller_profile_file and not sip_host:
         raise ValueError("V.90 analogue caller profile requires SIP bind and outbound dial targets")
     if v90_analogue_caller_profile_file and line_mode != "chain":
         raise ValueError("V.90 analogue caller profile requires --line-mode chain")
@@ -5013,6 +5189,12 @@ def run_pty(
             v90_digital_answerer_profile_file, law=sip_g711_codec)
         v90_analogue_caller_profile = load_v90_analogue_caller_profile(
             v90_analogue_caller_profile_file, law=sip_g711_codec)
+        from v90_dce_factory import v90_profile_call_roles
+        for profile, default in ((v90_digital_answerer_profile, "answer"),
+                                 (v90_analogue_caller_profile, "originate")):
+            if (profile is not None and not dial_host
+                    and "originate" in v90_profile_call_roles(profile, default)):
+                raise ValueError("A V.90 profile for outbound calls requires SIP bind and outbound dial targets")
 
         def sip_packetization_ms() -> int:
             selected = dce.ms.get("mod", "") if line_mode == "ms" else line_mode
@@ -5132,6 +5314,8 @@ def run_pty(
                     **session_args,
                     v42=(dce.error_control == 3), v42_frame_size=v42_frame_size,
                     v42bis=bool(dce.compression), v42_xid_fallback=dce.v42_xid_fallback,
+                    v42_default_parameters=v42_default_parameters_for(
+                        tx_role, dce._number, v42_default_parameters_numbers),
                     mnp=(dce.error_control == 2),
                 )
             except ValueError as exc:               # e.g. v32 cannot answer
@@ -6137,7 +6321,9 @@ def preimport_v34_modules() -> None:
                  # Phase-2 exchange hands off to V.34. That handoff runs
                  # under the shared RX/TX media lock. Importing it here also
                  # builds the bounded V.34 shell-mapping tables at startup.
-                 'v34_answer_modem'):
+                 'v34_answer_modem',
+                 # V.92 digital answerer: first used at Phase 3/4 or on a rate change.
+                 'v92_equaliser', 'v92_renegotiation', 'v92_fast_parameter_exchange'):
         import_module(name)
 
 
@@ -6225,6 +6411,12 @@ def main(serial_backend=None, control=None) -> None:
         default=32,
         help="LAPM information-field size (N401, 1-128 bytes) to offer under \\N3; "
         "smaller frames survive packet loss better, at ~14%% cost on a clean line",
+    )
+    parser.add_argument(
+        "--v42-default-parameters-number",
+        action="append", default=[], metavar="NUMBER",
+        help="originated calls to NUMBER start LAPM with the V.42 standard defaults "
+        "(SABME first, no XID, no compression) for peers that never answer XID; repeatable",
     )
     parser.add_argument(
         "--no-negotiate",
@@ -6365,6 +6557,7 @@ def main(serial_backend=None, control=None) -> None:
             line_mode=args.line_mode,
             v22_rate=args.v22_rate,
             v42_frame_size=args.v42_frame_size,
+            v42_default_parameters_numbers=tuple(args.v42_default_parameters_number),
             tcp_listen=args.tcp_listen,
             tcp_baud_control=args.tcp_baud_control,
             sip_user=args.sip_user,

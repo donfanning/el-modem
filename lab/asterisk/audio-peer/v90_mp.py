@@ -26,21 +26,33 @@ def _signed16(value: int) -> int:
     return value - 0x10000 if value & 0x8000 else value
 
 
-def _frame_length(mp_type: int) -> int:
-    # 86/188 information-through-fill bits padded to six-bit symbols.
-    return 90 if mp_type == 0 else 192
+def _parse_length(mp_type: int) -> int:
+    # Bits through fill bit 85/187. The rest of the fill depends on the
+    # sender's mapper frame and may already be the next frame's sync.
+    return 86 if mp_type == 0 else 188
+
+
+def _frame_length(mp_type: int, frame_bits: int = 6) -> int:
+    # Table 16 fills the 86/188 information-through-fill bits to the next
+    # multiple of 6 symbols, i.e. whole S+K-bit frames of the mapper sending
+    # MP. The 6-bit default is only a placeholder for callers without one.
+    base = 86 if mp_type == 0 else 188
+    return -(-base // frame_bits) * frame_bits
 
 
 def build_mp(*, mp_type: int = 0, max_a2d_drn: int = 14,
              trellis: int = 0, nonlinear: int = 0,
              shaping: int = 0, ack: int = 0,
              rate_mask: int = 0x1FFF,
-             precoder: Sequence[int] | None = None) -> list[int]:
+             precoder: Sequence[int] | None = None,
+             frame_bits: int = 6) -> list[int]:
     """Build a V.90 MP or MP-prime frame, including symbol-boundary fill.
 
     ``rate_mask`` bit 0 represents 4800 bit/s and bit 12 represents 33600
     bit/s. Type 1 ``precoder`` is six signed 16-bit words ordered h1 real,
     h1 imaginary, h2 real, h2 imaginary, h3 real, h3 imaginary.
+    ``frame_bits`` is the S+K bits per 6-symbol frame of the mapper that
+    sends MP, so the frame ends on a frame boundary.
     """
     if type(mp_type) is not int or mp_type not in (0, 1):
         raise ValueError("MP type must be 0 or 1")
@@ -51,6 +63,8 @@ def build_mp(*, mp_type: int = 0, max_a2d_drn: int = 14,
     for name, value in (("nonlinear", nonlinear), ("shaping", shaping), ("ack", ack)):
         if type(value) is not int or value not in (0, 1):
             raise ValueError(f"{name} must be 0 or 1")
+    if type(frame_bits) is not int or frame_bits <= 0:
+        raise ValueError("frame_bits must be a positive integer")
     if type(rate_mask) is not int or not 0 <= rate_mask < (1 << 13):
         raise ValueError("rate_mask must contain only the 13 V.90 analogue-transmit rate bits")
 
@@ -84,7 +98,7 @@ def build_mp(*, mp_type: int = 0, max_a2d_drn: int = 14,
         bits += _bits(crc16(crc_information), 16)
         bits += [0]        # Fill bit 187
 
-    target = _frame_length(mp_type)
+    target = _frame_length(mp_type, frame_bits)
     bits += [0] * (target - len(bits))
     if len(bits) != target:
         raise AssertionError("V.90 MP frame length calculation failed")
@@ -98,7 +112,7 @@ def parse_mp(bits: Sequence[int]) -> dict | None:
     mp_type = int(bits[18])
     if mp_type not in (0, 1):
         return None
-    length = _frame_length(mp_type)
+    length = _parse_length(mp_type)
     if len(bits) < length or any(bit not in (0, 1) for bit in bits[:length]):
         return None
     if any(bits[index] for index in (19, 20, 21, 22, 23, 28, 34, 35, 49, 50, 51)):
@@ -112,7 +126,7 @@ def parse_mp(bits: Sequence[int]) -> dict | None:
 
     information = list(bits[18:34]) + list(bits[35:51])
     if mp_type == 0:
-        if bits[68] or any(bits[52:68]) or bits[85] or any(bits[86:90]):
+        if bits[68] or any(bits[52:68]) or bits[85]:
             return None
         information += list(bits[52:68])
         crc_at = 69
@@ -120,7 +134,7 @@ def parse_mp(bits: Sequence[int]) -> dict | None:
         separator_positions = (68, 85, 102, 119, 136, 153, 170, 187)
         if any(bits[index] for index in separator_positions):
             return None
-        if any(bits[154:170]) or any(bits[188:192]):
+        if any(bits[154:170]):
             return None
         coeff_starts = (52, 69, 86, 103, 120, 137)
         coeffs = [_value(bits, lo, 16) for lo in coeff_starts]
@@ -160,7 +174,7 @@ def scan_mp(bits: Sequence[int]) -> list[dict]:
             start = index - 17
             mp_type = int(bits[index + 1])
             if mp_type in (0, 1):
-                length = _frame_length(mp_type)
+                length = _parse_length(mp_type)
                 parsed = parse_mp(bits[start:start + length])
                 if parsed is not None:
                     found.append({"start_bit": start, **parsed})
@@ -201,7 +215,7 @@ class V90MpScanner:
             if mp_type not in (0, 1):
                 self._cursor += 1
                 continue
-            length = _frame_length(mp_type)
+            length = _parse_length(mp_type)
             if start + length > len(self._bits):
                 break
             profile = parse_mp(self._bits[start:start + length])

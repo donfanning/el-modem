@@ -19,6 +19,8 @@ _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 FIXTURE = _FIXTURES / "acts_v32.rx.raw"
 NO_TRN = _FIXTURES / "acts_v32_no_second_trn.rx.raw"
 SECOND_TRN = _FIXTURES / "acts_v32_second_trn.rx.raw"
+AC_RESTART = _FIXTURES / "patton1771_v32_ac_restart.rx.raw"   # a Patton dial-in line, 2026-11-21 (6-21.5 s)
+SHORT_AC = _FIXTURES / "patton1771_v32_short_ac_window.rx.raw"  # a Patton dial-in line, 2026-11-21 (3.0-14.6 s)
 
 
 class ActsCaptureTests(unittest.TestCase):
@@ -99,6 +101,30 @@ class SecondTrainingTests(unittest.TestCase):
         # the fallback engages at ~16.3s and gets 2.5s of rate word before giving up
         self.assertLess(failed[0], 20.0, events)
 
+
+
+class PattonCaptureTests(unittest.TestCase):
+    def test_short_first_ac_window_is_abandoned_not_taken_for_the_second_reversal(self):
+        # The Patton reverses to CA in its first 0.8 s AC window, then moves on (V.21) before our CC can reach it
+        # over 1.25 s; its next AC ~4 s later was read as the CA->AC reversal (a "4.8 s round trip").
+        from unittest import mock
+        import os
+        with mock.patch.dict(os.environ, {"EL_MODEM_V32_AA_AFTER_ANS": "1"}):
+            m, _ = replay(SHORT_AC, secs=11.6, rate=14400, caller=True)
+        events = [e for _, e in m.events]
+        joined = " | ".join(events)
+        self.assertIn("back to AA for its next attempt", joined)
+        self.assertNotIn("round trip done", joined)
+        self.assertEqual(sum("AC->CA reversal" in e for e in events), 2, joined)
+
+    def test_answerer_restarting_with_ac_gets_aa_again(self):
+        # After the back-reversal the Patton went silent, sent 3.6 s of echo-canceller training and then
+        # AC for 5 s instead of S/TRN (V.32 Figure 5b). We must answer that AC, not sit waiting for TRN.
+        m, _ = replay(AC_RESTART, secs=15.5, rate=14400, caller=True)
+        events = " | ".join(e for _, e in m.events)
+        self.assertIn("answerer restarted with AC", events)
+        self.assertEqual(m.state, "aa", events)
+        self.assertNotIn("FAILED", events)
 
 if __name__ == "__main__":
     unittest.main()

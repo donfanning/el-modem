@@ -27,6 +27,34 @@ def loop(call, ans, seconds=14.0, delay=40, noise=0.0, seed=1):
 
 
 class SelfTests(unittest.TestCase):
+    def test_captured_patton_v8_octets_decode_by_offer_intersection(self):
+        # Forced V.34 capture: peer JM has the standard tags but no selected
+        # modulation, so the intersection with our V.34-only CM is empty.
+        forced_v34 = v8.V8Negotiator(
+            True, modulations=v8.V8_MOD_V34,
+            protocols=v8.V8_PROTOCOL_LAPM_V42)
+        forced_v34._on_jm([0xC1, 0x05, 0x10, 0x10, 0x2A])
+        self.assertEqual(forced_v34.result["jm_octets"],
+                         [0xC1, 0x05, 0x10, 0x10, 0x2A])
+        self.assertEqual(forced_v34.result["modulations"], 0)
+        self.assertEqual(forced_v34.result["protocols"], v8.V8_PROTOCOL_NONE)
+
+        # Earlier broad-offer capture: the same parser returns V.32/V.22/V.21.
+        broad_offer = v8.V8Negotiator(
+            True, modulations=v8.V8_MOD_V32 | v8.V8_MOD_V22 | v8.V8_MOD_V21,
+            protocols=v8.V8_PROTOCOL_LAPM_V42)
+        broad_offer._on_jm([0xC1, 0x05, 0x13, 0x90, 0x2A])
+        self.assertEqual(broad_offer.result["jm_octets"],
+                         [0xC1, 0x05, 0x13, 0x90, 0x2A])
+        self.assertEqual(broad_offer.result["modulations"], 0x206)
+
+        # The answer-side result preserves the CM bytes too.
+        answer = v8.V8Negotiator(False, modulations=v8.V8_MOD_V34)
+        answer._on_cm([0xC1, 0x05, 0x13, 0x90, 0x2A])
+        self.assertEqual(answer.result["cm_octets"],
+                         [0xC1, 0x05, 0x13, 0x90, 0x2A])
+        self.assertEqual(answer.result["modulations"], 0)
+
     def test_message_coding(self):
         self.assertEqual(v8.call_function_octet(6), 0xC1)
         self.assertEqual(v8.modulation_octets(v8.V8_MOD_V34 | v8.V8_MOD_V32 | v8.V8_MOD_V21)[0], 0x45)

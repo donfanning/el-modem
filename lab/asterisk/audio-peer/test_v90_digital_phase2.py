@@ -41,6 +41,16 @@ class V90DigitalPhase2Tests(unittest.TestCase):
         self.assertEqual(got[5]["max_rate"], 12)
         self.assertEqual(blocks[3]["hi_carrier"], 1)  # input is not mutated
 
+    def test_info1d_blocks_without_a_cap_offer_each_symbol_rate_its_v34_ceiling(self):
+        info0a = {"rate2743": 1, "rate2800": 1, "rate3429": 1, "allow3429": 1, "lo3000": 1, "lo3200": 1,
+                  "pts1664": 1}
+        got = constrain_info1d_to_info0a({"blocks": [{} for _ in range(6)]}, info0a)["blocks"]
+        self.assertEqual([block["max_rate"] for block in got], [9, 11, 11, 12, 13, 14])
+        got = constrain_info1d_to_info0a({"blocks": [{} for _ in range(6)]}, {"rate3429": 1, "allow3429": 1})["blocks"]
+        self.assertEqual([block["max_rate"] for block in got], [9, 0, 0, 0, 0, 12])    # no 1664-point support
+        explicit = constrain_info1d_to_info0a({"blocks": [{"max_rate": 0}] * 6}, info0a)["blocks"]
+        self.assertEqual([block["max_rate"] for block in explicit], [0] * 6)
+
     def test_info1d_accepts_shared_v34_parser_name_for_raw_3429_bit(self):
         constrained = constrain_info1d_to_info0a(
             {"blocks": [{"max_rate": 0} for _ in range(5)]

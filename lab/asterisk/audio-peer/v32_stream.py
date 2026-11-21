@@ -47,6 +47,19 @@ IMPLEMENTED_RATES = (14400, 12000, 9600, 7200, 4800)
 # measured against the Smart Link answerer (seconds, from the detected second AC reversal)
 S_AFTER_REVERSAL = 0.078             # answerer's S starts this long after the back-reversal
 TRN_AFTER_S = (256 + 16) / BAUD      # its TRN follows S and S-bar
+ECHO_TRAINING_MAX_S = 8192 / BAUD     # V.32 5.4 Note 3: longest echo-canceller sequence before S
+# How far past the prediction to keep looking: that sequence plus a long S. A Patton dial-in pool sent
+# 3.6 s of echo-canceller training and then S for more than 0.56 s (its end unseen, 2026-11-21).
+LOCATE1_MAX_S = 8.0
+# V.32 5.5 / Figure 5b: an answerer that restarts with AC wants the start-up again. While we look for its
+# first TRN, AC that follows a break (silence or echo-canceller training) and lasts this long is that.
+ANSWERER_RESTART_AC_S = 1.0
+ANSWERER_RESTARTS_MAX = 2
+# An automode answerer (a Patton dial-in pool) whose short AC window closes before our CC can reach it over a
+# 1.25 s round trip moves on (V.21, then AC again ~4 s later). Its AC/CA gone this long means that attempt is
+# over: back to AA, so its next AC starts a fresh handshake rather than reading as the second reversal.
+AC_GONE_S = 0.5
+LOCATE1_STEP_S = 0.6                  # slide per empty search: overlaps the +-0.5 s window by more than _trim can cut
 ANS_TRN_LEN = 8044
 TX_AFTER_TRN_END = 0.15              # fallback: we begin our S this long after its TRN ends
 TX_AFTER_R1 = 0.137                  # we begin our S this long after the answerer's R1 starts
@@ -310,6 +323,13 @@ class V32Modem(V42Layer):
         for r in self.my_rates:
             self.my_rate_word |= RATE_BITS[r]
         amplitude = float(os.environ.get("V32_AMP", amplitude))
+        # Opt-in transmit gain for the handshake tones and the data signal. We send AA/CC at -18.3 dBm0, the
+        # Patton's AC arrives at -12.8; real PSTN modems sit nearer -10..-14 (Gough Lui's V.92 set: CM median
+        # -14.5). A network echo canceller's NLP clipping our quieter tone would look like the amplitude drop the
+        # Patton answers with silence (2026-11-21, hypothesis).
+        gain = 10 ** (float(os.environ.get("EL_MODEM_V32_TX_GAIN_DB", "0")) / 20)
+        amplitude *= gain
+        self._tone_amp = 2700 * gain
         if os.environ.get("V32_RATES"):
             my_rates = tuple(int(r) for r in os.environ["V32_RATES"].split(","))
             self.my_rates = tuple(r for r in my_rates if r in IMPLEMENTED_RATES)
@@ -374,12 +394,36 @@ class V32Modem(V42Layer):
         self._blockbuf: list[int] = []
         self._c600 = [cmath.exp(-2j * math.pi * 600 * i / fs) for i in range(self.blk)]
         self._c3000 = [cmath.exp(-2j * math.pi * 3000 * i / fs) for i in range(self.blk)]
+        # Opt-in: V.32 5.4.1 has the caller send AA once it has heard the answer tone for at least 1 s,
+        # before AC. A Banksia MyModem 144 does (Gough Lui's stereo V.32bis capture: AA 0.16 s before AC);
+        # waiting to hear AC first missed a Patton's 0.8 s AC window over a 1.1 s round trip.
+        # "during" (slmodemd's way): AA once the tone has lasted 1 s, without V.8 -- for answerers with V.8 off
+        # (a Patton dial-in line, whose automode then skips its V.22bis/V.21 probing). "1": AA when the tone ends,
+        # unless the answerer is sending JM (a V.8 answerer such as dialup.world: we then finish V.8 instead).
+        mode = os.environ.get("EL_MODEM_V32_AA_AFTER_ANS", "")
+        self._aa_after_ans = mode in ("1", "during")
+        self._aa_during_ans = mode == "during"
+        self._c2100 = [cmath.exp(-2j * math.pi * 2100 * i / fs) for i in range(self.blk)]
+        self._c1650 = [cmath.exp(-2j * math.pi * 1650 * i / fs) for i in range(self.blk)]
+        self._c1850 = [cmath.exp(-2j * math.pi * 1850 * i / fs) for i in range(self.blk)]
+        self._ans_blocks = 0
+        self._ans_gone = 0
+        self._ac_gone = 0               # blocks without pure AC/CA while we send AA/CC
+        # Opt-in: make the AA->CC 180 degree reversal a constant-amplitude phase ramp over a few ms rather than a
+        # one-sample jump. On most rounds the Patton answered our CC with 90 ms of silence (V.32 5.4.2's
+        # response to an amplitude drop) instead of its CA->AC reversal, then echo-canceller training and a restart;
+        # the jump passes through an envelope null (min 0.00 behind a 200 Hz filter; a 10 ms ramp keeps 0.85).
+        # Experiment only: a real modem's A->C transition also crosses zero through its pulse filter.
+        self._cc_ramp = int(float(os.environ.get("EL_MODEM_V32_CC_RAMP_MS", "10")) * fs / 1000) \
+            if os.environ.get("EL_MODEM_V32_CC_RAMP") == "1" else 0
+        self._ramp_left = 0
         self._ac_run = 0
         self._ph_hist: list[float] = []
         self._prev_age = 0
         self._tone_phase = cmath.phase(A)
         self._tone_n = 0
         self._cc_tx_at = None
+        self._cc_rx_at = None           # receive-clock time of the AC->CA reversal that started our CC
         self._rx_tap = GPA              # the far end's scrambler tap (GPA from an answerer, GPC from a caller)
         self._tx_start_sample = None
         self._tx_fallback = None
@@ -392,6 +436,10 @@ class V32Modem(V42Layer):
         self.ubase = 0
         self.eq = Equalizer(32)
         self._rev2_at = None
+        self._locate1_shift = 0.0       # how far the answerer-TRN search window has slid past the prediction
+        self._restart_gap = 0           # non-tone blocks seen since the back-reversal (answerer-restart watch)
+        self._restart_ac = 0            # consecutive AC blocks after such a break
+        self._answerer_restarts = 0
         self._rx_mode = "idle"          # idle | locate1 | train1 | wait_resume | locate2 | train2 | dd
         self._s0 = 0
         self._ph = 0
@@ -599,15 +647,48 @@ class V32Modem(V42Layer):
                 from v32_rate_session import RateSession
                 self._rrp = RateSession(self)
 
+    V42_RX_LAG_MARGIN_S = 1.0                                # as V34Modem: receive path behind real time, plus slack
+
+    def _round_trip_samples(self):
+        """Our AA->CC transition to the answerer's back-reversal, in received samples, or None.
+
+        Both ends on the receive clock: the transmit counter can run ahead of it (in --line-mode v32 the
+        sender pulls samples before the first RTP packet arrives; 0.5 s on a live call made NT 670 ms
+        instead of ~1.2 s, our S too short, and the answerer never trained, 2026-11-21). The interval
+        still includes our transmit latency, since the reversal comes back only after CC has gone out."""
+        start = self._cc_rx_at if self._cc_rx_at is not None else self._cc_tx_at
+        if start is None or self._rev2_at is None:
+            return None
+        return max(0, self._rev2_at - self.blk // 2 - start)
+
+    @property
+    def v42_rtt_hint_seconds(self):
+        rtd = self._round_trip_samples()
+        return rtd / self.fs if rtd else None
+
+    @property
+    def v42_detect_extra_seconds(self) -> float:
+        """The ADP comes back one round trip after our ODP (a Patton dial-in pool over the relay: 1.1 s, so the
+        plain 0.75 s T400 expired first and the call fell to raw mode under LAPM flags, 2026-11-21).
+
+        V42_DETECT_EXTRA_S overrides it (0 restores the plain 0.75 s T400)."""
+        override = os.environ.get("V42_DETECT_EXTRA_S")
+        if override is not None:
+            return max(0.0, float(override))
+        rtd = self._round_trip_samples()
+        if rtd is None:
+            return 0.0
+        return rtd / self.fs + self.V42_RX_LAG_MARGIN_S
+
     def _set_s_length(self) -> None:
         """V.32bis 6.1: after R1 the caller sends S for NT, the round-trip estimate from its AA->CC
         transition to the second reversal, and then S for 256 more symbols. A fixed length only works when
         the path's round trip is short, so measure it (unless V32_SLEN pins the length)."""
-        if os.environ.get("V32_SLEN") or self._cc_tx_at is None or self._rev2_at is None:
+        rtd = self._round_trip_samples()                         # the reversal fell inside its block
+        if os.environ.get("V32_SLEN") or rtd is None:
             return
-        rev2 = self._rev2_at - self.blk // 2                     # the reversal fell inside that block
-        nt = max(0.0, (rev2 - self._cc_tx_at) / self.fs * BAUD)
-        self.tx.s_length = int(min(max(nt + 256 + 16, 256 + 64), 2000))
+        nt = rtd / self.fs * BAUD
+        self.tx.s_length = int(min(max(nt + 256 + 16, 256 + 64), 6000))      # 6000T = 2.5 s round trip
         self._tx_train_symbols = self.tx.s_length + 16 + self.tx.trn_length
         self._ev(f"round-trip estimate NT = {nt:.0f} symbols ({nt / BAUD * 1000:.0f} ms) -> S of {self.tx.s_length} symbols")
 
@@ -647,8 +728,18 @@ class V32Modem(V42Layer):
         elif self.state in ("aa", "cc"):
             if self.state == "cc" and self._cc_tx_at is None:
                 self._cc_tx_at = self._txn                       # our AA->CC transition
-            out = [round(2700 * math.cos(2 * math.pi * CARRIER * (self._tone_n + i) / self.fs + self._tone_phase))
-                   for i in range(count)]
+            if self._ramp_left:
+                # the last _ramp_left samples of the reversal still to come: phase lags the new value by
+                # pi * left / ramp, so the change is spread evenly at constant amplitude
+                out = []
+                for i in range(count):
+                    lag = math.pi * self._ramp_left / self._cc_ramp if self._ramp_left else 0.0
+                    self._ramp_left = max(0, self._ramp_left - 1)
+                    out.append(round(self._tone_amp * math.cos(2 * math.pi * CARRIER * (self._tone_n + i) / self.fs
+                                                     + self._tone_phase - lag)))
+            else:
+                out = [round(self._tone_amp * math.cos(2 * math.pi * CARRIER * (self._tone_n + i) / self.fs + self._tone_phase))
+                       for i in range(count)]
             self._tone_n += count
         elif self._tx_start_sample is not None and not self._tx_started \
                 and self._txn + count > self._tx_start_sample:
@@ -740,6 +831,8 @@ class V32Modem(V42Layer):
             self._v8_rx(x)
         if self.state in ("listen", "aa", "cc"):
             self._handshake_tones(x)
+        elif self.state == "train1" and self._rx_mode == "locate1":
+            self._watch_answerer_restart(x)
         for pos, v in self.bb.feed(x):
             self._on_baseband(pos, v)
         self._step()
@@ -765,6 +858,61 @@ class V32Modem(V42Layer):
             self._v8.close()
             self._v8 = None
 
+    def _watch_answerer_restart(self, x) -> None:
+        """A Patton dial-in pool, after a silence and 3.6 s of echo-canceller training, sent AC for 5 s
+        instead of S/TRN while we waited silently for its TRN (2026-11-21): answer it with AA again."""
+        a6 = sum(v * c for v, c in zip(x, self._c600)) / len(x)
+        a30 = sum(v * c for v, c in zip(x, self._c3000)) / len(x)
+        power = sum(v * v for v in x) / len(x)
+        tone = (abs(a6) * 2 > 400 and abs(a30) * 2 > 400 and power > 0
+                and 2 * (abs(a6) ** 2 + abs(a30) ** 2) / power >= .85)
+        if not tone:
+            self._restart_gap += 1
+            self._restart_ac = 0
+            return
+        if self._restart_gap < 3:              # still the AC it holds until it hears us stop
+            return
+        self._restart_ac += 1
+        if self._restart_ac * len(x) < ANSWERER_RESTART_AC_S * self.fs:
+            return
+        if self._answerer_restarts >= ANSWERER_RESTARTS_MAX:
+            return self._fail("answerer keeps restarting with AC")
+        self._answerer_restarts += 1
+        self._ev("answerer restarted with AC instead of training (V.32 Figure 5b): sending AA again")
+        self.state = "aa"
+        self._rx_mode = "idle"
+        self._rev2_at = self._cc_rx_at = self._cc_tx_at = None
+        self._locate1_shift = 0.0
+        self._restart_gap = self._restart_ac = 0
+        self._ph_hist, self._prev_age = [], 0
+        self._tone_n = 0
+
+    def _answer_tone_ended(self, x) -> bool:
+        """True on the third block without 2100 Hz after at least 1 s of it (a phase reversal can blank
+        one or two blocks, so shorter misses neither end the tone nor reset the count). In "during" mode, True
+        as soon as the tone has lasted 1 s. A JM after the tone turns the option off for the call."""
+        a21 = sum(v * c for v, c in zip(x, self._c2100)) / len(x)
+        power = sum(v * v for v in x) / len(x)
+        ans = power > 0 and abs(a21) * 2 > 400 and 2 * abs(a21) ** 2 / power >= 0.6
+        if ans:
+            self._ans_blocks += 1
+            self._ans_gone = 0
+            return self._aa_during_ans and self._ans_blocks * len(x) >= self.fs
+        if power > 0 and self._ans_blocks * len(x) >= self.fs:
+            a16 = sum(v * c for v, c in zip(x, self._c1650)) / len(x)
+            a18 = sum(v * c for v, c in zip(x, self._c1850)) / len(x)
+            if 2 * (abs(a16) ** 2 + abs(a18) ** 2) / power >= 0.4:
+                self._aa_after_ans = False                       # JM: a V.8 answerer, let V.8 finish
+                self._ev("JM after the answer tone: completing V.8 instead of sending AA")
+                return False
+        self._ans_gone += 1
+        if self._ans_gone < 3:
+            return False
+        if self._ans_blocks * len(x) < self.fs:
+            self._ans_blocks = 0                  # under 1 s of tone: not an answer tone
+            return False
+        return True
+
     def _handshake_tones(self, x) -> None:
         a6 = sum(v * c for v, c in zip(x, self._c600)) / len(x)
         a30 = sum(v * c for v, c in zip(x, self._c3000)) / len(x)
@@ -774,20 +922,42 @@ class V32Modem(V42Layer):
             present = present and power > 0 and 2*(abs(a6)**2+abs(a30)**2)/power >= .85
         ph = cmath.phase(a6)
         if self.state == "listen":
+            if self._aa_after_ans and self._answer_tone_ended(x):
+                self.state = "aa"
+                self._tone_n = 0
+                self._v8_stop()
+                self._ev("answer tone heard for 1 s -> sending AA (V.32 5.4.1)" if self._aa_during_ans
+                         else "answer tone ended after at least 1 s -> sending AA (V.32 5.4.1)")
+                return
             self._ac_run = self._ac_run + 1 if present else 0
             if self._ac_run >= 3:
                 self.state = "aa"
                 self._tone_n = 0
                 self._v8_stop()
                 self._ev("heard AC -> sending AA")
-        elif present:
+                return
+        else:
+            # AC/CA judged by purity here: the answerer's other automode signals let stray blocks through the
+            # amplitude test and keep a stale phase history alive (2026-11-21: a 4.8 s "round trip").
+            power = sum(v * v for v in x) / len(x)
+            present = present and power > 0 and 2 * (abs(a6) ** 2 + abs(a30) ** 2) / power >= .85
+            self._ac_gone = 0 if present else self._ac_gone + 1
+            if self._ac_gone * len(x) >= AC_GONE_S * self.fs and (self._ph_hist or self.state == "cc"):
+                if self.state == "cc":
+                    self._ev("answerer's AC/CA stopped before our CC was answered: back to AA for its next attempt")
+                self.state = "aa"
+                self._cc_rx_at = self._cc_tx_at = None
+                self._ph_hist, self._prev_age = [], 99
+        if self.state != "listen" and present:
             # compare with the last good block (a reversal inside a block leaves it weak or split
             # across two blocks, so a block-to-block jump alone can be missed)
             hist = self._ph_hist if self._prev_age <= 3 else []
             flip = any(abs((ph - h + math.pi) % (2 * math.pi) - math.pi) > 2.2 for h in hist)
             if flip and self.state == "aa":
                 self.state = "cc"
+                self._cc_rx_at = self._t
                 self._tone_phase += math.pi
+                self._ramp_left = self._cc_ramp
                 self._ev("AC->CA reversal -> sending CC")
             elif flip:
                 self.state = "train1"
@@ -928,12 +1098,24 @@ class V32Modem(V42Layer):
         return (score, k0, ph, f_hz)
 
     def _locate1(self) -> None:
-        predicted = self._rev2_at / self.fs + S_AFTER_REVERSAL + TRN_AFTER_S
-        loc = self._locate(predicted, 0.5, GPA)
+        # V.32 5.4.2: the answerer holds AC until it hears our tone stop, so its S is a round trip after
+        # the back-reversal. That round trip is the measured AA->CC to second-reversal time less the answerer's
+        # 64T turnaround; S_AFTER_REVERSAL alone only fits short paths (a 1.3 s VoIP round trip missed it).
+        rtd = self._round_trip_samples()
+        extra = max(0.0, rtd / self.fs - 64 / BAUD) if rtd is not None else 0.0
+        predicted = self._rev2_at / self.fs + S_AFTER_REVERSAL + extra + TRN_AFTER_S
+        loc = self._locate(predicted + self._locate1_shift, 0.5, GPA)
         if loc == "wait":
             return
         if loc is None or loc[0] < 0.5:
+            # V.32 5.4 Note 3: the answerer may precede S with up to 8192T of echo-canceller training of its own
+            # (a Patton dial-in pool did, 2026-11-21), so slide the window on, overlapping, before giving up.
+            if self._locate1_shift + LOCATE1_STEP_S <= LOCATE1_MAX_S:
+                self._locate1_shift += LOCATE1_STEP_S
+                return
             return self._fail("answerer TRN not found")
+        if self._locate1_shift:
+            self._ev(f"answerer TRN found {self._locate1_shift:.1f} s past the prediction (echo-canceller training first)")
         score, self._s0, self._ph, f_hz = loc
         self._k = self._s0
         self._trained = 0
@@ -1188,7 +1370,12 @@ class V32Modem(V42Layer):
         return w if all(self._word_at_end(16 * i) == w for i in range(1, 8)) else None
 
     def _start_tx(self, at_sample: int) -> None:
-        self._tx_start_sample = max(at_sample, self._txn)
+        # at_sample is on the receive clock; the transmit counter can run ahead of it (see
+        # _round_trip_samples), so move it onto the transmit clock or our training starts early.
+        ahead = self._txn - self._t
+        if ahead <= self.blk:
+            ahead = 0                                                # aligned within a block (chain mode)
+        self._tx_start_sample = max(at_sample + ahead, self._txn)
         self._phase = "wait"
         self._rx_mode = "wait_resume"
         self._resume_at = None

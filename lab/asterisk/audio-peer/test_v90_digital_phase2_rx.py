@@ -63,6 +63,32 @@ class DigitalPhase2FrameRxTests(unittest.TestCase):
         self.assertGreater(events[1].complete_at, events[1].at)
         self.assertEqual(rx.samples_seen, len(signal))
 
+    def test_adapter_back_searches_crc_valid_info0a_before_live_receive(self):
+        from v90_digital_phase2_adapter import V90DigitalPhase2Adapter
+        from v90_digital_phase2_control import V90DigitalPhase2Controller
+
+        info0a = v34_info.InfoModulator(
+            "answer", amplitude=3000, guard=True).modulate(
+                v34_info.build_info0(rate3429=1, ack=0), tail_bits=2)
+        preroll = np.concatenate((np.zeros(800), info0a, np.zeros(2400)))
+        controller = V90DigitalPhase2Controller()
+        adapter = V90DigitalPhase2Adapter(
+            controller, rx_to_media=lambda sample: 10_000 + sample,
+            trace_events=True)
+        adapter.start(10_000)
+
+        actions = adapter.prime_info0a_preroll(
+            preroll, rx_at=-len(preroll), tx_now=10_000)
+        self.assertEqual(actions, [])
+        self.assertEqual(controller.info0a["rate3429"], 1)
+        self.assertLess(adapter.event_trace[-1]["media_at"], 10_000)
+        self.assertEqual(adapter.rx_next, 0)
+
+        # The next live chunk must continue at receive sample zero without a
+        # synthetic discontinuity after the negative-index history.
+        adapter.feed(np.zeros(160), rx_at=0, tx_now=10_160)
+        self.assertEqual(adapter.rx_next, 160)
+
     def test_invalid_crc_is_not_emitted(self):
         bits = v34_info.build_info0(rate2743=1)
         bits[29] ^= 1
@@ -299,6 +325,21 @@ class DigitalPhase2SignalRxTests(unittest.TestCase):
 
 
 class DigitalPhase2AdapterTests(unittest.TestCase):
+    def test_unmatched_tone_a_releases_info0d_retry_after_frame_search_window(self):
+        controller = V90DigitalPhase2Controller()
+        adapter = V90DigitalPhase2Adapter(
+            controller, rx_to_media=lambda sample: sample)
+        adapter.start(0)
+        t = np.arange(3200)
+        tone = 1200 * np.cos(2 * np.pi * 2400 * t / 8000)
+        actions = []
+        for start in range(0, len(tone), 160):
+            actions.extend(adapter.feed(
+                tone[start:start + 160], rx_at=start, tx_now=start + 160))
+        self.assertTrue(controller._info0a_retry_requested)
+        self.assertTrue(any(action.signal == "info0d" and action.value == 0
+                            for action in actions))
+
     def test_info_scans_are_limited_to_controller_state(self):
         controller = V90DigitalPhase2Controller()
         adapter = V90DigitalPhase2Adapter(
@@ -673,6 +714,35 @@ class DigitalPhase2TransmitterTests(unittest.TestCase):
         self.assertTrue(np.any(pcm[:1280]))
         self.assertTrue(np.any(pcm[1280:1680]))
         np.testing.assert_array_equal(pcm[1680:], np.zeros(120))
+
+    def test_info1d_interrupts_l2_without_an_intervening_silence_gap(self):
+        config = {"rate3429": 1, "alaw": 0}
+        signals = V90DigitalPhase2Signals(info0d=config, amplitude=1000)
+        tx = V90DigitalPhase2Transmitter(
+            signals=signals, probe_builder=self._probe,
+            tone_b_peak=700, probe_rms=300,
+        )
+        tx.submit([Phase2Action(0, "l1"),
+                   Phase2Action(1280, "l2", 4000)])
+        tx.render(2000)
+
+        info1d_at = 2100
+        tx.submit([Phase2Action(info1d_at, "info1d", interrupt_l2=True)])
+        expected_signals = V90DigitalPhase2Signals(
+            info0d=config, amplitude=1000)
+        expected_signals.set_phase_at_sample(info1d_at)
+        expected_info1d = expected_signals.modulate_info1d()
+        rendered = tx.render(100 + len(expected_info1d) + 80)
+
+        # L2 is a continuous 900 Hz probe through the exact INFO1d boundary.
+        expected_l2 = self._probe(4000 / 8000, 300)
+        np.testing.assert_array_equal(
+            rendered[:100], expected_l2[720:820])
+        np.testing.assert_array_equal(
+            rendered[100:100 + len(expected_info1d)], expected_info1d)
+        np.testing.assert_array_equal(
+            rendered[100 + len(expected_info1d):],
+            np.zeros(80))
 
 
 if __name__ == "__main__":

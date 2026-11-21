@@ -389,7 +389,12 @@ class V90DigitalAnswererPhase3Session:
                 self.transmitter.notify_s_transition()
                 self.transitions.append(at)
                 self.transition_events.append((signal, at))
+                dil = self.transmitter._dil
                 self.events.append(("s-transition", at))
+                self.events.append(("dil-stop-requested", {
+                    "rx_at": at, "tx_symbols": self.transmitter.samples_emitted,
+                    "segment": dil.segment_index, "segment_offset": dil.segment_offset,
+                    "passes": dil.completed_passes}))
         return []
 
     def _feed_phase4_symbols(self) -> None:
@@ -845,7 +850,7 @@ class V90DigitalAnswererPhase3Session:
         self.phase4 = V90DigitalAnswererPhase4Session(
             uinfo=self.transmitter.uinfo, law=self.law, constellation=4,
             mp=self.phase4_mp_profile)
-        self.phase4.start()
+        self.phase4.start(grid_offset=self.transmitter.samples_emitted)
         receiver = self.upstream.receiver
         # Phase 4 observations and CP candidates use len(receiver.indices).
         # SymbolEq.k includes its 432-symbol preamble origin, while this list
@@ -948,6 +953,9 @@ class V90DigitalAnswererPhase3Session:
                 self._upstream_data_tracking = False
                 self.events.append(("analog-upstream-rate-selected",
                                     asdict(selected_upstream_profile)))
+                # ``lapm_detect`` only controls whether LAPM is probed for on
+                # this path. When LAPM was not negotiated, do not construct a
+                # link at all; the detector setting is intentionally inert.
                 if self.enable_lapm:
                     # CP selects the digital downstream data clock. The
                     # analogue upstream has its separately negotiated rate

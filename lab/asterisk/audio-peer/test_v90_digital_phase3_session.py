@@ -221,6 +221,36 @@ class V90DigitalAnswererPhase3SessionTests(unittest.TestCase):
         self.assertEqual(len(fed), 1)
         self.assertEqual(len(fed[0]), 160)
 
+    def _session_in_dil(self):
+        import v90_info_reference as v90
+        session = V90DigitalAnswererPhase3Session(
+            baud=control.BAUD, carrier=control.CARRIER, law="pcmu",
+            uinfo=67, rate_mask=0xFFFF)
+        tx = session.transmitter
+        tx.set_dil_descriptor(v90.parse_ja_descriptor(v90.build_ja_descriptor(
+            N=3, LSP=1, LTP=1, SP=[1], TP=[1], H=[0] * 8, REF=[0] * 8,
+            Ucodes=[1] * 3)))
+        tx.start()
+        initial = 384 + 48 + tx.trn1d_symbols
+        self.assertEqual(len(tx.read(initial)), initial)
+        tx.notify_s_transition()
+        self.assertEqual(len(tx.read(84 + 2)), 84 + 2)
+        self.assertEqual(tx.state, tx.DIL)
+        session._detector = SimpleNamespace(
+            feed=lambda *_args, **_kwargs: [("flip", 5000)])
+        session.upstream.feed = lambda samples: []
+        session.phase4 = object()
+        return session, tx
+
+    def test_s_bar_in_dil_ends_the_segment_in_progress(self):
+        session, tx = self._session_in_dil()
+        session.feed_pcm(np.zeros(160), sample_at=4900)
+        event = next(value for name, value in session.events
+                     if name == "dil-stop-requested")
+        # Two of the first 6-symbol segment were sent; four remain.
+        self.assertEqual(len(tx.read(40)), 4)
+        self.assertTrue(tx.phase4_ready)
+
     def test_data_tracking_absorbs_b1_gain_without_refined_taps(self):
         session = object.__new__(V90DigitalAnswererPhase3Session)
         session._upstream_data_tracking = False

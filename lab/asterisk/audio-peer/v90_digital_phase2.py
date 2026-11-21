@@ -20,7 +20,9 @@ class V90DigitalPhase2Signals:
     """Build digital-side INFO0d and INFO1d signals at the V.90 line rate."""
 
     def __init__(self, *, info0d: dict | None = None,
-                 info1d: dict | None = None, amplitude: float = 3000.0):
+                 info1d: dict | None = None, amplitude: float = 3000.0,
+                 v92: bool = False):
+        self.v92 = bool(v92)
         self.info0d_fields = dict(info0d or {})
         self.info1d_fields = dict(info1d or {})
         self.amplitude = float(amplitude)
@@ -35,7 +37,7 @@ class V90DigitalPhase2Signals:
             "lo3000": (0, 1), "hi3000": (0, 1), "lo3200": (0, 1),
             "hi3200": (0, 1), "disallow3429": (0, 1),
             "power_reduction": (0, 1), "max_asym": (0, 5), "cme": (0, 1),
-            "pts1664": (0, 1), "reserved": (0, 0), "ack_info0a": (0, 1),
+            "pts1664": (0, 1), "reserved": (0, 2 if self.v92 else 0), "ack_info0a": (0, 1),
             "nominal_power": (0, 15), "max_power": (0, 31),
             "power_at_codec": (0, 1), "alaw": (0, 1),
             "v90_3429_upstream": (0, 1), "reserved_41": (0, 0),
@@ -159,6 +161,10 @@ def constrain_info1d_to_info0a(info1d_fields: dict,
 
     for index, raw in enumerate(blocks):
         block = dict(raw)
+        # A block without max_rate sets no local cap: offer the V.34 ceiling for its symbol rate. Sending 0 tells the
+        # analogue modem no rate works there (SmartLink, 2026-11-18: "max V34 baud rate index = 0", then an invalid
+        # baud rate 0 upstream).
+        block.setdefault("max_rate", V34_MAX_RATE_CODES[index])
         carrier = int(block.get("hi_carrier", 0))
         if index in (3, 4) and not supports(index, carrier):
             alternate = 1 - carrier
@@ -173,6 +179,10 @@ def constrain_info1d_to_info0a(info1d_fields: dict,
         blocks[index] = block
     result["blocks"] = blocks
     return result
+
+
+# V.34 Table 10 top data rate per symbol rate (2400, 2743, 2800, 3000, 3200, 3429), in 2400 bit/s INFO1 units.
+V34_MAX_RATE_CODES = (9, 11, 11, 12, 13, 14)
 
 
 def project_info1d_rates_from_probe(info1d_fields: dict,

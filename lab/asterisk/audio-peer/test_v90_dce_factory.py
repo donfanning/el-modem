@@ -1,8 +1,12 @@
+import os
 import unittest
+from unittest import mock
 
 from autochain import V8Chain
 from v8 import V8_MOD_V34, V8_PCM_DIGITAL, V8_PROTOCOL_LAPM_V42
-from v90_dce_factory import install_v90_digital_answerer
+from v90_dce_factory import (V90_PHASE1_SILENCE_SAMPLES,
+                             install_v90_analogue_caller,
+                             install_v90_digital_answerer)
 
 
 def profile():
@@ -45,13 +49,158 @@ class V90DceFactoryTests(unittest.TestCase):
         finally:
             engine.close()
 
-    def test_v92_profile_fields_are_rejected_by_v90_only_factory(self):
+    def test_v92_capability_profile_is_opt_in_and_pcm_upstream_stays_off(self):
         configured = profile()
         configured["v92"] = True
-        with self.assertRaisesRegex(ValueError, "V.92 options are outside"):
+        configured["info1d_fields"]["blocks"][5]["hi_carrier"] = 0
+        options = {"v90_digital_answerer": configured}
+        install_v90_digital_answerer(options, tx_role="answer", law="pcmu")
+        engine = options["v90_engine_factory"](
+            role="digital-answerer",
+            negotiation={"pcm_negotiated_bits": V8_PCM_DIGITAL},
+            media_at=0, media_origin=100.0)
+        try:
+            self.assertTrue(engine.v92_advertised)
+            self.assertEqual(engine._signals.info0d_fields["reserved"] & 2, 2)
+            self.assertEqual(engine._signals.info1d_fields["blocks"][5]["hi_carrier"], 0)
+            self.assertIsNone(engine._phase3_factory)
+            self.assertEqual(engine._phase1_silence_samples,
+                             V90_PHASE1_SILENCE_SAMPLES)
+        finally:
+            engine.close()
+
+    def test_quick_connect_does_not_repeat_post_toneq_phase1_silence(self):
+        configured = profile()
+        configured.update(v92=True, v92_pcm_upstream=True,
+                          v92_quick_connect=True)
+        options = {"v90_digital_answerer": configured}
+        install_v90_digital_answerer(options, tx_role="answer", law="pcmu")
+        engine = options["v90_engine_factory"](
+            role="digital-answerer",
+            negotiation={"pcm_negotiated_bits": V8_PCM_DIGITAL,
+                         "quick_connect": True},
+            media_at=33280, media_origin=100.0)
+        try:
+            self.assertEqual(engine._phase1_silence_samples, 0)
+            self.assertEqual(engine._phase2_start_at, 33280)
+        finally:
+            engine.close()
+
+    def test_quick_connect_requires_pcm_upstream_and_flows_only_when_opted_in(self):
+        configured = profile()
+        configured.update(v92=True, v92_pcm_upstream=True,
+                          v92_quick_connect=True)
+        options = {"v90_digital_answerer": configured}
+        install_v90_digital_answerer(options, tx_role="answer", law="pcmu")
+        self.assertTrue(options["v92_quick_connect"])
+        self.assertEqual(options["v92_quick_connect_law"], "pcmu")
+        self.assertEqual(options["v92_quick_connect_level_code"], 0b01)
+
+        configured["v92_pcm_upstream"] = False
+        with self.assertRaisesRegex(ValueError, "needs V.92 PCM upstream"):
             install_v90_digital_answerer(
                 {"v90_digital_answerer": configured},
                 tx_role="answer", law="pcmu")
+
+    def test_v92_receiver_and_cpd_profile_keys_reach_the_session(self):
+        def session_for(configured):
+            options = {"v90_digital_answerer": configured}
+            install_v90_digital_answerer(options, tx_role="answer", law="pcmu")
+            engine = options["v90_engine_factory"](
+                role="digital-answerer",
+                negotiation={"pcm_negotiated_bits": V8_PCM_DIGITAL},
+                media_at=0, media_origin=100.0)
+            try:
+                return engine, engine._phase3_factory(
+                    info1a={"v90_uinfo": 67}, law="pcmu", handoff_at=0, media_origin=100.0)
+            finally:
+                engine.close()
+
+        configured = profile()
+        configured.update(v92=True, v92_pcm_upstream=True)
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("EL_MODEM_V92_B1U_RX", "EL_MODEM_V92_CPD_CONSTELLATION")}
+        with mock.patch.dict(os.environ, env, clear=True):
+            engine, session = session_for(configured)
+            # Unset keys: the pair validated against SmartLink.
+            self.assertEqual(session._b1u_rx_mode, "trn2u-fit-viterbi")
+            self.assertEqual(session._cpd_constellation_mode, "adaptive")
+            self.assertEqual(engine._clock.offset_step_samples, 40)
+            self.assertEqual(engine._clock.violation_epochs, 3)
+            configured.update(v92_b1u_rx_mode="off", v92_cpd_constellation="default")
+            _, session = session_for(configured)
+            self.assertEqual(session._b1u_rx_mode, "off")
+            self.assertEqual(session._cpd_constellation_mode, "default")
+        for key, value in (("v92_b1u_rx_mode", "hard"), ("v92_cpd_constellation", "dense")):
+            bad = dict(configured, **{key: value})
+            with self.assertRaises(ValueError):
+                install_v90_digital_answerer({"v90_digital_answerer": bad}, tx_role="answer", law="pcmu")
+        plain = profile()
+        plain["v92_b1u_rx_mode"] = "trn2u-fit-viterbi"
+        with self.assertRaises(ValueError):
+            install_v90_digital_answerer({"v90_digital_answerer": plain}, tx_role="answer", law="pcmu")
+        # FPE keeps the validated receiver (it carries the TRN2u fit across the exchange).
+        fpe = profile()
+        fpe.update(v92=True, v92_pcm_upstream=True, v92_fast_parameter_exchange=True, phase3_enable_lapm=True)
+        with mock.patch.dict(os.environ, env, clear=True):
+            _, session = session_for(fpe)
+        self.assertEqual(session._b1u_rx_mode, "trn2u-fit-viterbi")
+        self.assertEqual(session._cpd_constellation_mode, "adaptive")
+        self.assertTrue(session._enable_fpe)
+
+    def test_fractional_rx_timing_is_opt_in_and_reaches_v92_phase3(self):
+        configured = profile()
+        configured.update(v92=True, v92_pcm_upstream=True,
+                          v92_fractional_rx_timing=True)
+        options = {"v90_digital_answerer": configured}
+        install_v90_digital_answerer(options, tx_role="answer", law="pcmu")
+        engine = options["v90_engine_factory"](
+            role="digital-answerer",
+            negotiation={"pcm_negotiated_bits": V8_PCM_DIGITAL},
+            media_at=0, media_origin=100.0)
+        try:
+            session = engine._phase3_factory(
+                info1a={"v90_uinfo": 67}, law="pcmu", handoff_at=0,
+                media_origin=100.0)
+            self.assertTrue(session._p3.fractional_rx_timing)
+            self.assertTrue(session._p3.fractional_rx_reacquisition)
+            self.assertIsNone(session._p3.rx_fractional_phase)
+        finally:
+            engine.close()
+
+        configured["v92_fractional_rx_reacquisition"] = False
+        options = {"v90_digital_answerer": configured}
+        install_v90_digital_answerer(options, tx_role="answer", law="pcmu")
+        engine = options["v90_engine_factory"](
+            role="digital-answerer",
+            negotiation={"pcm_negotiated_bits": V8_PCM_DIGITAL},
+            media_at=0, media_origin=100.0)
+        try:
+            session = engine._phase3_factory(
+                info1a={"v90_uinfo": 67}, law="pcmu", handoff_at=0,
+                media_origin=100.0)
+            self.assertTrue(session._p3.fractional_rx_timing)
+            self.assertFalse(session._p3.fractional_rx_reacquisition)
+        finally:
+            engine.close()
+
+        configured["v92_fractional_rx_timing"] = False
+        configured["v92_fractional_rx_reacquisition"] = True
+        with self.assertRaisesRegex(ValueError, "needs v92_fractional_rx_timing"):
+            install_v90_digital_answerer(
+                {"v90_digital_answerer": configured},
+                tx_role="answer", law="pcmu")
+
+        configured["v92_pcm_upstream"] = False
+        with self.assertRaisesRegex(ValueError, "needs v92_pcm_upstream"):
+            install_v90_digital_answerer(
+                {"v90_digital_answerer": configured},
+                tx_role="answer", law="pcmu")
+
+    def test_v42bis_enabled_without_lapm_does_not_reject_non_pcm_profile(self):
+        options = {"v90_digital_answerer": profile()}
+        self.assertTrue(install_v90_digital_answerer(
+            options, tx_role="answer", law="pcmu", v42bis=True))
 
 
     def test_probe_rate_projection_setting_is_opt_in_and_validated(self):
@@ -122,9 +271,8 @@ class V90DceFactoryTests(unittest.TestCase):
                     self.assertEqual(chain.engine.kind, "v90")
                     self.assertFalse(chain.engine.connected)
                     self.assertEqual(chain.engine.law, "pcmu")
-                    self.assertEqual(
-                        chain.engine.supports_v42,
-                        bool(protocols & V8_PROTOCOL_LAPM_V42))
+                    # Without V.8 LAPM the V.42 detection phase decides.
+                    self.assertTrue(chain.engine.supports_v42)
                 finally:
                     chain.close()
 
@@ -140,8 +288,34 @@ class V90DceFactoryTests(unittest.TestCase):
                 {"v90_digital_answerer": bad_profile},
                 tx_role="answer", law="pcmu")
 
-    def test_profile_cannot_enable_wrong_role_or_replace_pcm_role(self):
+    def test_call_roles_let_either_profile_serve_the_other_direction(self):
+        options = {"v90_digital_answerer": dict(
+            profile(), call_roles=["originate"], v92=True, v92_pcm_upstream=True,
+            v92_quick_connect=True)}
+        self.assertTrue(install_v90_digital_answerer(options, tx_role="originate", law="pcmu"))
+        self.assertEqual(options["pcm_availability"], V8_PCM_DIGITAL)
+        # Quick Connect is an analogue caller's request.
+        self.assertFalse(options["v92_quick_connect"])
         with self.assertRaisesRegex(ValueError, "answer role"):
+            install_v90_digital_answerer(
+                {"v90_digital_answerer": dict(profile(), call_roles=["originate"])},
+                tx_role="answer", law="pcmu")
+        for bad in ("answer", [], ["answer", "answer"], ["dial"]):
+            with self.subTest(call_roles=bad), self.assertRaisesRegex(ValueError, "call_roles"):
+                install_v90_digital_answerer(
+                    {"v90_digital_answerer": dict(profile(), call_roles=bad)},
+                    tx_role="answer", law="pcmu")
+        caller = {"info0a_fields": {}, "info1a_fields": {}, "nominal_peak": 900,
+                  "probe_rms": 450}
+        default = {"v90_analogue_caller": dict(caller)}
+        self.assertFalse(install_v90_analogue_caller(default, tx_role="answer", law="pcmu"))
+        self.assertNotIn("pcm_availability", default)
+        answering = {"v90_analogue_caller": dict(caller, call_roles=["answer"])}
+        self.assertTrue(install_v90_analogue_caller(answering, tx_role="answer", law="pcmu"))
+        self.assertEqual(answering["pcm_availability"], 0x20)
+
+    def test_profile_cannot_enable_wrong_role_or_replace_pcm_role(self):
+        with self.assertRaisesRegex(ValueError, "originate role"):
             install_v90_digital_answerer(
                 {"v90_digital_answerer": profile()},
                 tx_role="originate", law="pcmu")
@@ -220,6 +394,43 @@ class V90DceFactoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "l2_echo_tolerance"):
                 install_v90_digital_answerer({"v90_digital_answerer": configured},
                                              tx_role="answer", law="pcmu")
+
+    def test_l2_echo_window_policy_is_opt_in_and_validated(self):
+        def build(configured):
+            options = {"v90_digital_answerer": configured}
+            install_v90_digital_answerer(options, tx_role="answer", law="pcmu")
+            return options["v90_engine_factory"](
+                role="digital-answerer",
+                negotiation={"pcm_negotiated_bits": V8_PCM_DIGITAL},
+                media_at=0, media_origin=100.0)
+
+        engine = build(profile())
+        try:
+            self.assertEqual(engine._phase2.l2_echo_window_policy, "require")
+        finally:
+            engine.close()
+
+        configured = profile()
+        configured["phase2_l2_echo_window_policy"] = "advance-after-window"
+        engine = build(configured)
+        try:
+            self.assertEqual(
+                engine._phase2.l2_echo_window_policy, "advance-after-window")
+        finally:
+            engine.close()
+        configured = profile()
+        configured["phase2_l2_echo_window_policy"] = "on-tone-a"
+        engine = build(configured)
+        try:
+            self.assertEqual(engine._phase2.l2_echo_window_policy, "on-tone-a")
+        finally:
+            engine.close()
+        for bad in (None, True, "continue", "advance"):
+            configured["phase2_l2_echo_window_policy"] = bad
+            with self.assertRaisesRegex(ValueError, "l2_echo_window_policy"):
+                install_v90_digital_answerer(
+                    {"v90_digital_answerer": configured},
+                    tx_role="answer", law="pcmu")
 
     def test_clock_offset_step_threshold_is_an_opt_in_profile_setting(self):
         def build(configured):

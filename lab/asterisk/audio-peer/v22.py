@@ -536,6 +536,16 @@ class V22Modem(V42Layer):
         self._actions.clear()
 
     # V42Layer hooks
+    V42_DETECT_EXTRA_S = 0.0                                 # V.22 measures no round trip, so the default stays 0.75 s
+
+    @property
+    def v42_detect_extra_seconds(self) -> float:
+        """Opt-in: V42_DETECT_EXTRA_S seconds added to T400. The ADP comes back one round trip after our ODP;
+        A Patton dial-in pool over the relay (1.1 s round trip) answered after the plain 0.75 s T400 had expired
+        and the call fell to raw mode under LAPM flags (2026-11-21)."""
+        override = os.environ.get("V42_DETECT_EXTRA_S")
+        return max(0.0, float(override)) if override is not None else self.V42_DETECT_EXTRA_S
+
     def _plain_tx_bit(self) -> int:
         return self._app_bits.popleft() if self._app_bits else 1
 

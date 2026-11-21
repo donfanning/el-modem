@@ -25,7 +25,8 @@ class RtpMediaClock:
                  max_rate_error_ppm: float = 2000.0,
                  low_delay_percentile: float = 15.0,
                  min_fit_span_samples: int = 6400,
-                 offset_step_samples: int = 80):
+                 offset_step_samples: int = 80,
+                 violation_epochs: int = 1):
         if (not math.isfinite(origin) or media_at < 0 or max_anchors < 2
                 or not math.isfinite(float(max_rate_error_ppm))
                 or float(max_rate_error_ppm) <= 0
@@ -34,7 +35,10 @@ class RtpMediaClock:
                 or min_fit_span_samples < 1
                 or isinstance(offset_step_samples, bool)
                 or not isinstance(offset_step_samples, int)
-                or not 1 <= offset_step_samples <= FS):
+                or not 1 <= offset_step_samples <= FS
+                or isinstance(violation_epochs, bool)
+                or not isinstance(violation_epochs, int)
+                or not 1 <= violation_epochs <= 16):
             raise ValueError("invalid RTP media clock origin or anchor limit")
         if (not math.isfinite(float(low_delay_percentile))
                 or not 5.0 <= float(low_delay_percentile) <= 50.0):
@@ -45,6 +49,12 @@ class RtpMediaClock:
         self.low_delay_percentile = float(low_delay_percentile)
         self.min_fit_span_samples = min_fit_span_samples
         self.offset_step_samples = offset_step_samples
+        # A fit outside the envelope raises only when this many consecutive fits, each over a fresh anchor epoch,
+        # are outside it. Arrival-delay steps smaller than ``offset_step_samples`` can bend a single 64-anchor fit
+        # by more than 2 % (arm 12: +2.4 % and -2.2 % at ~40-sample steps), but do not persist; a wrong sample rate does.
+        self.violation_epochs = violation_epochs
+        self.consecutive_violations = 0
+        self.discarded_fits: list[dict] = []
         self.anchors: deque[tuple[float, float]] = deque(maxlen=max_anchors)
         self._offset_history: deque[float] = deque(maxlen=16)
         self.slope = 1.0
@@ -156,12 +166,24 @@ class RtpMediaClock:
             ],
         }
         if abs(slope - 1.0) > max(self.max_rate_error, 0.02):
+            self.consecutive_violations += 1
+            if self.consecutive_violations < self.violation_epochs:
+                if len(self.discarded_fits) < 64:
+                    self.discarded_fits.append({"rx_sample": float(rx_at), "error_ppm": (slope - 1.0) * 1_000_000.0,
+                                                "consecutive": self.consecutive_violations})
+                self.anchors.clear()
+                self.anchors.append(anchor)
+                self._offset_history.clear()
+                self._offset_history.append(offset)
+                self.intercept = media_at - self.slope * rx_at
+                return
             raise ValueError(
                 "RTP receive clock exceeds configured V.90 timing envelope "
                 f"(fit={slope:.6f}, error_ppm={(slope - 1.0) * 1_000_000.0:+.0f}, "
                 f"limit_ppm={max(self.max_rate_error, 0.02) * 1_000_000.0:.0f}, "
                 f"anchors={len(x)}, low_delay={int(np.count_nonzero(low_delay))}, "
                 f"span_samples={sample_span:.0f})")
+        self.consecutive_violations = 0
         self.slope = slope
         self.intercept = float(np.median(fit_y - slope * fit_x))
 

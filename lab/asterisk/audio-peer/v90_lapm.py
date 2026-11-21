@@ -91,6 +91,7 @@ class V90LapmLink(V42Layer):
             "link_detect_bits": getattr(link, "_detect_bit_count", None),
             "link_stats": dict(getattr(link, "stats", {})),
             "link_events": list(getattr(link, "events", ())[-32:]),
+            "link_event_trace": list(getattr(link, "_lapm_event_trace", ())),
         }
 
     def _plain_tx_bit(self) -> int:

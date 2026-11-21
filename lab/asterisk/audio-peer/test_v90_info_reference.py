@@ -174,6 +174,28 @@ class V90InfoReferenceTests(unittest.TestCase):
         stream.request_stop()
         self.assertEqual(stream.read(6), b"")
 
+    def test_live_dil_builder_matches_symbol_reference_for_full_descriptor(self):
+        # Exercise the maximum-size Ja descriptor shape that made the old live
+        # builder allocate one dictionary per emitted DIL codeword.
+        ucodes = [2 + (i * 125) // 143 for i in range(144)]
+        descriptor = {
+            "N": 144,
+            "SP": [int(bit) for bit in f"{0x0A6D:012b}"],
+            "TP": [int(bit) for bit in f"{0x06B7:011b}"],
+            "H": [10] * 8,
+            "REF": [10, 24, 40, 56, 72, 88, 104, 120],
+            "Ucodes": ucodes,
+        }
+        table = v90.g711_ucode_codewords("pcmu")
+        reference_segments = [bytearray() for _ in range(descriptor["N"])]
+        for item in v90.expand_dil(descriptor):
+            code = int(table[item["ucode"]])
+            if item["sign"] < 0:
+                code ^= 0x80
+            reference_segments[item["segment"]].append(code)
+        self.assertEqual(v90.dil_g711_segments(descriptor, "pcmu"),
+                         [bytes(segment) for segment in reference_segments])
+
 
 if __name__ == "__main__":
     unittest.main()

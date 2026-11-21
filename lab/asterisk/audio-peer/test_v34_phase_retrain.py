@@ -42,6 +42,50 @@ def loop(seconds=16.0, switch_stage=None, delay_ms=25.0, rate=4800):
     return call, ans, switched_at, reached
 
 
+def peer_retrain_loop(switch_stage, delay_ms, seconds=40.0, rate=33600, syms=(3429,)):
+    """Caller <-> answerer over a delay line; when the caller reaches `switch_stage`, the answerer abandons the
+    exchange and initiates a retrain (11.5.2.1) from a fresh core with the retained INFO0c, as a real peer does. Its
+    audio still in flight is dropped: it never sent MP/MP' or E."""
+    call = v34_call.V34Caller(symbol_rates=list(syms), data_rate=rate)
+    ans = v34_ans.V34Answerer(symbol_rates=list(syms), data_rate=rate)
+    d = int(delay_ms * 8)
+    to_ans, to_call = [np.zeros(d)], [np.zeros(d)]
+    retrained = False
+    for _ in range(int(seconds * 50)):
+        to_ans.append(call.tx(160))
+        to_call.append(ans.tx(160))
+        xa = np.concatenate(to_ans)[:160]
+        xc = np.concatenate(to_call)[:160]
+        to_ans = [np.concatenate(to_ans)[160:]]
+        to_call = [np.concatenate(to_call)[160:]]
+        call.rx(xc)
+        ans.rx(xa)
+        if not retrained and call.stage == switch_stage:
+            info0c = ans.info0c
+            ans = v34_ans.V34Answerer(symbol_rates=list(syms), data_rate=rate)
+            ans.begin_retrain(info0c)
+            to_call = [np.zeros(sum(len(x) for x in to_call))]
+            retrained = True
+        if retrained and call.stage == "data" and ans.stage == "data":
+            break
+    return call, ans, retrained
+
+
+class LongDelayPeerRetrainTests(unittest.TestCase):
+    def test_peer_retrain_completes_at_a_1360ms_round_trip(self):
+        # A live dialup.world call whose path delay grew to ~1.36 s after a jitter-buffer resync retrained without end;
+        # the peer stopped answering our INFO1c. Our own pair must still complete the retrain at that delay, from
+        # both points where the peer abandoned the exchange (during our phase-4 TRN, and while waiting for its MP).
+        for stage in ("p4_trn", "p4_mp"):
+            with self.subTest(stage=stage):
+                call, ans, retrained = peer_retrain_loop(stage, delay_ms=680)
+                self.assertTrue(retrained, stage)
+                self.assertEqual(call._phase_retrains, 1, stage)
+                self.assertEqual((call.stage, ans.stage), ("data", "data"), stage)
+                self.assertAlmostEqual(call.rtd_samples, 1360 * 8, delta=80)
+                self.assertEqual(call.data_rate, 33600)
+
+
 class LoopbackTests(unittest.TestCase):
     def test_healthy_call_never_retrains(self):
         call, ans, _, reached = loop(seconds=14.0)

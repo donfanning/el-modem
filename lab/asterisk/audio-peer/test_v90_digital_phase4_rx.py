@@ -45,6 +45,24 @@ class V90DigitalPhase4ReceiverTests(unittest.TestCase):
                 self.assertEqual(decoded, source)
                 self.assertEqual(receiver._pending, [])
 
+    def test_discarded_frame_lets_decoding_resume(self):
+        law = "pcmu"
+        profile = _profile(law)
+        encoder = V90DigitalPhase4Encoder(profile, law)
+        frame_bits = encoder.s + encoder.k
+        rng = random.Random(7)
+        source = [rng.randrange(2) for _ in range(40 * frame_bits)]
+        codewords = encoder.encode_bits(source)
+        receiver = V90DigitalPhase4Receiver(profile, law)
+        decoded = receiver.decode_codewords(codewords[:60])
+        with self.assertRaises(ValueError):
+            receiver.decode_codewords(bytes([0xFF] * 6))
+        receiver.discard_frame()
+        decoded = receiver.decode_codewords(codewords[66:])
+        # One sign bit and the 23-bit descrambler span may be wrong after the gap; the rest decodes.
+        tail = source[11 * frame_bits:]
+        self.assertEqual(decoded[2 * frame_bits:], tail[2 * frame_bits:])
+
     def test_rejects_illegal_constellation_point(self):
         law = "pcmu"
         profile = _profile(law)

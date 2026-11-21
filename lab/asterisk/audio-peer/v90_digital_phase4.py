@@ -7,6 +7,7 @@ Phase 4 controller, data encoder, receiver feedback, and payload path qualify.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -125,14 +126,24 @@ class _Gpc:
         return scrambled
 
 
+@dataclass(frozen=True)
+class _ShapeFrame:
+    """Mapped frame data retained until its negotiated look-ahead is known."""
+
+    indices: tuple[int, ...]
+    t: tuple[int, ...]
+    magnitudes: tuple[float, ...]
+
+
 class V90DigitalPhase4Encoder:
     """V.90 §5.4 mapper/sign encoder for Phase 4 training.
 
     CPt supplies the Phase 4 training rate and each interval's positive Ucode
     set. The implementation uses the normative mixed-radix modulus mapping,
     descending-Ucode mapper labels, GPC-scrambled ones, and cross-frame sign
-    differential rule. The currently implemented shaper is the normative
-    S_r=1, look-ahead-depth-zero path; unsupported profiles fail closed.
+    differential rule. For S_r=1 it evaluates legal rule paths through the
+    negotiated look-ahead depth (0..3), committing only the first frame's
+    rule and filter state. Depths above one are implemented but not advertised.
     """
 
     def __init__(self, cpt_profile: dict, law: str):
@@ -141,8 +152,8 @@ class V90DigitalPhase4Encoder:
         self.lookahead = int(cpt_profile["lookahead"])
         if self.sr not in (0, 1):
             raise NotImplementedError("Phase 4 supports S_r=0 or S_r=1 only")
-        if self.sr == 1 and self.lookahead != 0:
-            raise NotImplementedError("S_r=1 shaping currently requires look-ahead depth zero")
+        if not 0 <= self.lookahead <= 3:
+            raise ValueError("V.90 look-ahead depth must be in 0..3")
         self.s = 6 - self.sr
         rate = float(cpt_profile["rate"])
         total_bits = round(rate * 6 / 8000)
@@ -183,6 +194,7 @@ class V90DigitalPhase4Encoder:
         self.shape_t_previous = [0] * 6
         self.shape_filter_state = (0.0, 0.0, 0.0)
         self._pending_bits: list[int] = []
+        self._shape_pipeline: list[_ShapeFrame] = []
 
     def reset(self) -> None:
         """Reset mapper memories for a new V.90 training/data block."""
@@ -193,6 +205,7 @@ class V90DigitalPhase4Encoder:
         self.shape_t_previous = [0] * 6
         self.shape_filter_state = (0.0, 0.0, 0.0)
         self._pending_bits.clear()
+        self._shape_pipeline.clear()
 
     def _shape_rule(self, t: Sequence[int], magnitudes: Sequence[float]):
         """Choose the minimum-metric legal rule for one Sr=1 frame (ld=0)."""
@@ -218,6 +231,97 @@ class V90DigitalPhase4Encoder:
             scored.append((energy, name, next_q, signs, (x1, y1, v1)))
         energy, name, self.shape_q, signs, self.shape_filter_state = min(scored)
         return signs
+
+    @staticmethod
+    def _shape_options(q: int, t: Sequence[int]):
+        # The enumeration order is also the deterministic tie-break order.
+        if q == 0:
+            return (("A", 0, tuple(int(t[k]) for k in range(6))),
+                    ("B", 1, tuple(int(t[k]) ^ 1 for k in range(6))))
+        return (("C", 0, tuple(int(t[k]) ^ int(k % 2 == 0) for k in range(6))),
+                ("D", 1, tuple(int(t[k]) ^ int(k % 2 == 1) for k in range(6))))
+
+    def _filter_shape_frame(self, frame: _ShapeFrame, signs: Sequence[int], state):
+        a1, a2, b1, b2 = self.shape_filter
+        x1, y1, v1 = state
+        energy = 0.0
+        for sign, magnitude in zip(signs, frame.magnitudes):
+            x = float(magnitude) if sign else -float(magnitude)
+            y = x - b1 * x1 + a1 * y1
+            v = y - b2 * y1 + a2 * v1
+            energy += v * v
+            x1, y1, v1 = x, y, v
+        return energy, (x1, y1, v1)
+
+    def _select_shaping_frame(self, frames: Sequence[_ShapeFrame]) -> bytes:
+        """Choose the first sign-inversion rule by exhaustive look-ahead."""
+        if not frames:
+            return b""
+        depth = min(self.lookahead, len(frames) - 1)
+        best = None
+
+        def visit(index: int, q: int, state, cost: float, path: tuple[str, ...],
+                  first_signs=None, first_q=None, first_state=None):
+            nonlocal best
+            frame = frames[index]
+            for name, next_q, signs in self._shape_options(q, frame.t):
+                frame_cost, next_state = self._filter_shape_frame(frame, signs, state)
+                candidate_path = path + (name,)
+                total = cost + frame_cost
+                commit_signs = signs if index == 0 else first_signs
+                commit_q = next_q if index == 0 else first_q
+                commit_state = next_state if index == 0 else first_state
+                if index == depth:
+                    candidate = (total, candidate_path, commit_signs,
+                                 commit_q, commit_state)
+                    if best is None or candidate[:2] < best[:2]:
+                        best = candidate
+                else:
+                    visit(index + 1, next_q, next_state, total, candidate_path,
+                          commit_signs, commit_q, commit_state)
+
+        visit(0, self.shape_q, self.shape_filter_state, 0.0, ())
+        assert best is not None
+        _, _, signs, self.shape_q, self.shape_filter_state = best
+        first = frames[0]
+        return bytes(int(self.ucode_octets[points[index]]) ^ (0 if sign else 0x80)
+                     for points, index, sign in zip(self.code_sets, first.indices, signs))
+
+    def _prepare_shaped_frame(self, input_bits: Sequence[int]) -> _ShapeFrame:
+        """Map future magnitudes and compute the per-frame differential inputs."""
+        if len(input_bits) != self.s + self.k:
+            raise ValueError("V.90 frame needs exactly S+K input bits")
+        if any(bit not in (0, 1) for bit in input_bits):
+            raise ValueError("V.90 encoder input must contain only bits")
+        d = [self.gpc.step(int(bit)) for bit in input_bits]
+        sign_inputs, modulus_bits = d[:self.s], d[self.s:]
+        value = sum(bit << index for index, bit in enumerate(modulus_bits))
+        mapped_indices = []
+        for points in self.code_sets:
+            mapped_indices.append(value % len(points))
+            value //= len(points)
+
+        p = [0, *map(int, sign_inputs)]
+        p_prime = [0] * 6
+        p_prime[1] = p[1] ^ self.shape_p_prime_5
+        p_prime[2] = p[2]
+        p_prime[3] = p[3] ^ p_prime[1]
+        p_prime[4] = p[4]
+        p_prime[5] = p[5] ^ p_prime[3]
+        t = [p_prime[k] ^ self.shape_t_previous[k] for k in range(6)]
+        self.shape_p_prime_5 = p_prime[5]
+        self.shape_t_previous = t
+        magnitudes = tuple(float(self.levels[points[index]])
+                           for points, index in zip(self.code_sets, mapped_indices))
+        return _ShapeFrame(tuple(mapped_indices), tuple(t), magnitudes)
+
+    def flush_lookahead(self) -> bytes:
+        """Emit pending frames at a protocol boundary, using available future frames only."""
+        out = bytearray()
+        while self._shape_pipeline:
+            out.extend(self._select_shaping_frame(self._shape_pipeline))
+            del self._shape_pipeline[0]
+        return bytes(out)
 
     def _encode_frame(self, input_bits: Sequence[int]) -> bytes:
         """Map one frame of D=S+K input bits to six G.711 codewords."""
@@ -273,10 +377,18 @@ class V90DigitalPhase4Encoder:
         frame_bits = self.s + self.k
         complete = len(self._pending_bits) // frame_bits
         count = complete * frame_bits
-        encoded = b"".join(self._encode_frame(self._pending_bits[offset:offset + frame_bits])
-                           for offset in range(0, count, frame_bits))
+        encoded = bytearray()
+        for offset in range(0, count, frame_bits):
+            frame = self._pending_bits[offset:offset + frame_bits]
+            if self.sr == 1 and self.lookahead:
+                self._shape_pipeline.append(self._prepare_shaped_frame(frame))
+                if len(self._shape_pipeline) > self.lookahead:
+                    encoded.extend(self._select_shaping_frame(self._shape_pipeline))
+                    del self._shape_pipeline[0]
+            else:
+                encoded.extend(self._encode_frame(frame))
         del self._pending_bits[:count]
-        return encoded
+        return bytes(encoded)
 
     def trn2d(self, symbols: int = 2040) -> bytes:
         """Generate TRN2d: at least 2040 symbols, in six-symbol frames."""
@@ -284,4 +396,8 @@ class V90DigitalPhase4Encoder:
             raise ValueError("TRN2d length must be >=2040 and divisible by six")
         self.reset()
         frame = [1] * (self.s + self.k)
-        return b"".join(self._encode_frame(frame) for _ in range(symbols // 6))
+        output = self.encode_bits(frame * (symbols // 6))
+        output += self.flush_lookahead()
+        if len(output) != symbols:
+            raise RuntimeError("TRN2d encoder did not produce the requested symbol count")
+        return output

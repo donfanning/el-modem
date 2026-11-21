@@ -11,7 +11,20 @@ from collections import deque
 from collections.abc import Callable, Sequence
 
 from v90_cp import V90CpSymbolDecoder
+from v90_digital_phase4 import ri_codewords
 from v90_digital_phase4_tx import V90DigitalPhase4Transmitter
+
+
+# R-bar-i (and the TRN2d, MP and data framing after it) must start
+# RBAR_I_PHASE symbols into an RBAR_I_GRID-symbol block counted from the first
+# Sd symbol, i.e. on a 96T boundary from the start of TRN1d. DIL ends only on a
+# 6-symbol frame, so Ri runs on until that point. SmartLink as a V.90 client
+# (2026-11-18) sent CPt until its Phase 4 timeout when R-bar-i was off the
+# 6-symbol frame. With the DIL ending where SmartLink expects, it retrained on
+# downstream SNR at data start when R-bar-i was at 0 of the 96T block and
+# connected with it at 48.
+RBAR_I_GRID = 96
+RBAR_I_PHASE = 48
 
 
 class V90DigitalAnswererPhase4Session:
@@ -26,6 +39,8 @@ class V90DigitalAnswererPhase4Session:
         self.events: list[tuple[str, dict | None]] = []
         self._output: deque[int] = deque()
         self._initial_ri_remaining = 0
+        self._grid_offset: int | None = None
+        self._sent = 0
         self._cpt_profile: dict | None = None
         self._cp_profile: dict | None = None
         self._cp_prime_profile: dict | None = None
@@ -35,10 +50,19 @@ class V90DigitalAnswererPhase4Session:
     def law(self) -> str:
         return self.transmitter.law
 
-    def start(self) -> None:
-        """Queue the required initial 192T Ri for clocked transmission."""
+    def start(self, grid_offset: int | None = None) -> None:
+        """Queue the required initial 192T Ri for clocked transmission.
+
+        ``grid_offset`` is the Phase 3 length in symbols, so R-bar-i can be
+        placed on the grid counted from the first Sd symbol (see RBAR_I_PHASE).
+        Without it R-bar-i follows CPt at once.
+        """
         if self.state != self.transmitter.IDLE:
             raise RuntimeError("V.90 Phase 4 session already started")
+        if grid_offset is not None and (
+                isinstance(grid_offset, bool) or not isinstance(grid_offset, int) or grid_offset % 6):
+            raise ValueError("Phase 4 grid offset must be a whole number of 6-symbol frames")
+        self._grid_offset = grid_offset
         self._output.extend(self.transmitter.start())
         self._initial_ri_remaining = 192
         self.state = self.transmitter.WAIT_CPT
@@ -67,12 +91,16 @@ class V90DigitalAnswererPhase4Session:
                 # required initial 192T, then start the specified fresh 24T
                 # response. Appending behind a stale repeat tail moves TRN2d
                 # off its protocol boundary (and breaks the caller's mapper).
-                if self._initial_ri_remaining:
-                    pending = list(self._output)
-                    keep = min(self._initial_ri_remaining, len(pending))
-                    self._output = deque(pending[:keep])
-                else:
-                    self._output.clear()
+                pending = list(self._output)
+                keep = min(self._initial_ri_remaining, len(pending))
+                if self._grid_offset is not None:
+                    keep += (RBAR_I_PHASE - self._grid_offset - self._sent - keep) % RBAR_I_GRID
+                if keep > len(pending):
+                    # The queue ends on a whole Ri frame, so Ri continues in phase.
+                    ri = ri_codewords(self.transmitter.uinfo, self.law,
+                                      duration_symbols=RBAR_I_GRID + 24)
+                    pending += ri[:keep - len(pending)]
+                self._output = deque(pending[:keep])
                 self._output.extend(self.transmitter.receive_cpt(profile))
                 self._cpt_profile = dict(profile)
                 self.state = self.transmitter.WAIT_CP
@@ -153,6 +181,7 @@ class V90DigitalAnswererPhase4Session:
             if self._output:
                 take = min(count - len(out), len(self._output))
                 out.extend(self._output.popleft() for _ in range(take))
+                self._sent += take
                 self._initial_ri_remaining = max(
                     0, self._initial_ri_remaining - take)
                 continue

@@ -328,7 +328,8 @@ class V42Link:
     def __init__(self, calling_party: bool, detect: bool = True, bit_rate: int = 9600, frame_size: int = 0,
                  window: int = 0, compression: tuple[int, int, int] | None = None, t400: float = 0.75,
                  receive_frame_size: int | None = None, receive_window: int | None = None,
-                 xid_fallback: bool | None = None, t403: float | None = 60.0):
+                 xid_fallback: bool | None = None, t403: float | None = 60.0,
+                 default_parameters: bool | None = None, rtt_hint: float | None = None):
         # Zero is the internal "use V.42 default" sentinel. Explicit values
         # must be valid protocol parameters; silently retaining a negative
         # value eventually produces an invalid XID or broken frame limits.
@@ -362,13 +363,18 @@ class V42Link:
         self._bad_frame_trace_started = time.monotonic() if self._bad_frame_trace_enabled else None
         self._bad_frame_trace: list[dict] = []
         self._bad_frame_trace_first_at: float | None = None
+        self._lapm_event_trace_enabled = os.environ.get("V42_LAPM_EVENT_TRACE") == "1"
+        self._lapm_event_trace_started = time.monotonic() if self._lapm_event_trace_enabled else None
+        self._lapm_event_trace: list[dict] = []
         self.bits_sent = 0
         self.cmd_addr = 0x03 if calling_party else 0x01
         self.rsp_addr = 0x01 if calling_party else 0x03
         # Opt-in diagnostic: V.42 7.2.2 permits establishment without
         # negotiation when the standard defaults suffice. This is distinct
         # from abandoning an attempted XID exchange after response loss.
-        self._default_parameters = os.environ.get("V42_DEFAULT_PARAMETERS", "0") == "1"
+        self._default_parameters = (
+            os.environ.get("V42_DEFAULT_PARAMETERS", "0") == "1"
+            if default_parameters is None else bool(default_parameters))
         # If a caller's XID response never arrives, a compatibility policy may
         # proceed with defaults for peers that do not implement XID. Strict
         # policy keeps retrying through N400, then fails the attempted V.42
@@ -403,6 +409,17 @@ class V42Link:
         self._t403_bits = (None if self._t403_seconds is None
                            else max(1, int(self._t403_seconds * self.rate)))
         self._t401_bits = int(max(1.5, 2.2 * (self.tx_n401 + 8) * 8 / self.rate + 1.0) * self.rate)
+        # Opt-in adaptive T401 (V42_T401_ADAPTIVE=1): T401 >= SRTT + 4 RTTVAR from I-frame -> acknowledgement
+        # times, as TCP's retransmission timer (RFC 6298, Karn's rule), seeded from the modulation's measured
+        # round trip. A fixed 1.5 s under a 1.25 s round trip with k=13 at 14400 (a Patton dial-in pool via the
+        # relay) gave 12 T401 expiries and an N400 failure in one minute (2026-11-21).
+        self._rto_adaptive = os.environ.get("V42_T401_ADAPTIVE") == "1"
+        self._srtt = self._rttvar = None                             # in line bits
+        self._sent_at: dict[int, int] = {}                           # N(S) -> bits_sent at first send, -1 if resent
+        self._rto_backoff = 1                                        # doubles per expiry until a valid sample
+        if rtt_hint:
+            self._srtt = float(rtt_hint) * self.rate
+            self._rttvar = self._srtt / 2
         self._tx: deque[int] = deque()
         self._hdlc = _Hdlc()
         self._async: list[int] = []
@@ -549,6 +566,7 @@ class V42Link:
         self._peer_xid_pause = False
         self._peer_xid_pending = False
         self.vs = self.va = self.vr = 0
+        self._sent_at.clear()
         self._tries = 0
         self._u(DISC, True, 1)
         self.state = "releasing"
@@ -638,6 +656,7 @@ class V42Link:
         The BREAK transaction restarts T403 when its acknowledgement completes.
         """
         self.vs = self.va = self.vr = 0
+        self._sent_at.clear()
         self._unacked.clear()
         self._retx.clear()
         self._cq.clear()
@@ -969,6 +988,25 @@ class V42Link:
             frame_length=None if frame is None else len(frame),
         ))
 
+    def _trace_lapm_event(self, event: str) -> None:
+        if not self._lapm_event_trace_enabled:
+            return
+        self._lapm_event_trace.append({
+            "event": event,
+            "elapsed_seconds": round(time.monotonic() - self._lapm_event_trace_started, 6),
+            "i_tx": self.stats["i_tx"],
+            "i_rx": self.stats["i_rx"],
+            "i_resent": self.stats["i_resent"],
+            "rej_tx": self.stats["rej_tx"],
+            "rej_rx": self.stats["rej_rx"],
+            "fcs_errors": self.stats["fcs_errors"],
+        })
+
+    def lapm_event_trace_report(self) -> dict | None:
+        if not self._lapm_event_trace_enabled:
+            return None
+        return dict(enabled=True, events=list(self._lapm_event_trace))
+
     def bad_frame_trace_report(self) -> dict | None:
         if not self._bad_frame_trace_enabled:
             return None
@@ -983,6 +1021,7 @@ class V42Link:
     # -- link state -------------------------------------------------------------------------------------------
     def _reset_link(self) -> None:
         self.vs = self.va = self.vr = 0
+        self._sent_at.clear()
         self._unacked: list[list] = []                              # [ns, payload]
         self._retx: deque = deque()
         self._cq: deque = deque()                                   # compressed octets waiting for a window slot
@@ -1206,6 +1245,7 @@ class V42Link:
             self._rej_sent = True
             self._ack_pending = False
             self.stats["rej_tx"] += 1
+            self._trace_lapm_event("rej_tx")
             return REJ
         # RR is correct both in the ordinary ready state and when an
         # already-sent REJ is still awaiting its requested I frame.
@@ -1222,7 +1262,23 @@ class V42Link:
 
     def _start_t401(self) -> None:
         self._t403_at = None
-        self._t401_at = self.bits_sent + self._t401_bits
+        self._t401_at = self.bits_sent + self._t401_effective_bits()
+
+    def _t401_effective_bits(self) -> int:
+        if not self._rto_adaptive:
+            return self._t401_bits
+        rto = self._t401_bits if self._srtt is None else max(self._t401_bits, int(self._srtt + 4 * self._rttvar))
+        return min(rto * self._rto_backoff, 30 * self.rate)
+
+    def _rtt_sample(self, bits: int) -> None:
+        self._rto_backoff = 1
+        if self._srtt is None:
+            self._srtt, self._rttvar = float(bits), bits / 2
+        else:
+            self._rttvar += (abs(self._srtt - bits) - self._rttvar) / 4
+            self._srtt += (bits - self._srtt) / 8
+        self.stats["srtt_ms"] = round(self._srtt / self.rate * 1000)
+        self.stats["t401_ms"] = round(self._t401_effective_bits() / self.rate * 1000)
 
     def _start_t403(self) -> None:
         if (self._t403_bits is not None and self.state == "lapm"
@@ -1261,6 +1317,10 @@ class V42Link:
     def _t401_expired(self) -> None:
         self._tries += 1
         self.stats["t401_expiries"] += 1
+        if self._rto_adaptive and self.state == "lapm":
+            # RFC 6298 5.5 (connected only; establishment keeps V.42's N400 retry pace): back off, or a timer shorter than the round trip resends every frame before its
+            # acknowledgement arrives and Karn's rule never lets a sample through.
+            self._rto_backoff = min(self._rto_backoff * 2, 64)
         if self.state == "releasing":
             if self._tries > N400:
                 self._event("DISC release retries exhausted; entering disconnected state")
@@ -1346,6 +1406,7 @@ class V42Link:
         if self._need_rej and not self._rej_sent and not self._local_busy:
             self._s(REJ, False, 0)
             self.stats["rej_tx"] += 1
+            self._trace_lapm_event("rej_tx")
             self._rej_sent = True
             self._need_rej = False
             self._ack_pending = False
@@ -1360,6 +1421,7 @@ class V42Link:
         if self._retx and not self._peer_busy and not self._xid_pause_tx:
             ns, payload = self._retx.popleft()
             self.stats["i_resent"] += 1
+            self._trace_lapm_event("i_resent")
             # V(S) is the next I-frame sequence number to transmit. REJ and
             # timer-recovery responses rewind it to N(R); each retransmitted
             # frame then advances it just like the corresponding sequential
@@ -1406,6 +1468,7 @@ class V42Link:
         self.vs = (self.vs + 1) & 0x7F
 
     def _send_i(self, ns: int, payload: bytes) -> None:
+        self._sent_at[ns] = self.bits_sent if ns not in self._sent_at else -1     # Karn: resent frames are not timed
         self.stats["i_tx"] += 1
         self.stats["wire_out"] += len(payload)
         self._send(bytes((self.cmd_addr, ns << 1, (self.vr << 1))) + payload)
@@ -1680,6 +1743,7 @@ class V42Link:
                 self._unacked.clear()
                 self._retx.clear()
                 self.vs = self.va = self.vr = 0
+                self._sent_at.clear()
                 if not collision:
                     self._t401_at = None
                 self._poll_out = False
@@ -1898,6 +1962,11 @@ class V42Link:
                 # than queued bytes or repeated transmissions. This remains
                 # meaningful when application traffic is outbound only.
                 self.stats['wire_acked'] += sum(len(frame[1]) for frame in self._unacked[:n])
+                sent = self._sent_at.get(self._unacked[n - 1][0], -1)
+                if sent >= 0:
+                    self._rtt_sample(self.bits_sent - sent)
+                for frame in self._unacked[:n]:
+                    self._sent_at.pop(frame[0], None)
                 del self._unacked[:n]
                 self.va = nr
                 # During timer recovery, an advancing N(R) does not answer
@@ -1960,8 +2029,15 @@ class V42Link:
             self._terminate_for_frame_reject(f"undefined S control 0x{ctrl:02x}")
             return
         if len(f) != 3:
-            self._terminate_for_frame_reject(f"incorrect S-frame length for 0x{ctrl:02x}")
-            return
+            # Opt-in: a Patton 2960 dial-in acknowledges our I frames with RR plus three octets (c8 00 00, good
+            # FCS; 2026-11-21); V42_LAPM_LENIENT_S=1 acts on the first three and drops the rest instead of leaving LAPM.
+            if len(f) > 3 and os.environ.get("V42_LAPM_LENIENT_S") == "1":
+                self.stats["lenient_s_frames"] = self.stats.get("lenient_s_frames", 0) + 1
+                self._event(f"S frame 0x{ctrl:02x} with {len(f) - 3} trailing octet(s) {f[3:].hex()}: extra ignored")
+                f = f[:3]
+            else:
+                self._terminate_for_frame_reject(f"incorrect S-frame length for 0x{ctrl:02x}")
+                return
         # An F=1 supervisory response is solicited only when it answers our
         # outstanding P=1 poll (§8.5.7/Table 9). Validate the control field
         # and frame length first: malformed or unsupported S frames are
@@ -2012,6 +2088,7 @@ class V42Link:
                 self._start_t401()
         elif ctrl == REJ:
             self.stats["rej_rx"] += 1
+            self._trace_lapm_event("rej_rx")
             self._peer_busy = False
             self._ack(nr)
             # A REJ received during timer recovery updates V(A), but only
@@ -2129,6 +2206,7 @@ class V42Link:
                     # that response is REJ(F=1), not a deferred REJ(F=0).
                     self._s(REJ, False, 1)
                     self.stats["rej_tx"] += 1
+                    self._trace_lapm_event("rej_tx")
                     self._rej_sent = True
                     self._need_rej = False
                     self._ack_pending = False

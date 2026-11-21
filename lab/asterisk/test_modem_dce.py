@@ -150,6 +150,60 @@ class V90DceProfileWiringTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "probe_rms"):
                 load_v90_analogue_caller_profile(str(path), law="pcmu")
 
+    def test_shipped_v92_caller_profile_loads_into_outbound_chain_only(self) -> None:
+        from v8 import V8_MOD_V34, V8_PCM_ANALOG, V8_PROTOCOL_LAPM_V42
+
+        path = (Path(__file__).resolve().parent / "profiles"
+                / "v92-pcm-upstream-analogue-caller.json")
+        profile = load_v90_analogue_caller_profile(str(path), law="pcmu")
+        self.assertTrue(profile["v92_pcm_upstream"])
+        self.assertFalse(profile["v92_fast_parameter_exchange"])
+        # Astound's server renegotiates the rate soon after data starts; the caller must answer its Rd.
+        self.assertTrue(profile["v92_rate_renegotiation"])
+        from v90_analogue_caller_engine import prepare_v92_analogue_session
+        self.assertTrue(prepare_v92_analogue_session(profile, "pcmu")._enable_rate_renegotiation)
+        # Our TRN2u is exactly on the G.711 grid; without noise Astound rated it for a 44,000 upstream that our data
+        # cannot reach, and with 1.5% of LU it chose 26,667 and carried the login banner (2026-11-19).
+        self.assertEqual(profile["v92_trn2u_noise"], 0.015)
+        self.assertTrue(profile["v92_pad_aware_upstream"])
+        # DRN 22 (56,000 downstream): Astound's path carries the adjacent-Ucode constellation exactly (B1d error
+        # free, login banner, through a rate renegotiation); DRN 10 (40,000) held 3 of 3 (2026-11-20).
+        self.assertEqual(profile["v92_downstream_drn"], 22)
+        self.assertEqual(prepare_v92_analogue_session(profile, "pcmu")._drn_down, 22)
+        self.assertEqual(prepare_v92_analogue_session(profile, "pcmu")._upstream_options,
+                         {"trn2u_noise": 0.015, "pad_aware_upstream": True})
+        # Up to 100 ms of Phase 2 is concealed instead of ending the call: replayed gaps that long in INFO0d,
+        # Tone B, L1/L2 and before INFO1d all still reach data (2026-11-20). A gap on INFO1d itself loses it at
+        # any length (it did at 40 ms), and a longer outage still fails closed.
+        self.assertEqual(profile["phase2_rtp_gap_policy"], "fill_silence")
+        self.assertEqual(profile["phase2_rtp_gap_max_samples"], 800)
+        # V.92 Phase 3/4 training rides out 160 ms: replayed gaps in TRN1u, TRN2d, SUV/CP and before E all still
+        # reach data, and a 60 ms one ended a live Astound call (2026-11-19).
+        self.assertEqual(profile["v92_training_rtp_gap_max_samples"], 1280)
+        configured = attach_v90_analogue_caller_profile(
+            {"line_mode": "chain", "chain": {}}, profile, "originate")
+        sock, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        session = OnlineAudioSession(
+            sock, ("127.0.0.1", 9), "originate", "answer", **configured)
+        try:
+            chain = session._v22
+            chain._v8.status = 2
+            chain._v8.result = {
+                "modulations": V8_MOD_V34,
+                "protocols": V8_PROTOCOL_LAPM_V42,
+                "pcm_negotiated": True,
+                "pcm_negotiated_bits": V8_PCM_ANALOG,
+            }
+            chain._step_v8()
+            self.assertTrue(chain.engine._v92_requested)
+            self.assertFalse(chain.engine._v92_selected)
+            self.assertEqual(chain.engine._phase2_gap_policy, "fill_silence")
+            self.assertEqual(chain.engine._phase2_gap_max_samples, 800)
+        finally:
+            session.stop()
+            sock.close()
+            peer.close()
+
     def test_analogue_caller_profile_selects_phase2_engine_in_outbound_chain(self) -> None:
         from v8 import V8_MOD_V34, V8_PCM_ANALOG
 
@@ -418,7 +472,7 @@ class V90DceProfileWiringTests(unittest.TestCase):
         self.assertEqual(attach_v90_digital_answerer_profile(source, None, "answer"), source)
 
     def test_profile_rejects_wrong_role_or_non_chain_resolution(self) -> None:
-        with self.assertRaisesRegex(ValueError, "answer role"):
+        with self.assertRaisesRegex(ValueError, "originate role"):
             attach_v90_digital_answerer_profile(
                 {"line_mode": "chain"}, self.profile(), "originate")
         with self.assertRaisesRegex(ValueError, "V.8 chain"):
@@ -4145,6 +4199,7 @@ class OnlineAudioSessionTests(unittest.TestCase):
             session._v42_started = False
             session._v42_frame_size = 32
             session._v42_xid_fallback = True
+            session._v42_default_parameters = False
             session._tx_role = "originate"
             session._v42_probe = False
             session._was_up = False
@@ -4167,6 +4222,33 @@ class OnlineAudioSessionTests(unittest.TestCase):
             no_bis_session = new_session(v42bis=False)
             no_bis_session.poll(time.monotonic())
             self.assertFalse(no_bis_session._v22.start_kwargs["compression_recovery"])
+
+        # A number configured for standard-default LAPM starts without XID;
+        # V.42bis is negotiated only by XID, so its offer is dropped. Other
+        # calls pass exactly the arguments they always did.
+        with mock.patch.dict(os.environ, {"V42_CERROR_RECOVERY": "1"}, clear=True):
+            listed = new_session(v42bis=True)
+            listed._v42_default_parameters = True
+            listed.poll(time.monotonic())
+            kwargs = listed._v22.start_kwargs
+            self.assertTrue(kwargs["default_parameters"])
+            self.assertNotIn("compression", kwargs)
+            self.assertFalse(kwargs["compression_recovery"])
+            ordinary = new_session(v42bis=True)
+            ordinary.poll(time.monotonic())
+            self.assertNotIn("default_parameters", ordinary._v22.start_kwargs)
+            self.assertIn("compression", ordinary._v22.start_kwargs)
+
+    def test_v42_default_parameters_apply_only_to_listed_originated_numbers(self) -> None:
+        from modem_dce import v42_default_parameters_for
+        numbers = ("621", "1-555-0100")
+        self.assertTrue(v42_default_parameters_for("originate", "621", numbers))
+        self.assertTrue(v42_default_parameters_for("originate", "T621", numbers))
+        self.assertTrue(v42_default_parameters_for("originate", "15550100", numbers))
+        self.assertFalse(v42_default_parameters_for("originate", "620", numbers))
+        self.assertFalse(v42_default_parameters_for("answer", "621", numbers))
+        self.assertFalse(v42_default_parameters_for("originate", "", numbers))
+        self.assertFalse(v42_default_parameters_for("originate", "621", ()))
 
     def test_v23_dcd_tracks_receive_carrier_and_honors_force_on(self) -> None:
         from v23 import V23Modem
@@ -5901,6 +5983,29 @@ class OnlineAudioSessionTests(unittest.TestCase):
             answer_session.stop()
             originate_sock.close()
             answer_sock.close()
+
+    def test_lapm_flow_control_counts_unsent_data_not_frames_in_flight(self) -> None:
+        import socket
+        from v42_lapm import V42Link
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        session = OnlineAudioSession(sock, sock.getsockname(), "originate", "answer",
+                                     line_mode="v22bis", v22_rate=2400)
+        try:
+            modem = session._v22
+            link = V42Link(True, detect=False, bit_rate=2400)
+            modem._v42, modem.v42_mode = link, "lapm"
+            # A full window in flight (the old count stopped the DTE at ~30 bytes of it).
+            link._unacked.extend((n, b"y" * link.tx_n401) for n in range(12))
+            link._txq.extend(b"x" * link.tx_n401)
+            self.assertIsNone(session.flow_control_signal())
+            link._txq.extend(b"x" * 2 * link.tx_n401)              # three frames unsent: above two
+            self.assertEqual(session.flow_control_signal(), bytes((0x13,)))
+            del link._txq[:-link.tx_n401 // 2]                     # half a frame left: below one
+            self.assertEqual(session.flow_control_signal(), bytes((0x11,)))
+        finally:
+            sock.close()
 
     def test_flow_control_signal_asserts_and_deasserts_xoff(self) -> None:
         import socket

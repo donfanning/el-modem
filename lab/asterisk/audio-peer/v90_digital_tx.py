@@ -152,10 +152,18 @@ class V90DigitalPhase3Transmitter:
         self.jprime_sent = True
         return bytes(self._codeword(bool(sign)) for sign in signs)
 
-    def dil_stream(self, descriptor: dict) -> V90DILCodewordStream | None:
+    def prepare_dil_stream(self, descriptor: dict) -> V90DILCodewordStream | None:
+        """Pre-render Ja's DIL without changing the live transmit sequence."""
+        if int(descriptor["N"]) == 0:
+            return None
+        return V90DILCodewordStream(descriptor, self.law)
+
+    def dil_stream(self, descriptor: dict, *,
+                   prepared: V90DILCodewordStream | None = None
+                   ) -> V90DILCodewordStream | None:
         """Start the requested DIL after J'_d; N=0 means no DIL phase."""
         if not self.jprime_sent:
             raise RuntimeError("J'_d must precede DIL")
         if int(descriptor["N"]) == 0:
             return None
-        return V90DILCodewordStream(descriptor, self.law)
+        return prepared if prepared is not None else self.prepare_dil_stream(descriptor)

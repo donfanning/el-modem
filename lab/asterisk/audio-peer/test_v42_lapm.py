@@ -1263,6 +1263,44 @@ class LinkRemainingTests(unittest.TestCase):
         self.assertEqual(a.state, "down")
         self.assertIn("incorrect S-frame length", a.events[-1])
 
+    def test_adaptive_t401_is_opt_in_seeded_and_tracks_the_round_trip(self):
+        import collections
+        os.environ.pop("V42_T401_ADAPTIVE", None)
+        fixed = v42_lapm.V42Link(True, detect=False, bit_rate=14400, t403=None, rtt_hint=2.0)
+        self.assertEqual(fixed._t401_effective_bits(), fixed._t401_bits)          # off unless asked for
+        with patch.dict(os.environ, {"V42_T401_ADAPTIVE": "1"}):
+            seeded = v42_lapm.V42Link(True, detect=False, bit_rate=14400, t403=None, rtt_hint=2.0)
+            self.assertAlmostEqual(seeded._t401_effective_bits() / 14400, 6.0, places=2)   # SRTT + 4 * SRTT/2
+            # A 3 s round trip (1.5 s each way), data one way only, both seeded with the measured round trip
+            # as the V.32/V.34 engines do: setup is sized by the seed, data recovery by the measured SRTT.
+            a = v42_lapm.V42Link(True, detect=False, bit_rate=14400, t403=None, rtt_hint=3.0)
+            b = v42_lapm.V42Link(False, detect=False, bit_rate=14400, t403=None, rtt_hint=3.0)
+            d = int(1.5 * 14400)
+            ab, ba = collections.deque([1] * d), collections.deque([1] * d)
+            a.write(bytes(range(256)) * 60)
+            for _ in range(20 * 14400):
+                ab.append(a.tx_bit()); ba.append(b.tx_bit())
+                b.rx_bit(ab.popleft()); a.rx_bit(ba.popleft())
+        # The fixed 1.5 s timer resends SABME and every frame before their acknowledgements and the peer link
+        # drops; seeded and adaptive, the link stays up and T401 settles on the measured round trip.
+        self.assertEqual((a.state, b.state), ("lapm", "lapm"))
+        self.assertGreater(a.stats["srtt_ms"], 2900)
+        self.assertGreaterEqual(a.stats["t401_ms"], a.stats["srtt_ms"])
+        self.assertLess(a.stats["t401_ms"], 9000)                                  # came down from the 9 s seed
+        self.assertLessEqual(a.stats["t401_expiries"], 3)
+        self.assertGreater(a.stats["wire_acked"], 4000)
+
+    def test_lenient_option_acts_on_a_supervisory_frame_with_trailing_octets(self):
+        # A Patton 2960 dial-in: RR N(R)=1 followed by c8 00 00 (2026-11-21)
+        with patch.dict(os.environ, {"V42_LAPM_LENIENT_S": "1"}):
+            a, b = pair(detect=False)
+            pump(a, b, 9600 * 3)
+            a._on_frame(bytes((a.rsp_addr, v42_lapm.RR, 0, 0xC8, 0, 0)))
+        self.assertEqual(a.state, "lapm")
+        self.assertEqual(a.stats["lenient_s_frames"], 1)
+        self.assertEqual(a.stats["frame_reject_errors"], 0)
+        self.assertTrue(any("trailing octet" in e for e in a.events))
+
     def test_undefined_supervisory_control_is_rejected(self):
         a, b = pair(detect=False)
         pump(a, b, 9600 * 3)

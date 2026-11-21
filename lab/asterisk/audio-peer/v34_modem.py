@@ -53,6 +53,7 @@ class V34Modem(V42Layer):
         self._retrain_t0 = 0
         self.caller = self._new_caller()
         self._v8 = V8Negotiator(True, modulations=V8_MOD_V34, protocols=v8_protocols)
+        self._v8_mod_v34 = V8_MOD_V34
         self._phase = "v8"                                  # v8 -> p2 (V34Caller) -> failed
         if not with_v8:                                     # V.8 already done by the caller of this engine (autochain.py)
             self._v8, self._phase = None, "p2"
@@ -70,6 +71,11 @@ class V34Modem(V42Layer):
         self._v42_setup()
 
     V42_RX_LAG_MARGIN_S = 1.0                                # receive queue behind real time (up to 0.65 s measured) plus slack
+
+    @property
+    def v42_rtt_hint_seconds(self):
+        rtd = getattr(self.caller, "rtd_samples", None) or 0
+        return rtd / self.fs if rtd else None
 
     @property
     def v42_detect_extra_seconds(self) -> float:
@@ -265,6 +271,10 @@ class V34Modem(V42Layer):
             self._v8.rx(x.tolist())
             if self._v8.status == 2:
                 self._ev("V.8 complete: " + str(self._v8.result))
+                if not (int((self._v8.result or {}).get("modulations", 0)) & self._v8_mod_v34):
+                    self._fail("V.8: no common modulation (peer JM does not select V.34)")
+                    self._rx_media_deadline = None
+                    return b""
                 self._phase = "p2"
                 self.caller.rx_t = 0
                 self.caller.t = 0

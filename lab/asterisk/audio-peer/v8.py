@@ -11,7 +11,7 @@ modulation modes, protocol and PSTN access categories. LAPM is reported only whe
 uses that common V.8 indication to bypass V.42 ODP/ADP detection and proceed to LAPM/XID; without it, V.42 detection
 remains the alternate negotiation path (§6.4 and §7.2.1 of V.8). PCM modem role availability (V.90/V.92 analogue and
 digital) is negotiated explicitly. The V.90 digital-answerer engine is wired through Phase 4; the analogue-caller
-prototype currently integrates Phase 2 only. T.66 and V.92 quick-connect remain unimplemented.
+prototype currently integrates Phase 2 only. V.92 digital-answer Quick Connect Phase 1 is an opt-in profile path.
 
 Credit: the signal definitions are ITU-T's; the timings that real answerers tolerate (Te, 75 ms gaps) were checked against
 SpanDSP's v8.c (LGPL, Steve Underwood) and the Smart Link modem as black-box peers. No code was copied from either.
@@ -275,6 +275,27 @@ class _FskRx:
                 best = found
         return best
 
+    def quick_connect_sequences(self) -> list[dict]:
+        """Decode complete V.92 QC sequences from the best V.21 bit timing."""
+        import v92_quick_connect as qc
+
+        best: list[dict] = []
+        prefix = qc.ONES + qc.SYNC
+        for _, bits in self.bitstreams():
+            found = []
+            for i in range(max(0, len(bits) - 59)):
+                if bits[i:i + 20] != prefix:
+                    continue
+                parsed = (qc.parse(bits[i:i + 70]) if i + 70 <= len(bits)
+                          else None)
+                if parsed is None:
+                    parsed = qc.parse(bits[i:i + 60])
+                if parsed is not None:
+                    found.append(parsed)
+            if len(found) > len(best):
+                best = found
+        return best
+
     def cj(self) -> bool:
         """CJ: three consecutive octets of zeros with start and stop bits (§3.5)."""
         want = _octet_bits(0) * 3
@@ -289,7 +310,7 @@ class V8Negotiator:
     def __init__(self, calling_party: bool, modulations: int = V8_MOD_V32, protocols: int = V8_PROTOCOL_NONE,
                  send_ci: bool = False, call_function: int = V8_CALL_V_SERIES, amplitude: float = 2500.0,
                  ans_delay: float = 0.2, pcm_availability: int | bool = 0,
-                 pstn_access_bits: int = 0):
+                 pstn_access_bits: int = 0, v92_quick_connect: bool = False):
         self.calling = calling_party
         self.mods, self.protocols, self.cf = modulations, protocols, call_function
         self.pcm_availability = _normalize_pcm_availability(pcm_availability)
@@ -298,6 +319,14 @@ class V8Negotiator:
         if not 0 <= pstn_access_bits <= 0xE0 or pstn_access_bits & 0x1F:
             raise ValueError("PSTN access bits must use only V.8 bits b5-b7")
         self.pstn_access_bits = pstn_access_bits
+        if type(v92_quick_connect) is not bool:
+            raise ValueError("v92_quick_connect must be boolean")
+        if v92_quick_connect and (calling_party or self.pcm_availability != V8_PCM_DIGITAL
+                                  or not self.mods & V8_MOD_V34):
+            raise ValueError("V.92 Quick Connect requires a V.34 digital answerer profile")
+        self.v92_quick_connect = v92_quick_connect
+        self.quick_connect_request: dict | None = None
+        self.quick_connect_attempted = False
         if not (self.mods & V8_LAPM_MODULATIONS):
             self.protocols &= ~V8_PROTOCOL_LAPM_V42
         self.send_ci = send_ci
@@ -504,6 +533,7 @@ class V8Negotiator:
         negotiated_pcm = (_pcm_response(self.pcm_availability, peer_pcm)
                           if mods & V8_MOD_V34 else 0)
         self.result = {"status": 2, "call_function": cf, "modulations": mods, "protocols": prot, "tone": 5,
+                       "jm_octets": list(octets),
                        "pcm": peer_pcm is not None, "pcm_availability": peer_pcm,
                        "pcm_negotiated": bool(negotiated_pcm),
                        "pcm_negotiated_bits": negotiated_pcm,
@@ -528,6 +558,16 @@ class V8Negotiator:
             if self.rx_t - self._cj_poll < FS // 10:
                 return
             self._cj_poll = self.rx_t
+            if self.v92_quick_connect and not self.quick_connect_attempted:
+                for parsed in self._rx.quick_connect_sequences():
+                    if parsed.get("kind") == "QC1a" and not parsed.get("cleardown"):
+                        self.quick_connect_attempted = True
+                        self.quick_connect_request = parsed
+                        # QC1a replaces the ordinary CM in this short Phase 1
+                        # path; V8Chain takes over transmission with QCA1d.
+                        self._tx = None
+                        self._set("quick_connect")
+                        return
             seqs = self._rx.sequences()
             for a, b in zip(seqs, seqs[1:]):
                 if a == b:                                                     # two identical CM sequences (§7.4)
@@ -540,6 +580,17 @@ class V8Negotiator:
             if self._rx.cj():
                 self._tx = None
                 self._set("post_cj")
+
+    def resume_after_quick_connect_timeout(self) -> None:
+        """Resume ordinary V.8 after one failed QC attempt, ignoring later QC1a."""
+        if self.calling or not self.quick_connect_attempted:
+            raise RuntimeError("no answer-side Quick Connect attempt is active")
+        self.quick_connect_request = None
+        self.result = None
+        self.status = 1
+        self._rx = _FskRx(V21_L)
+        self._tx = _AnsAm(self.amp)
+        self._set("ansam")
 
     def _on_cm(self, octets: list[int]) -> None:
         cf = decode_call_function(octets[0])
@@ -557,6 +608,7 @@ class V8Negotiator:
         # the answer-side network access.
         response_access = self.pstn_access_bits | (peer_access & V8_PSTN_ACCESS_CALL_CELLULAR)
         self.result = {"status": 2, "call_function": cf, "modulations": common, "protocols": prot, "tone": 5,
+                       "cm_octets": list(octets),
                        "pcm": peer_pcm is not None, "pcm_availability": peer_pcm,
                        "pcm_negotiated": bool(response_pcm),
                        "pcm_negotiated_bits": response_pcm,

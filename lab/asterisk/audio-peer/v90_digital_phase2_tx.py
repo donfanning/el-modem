@@ -64,6 +64,7 @@ class V90DigitalPhase2Transmitter:
         self._array: np.ndarray | None = None
         self._array_pos = 0
         self._array_name: str | None = None
+        self._array_start_at: int | None = None
         self._completion: dict[str, int] = {}
         self._last_info0d_complete: int | None = None
         self._last_finite_end = self.cursor
@@ -84,6 +85,8 @@ class V90DigitalPhase2Transmitter:
                     action.signal, requested, at, action.latest))
 
             if action.signal in ("info0d", "info1d", "l1", "l2"):
+                if action.signal == "info1d" and action.interrupt_l2:
+                    self._interrupt_l2(at)
                 if at < self._last_finite_end:
                     raise ValueError("finite Phase 2 waveforms may not overlap")
                 samples = self._make_array(action, at)
@@ -139,10 +142,52 @@ class V90DigitalPhase2Transmitter:
                     self._mode = "silence"
                     self._array = None
                     self._array_name = None
+                    self._array_start_at = None
             self.cursor += count
             out_pos += count
         self._apply_due_events()
         return output
+
+    def _interrupt_l2(self, at: int) -> None:
+        """End a scheduled/current L2 at ``at`` so INFO1d follows it directly."""
+        interval = None
+        if (self._mode == "array" and self._array_name == "l2"
+                and self._array is not None
+                and self._array_start_at is not None):
+            start = self._array_start_at
+            original_end = start + len(self._array)
+            if start <= at < original_end:
+                interval = (start, original_end)
+                keep = max(self._array_pos,
+                           min(len(self._array), at - start))
+                self._array = self._array[:keep]
+        else:
+            for i, (start, sequence, kind, value) in enumerate(self._events):
+                if kind != "array" or value[1] != "l2":
+                    continue
+                samples, name = value
+                original_end = start + len(samples)
+                if start <= at < original_end:
+                    interval = (start, original_end)
+                    keep = max(0, min(len(samples), at - start))
+                    if keep:
+                        self._events[i] = (
+                            start, sequence, kind, (samples[:keep], name))
+                    else:
+                        self._events.pop(i)
+                    break
+
+        if interval is None:
+            if at < self._last_finite_end:
+                raise ValueError("INFO1d requested before pending L2 could be interrupted")
+            return
+
+        _, original_end = interval
+        self._events = [event for event in self._events
+                        if not (event[0] == original_end
+                                and event[2] == "silence")]
+        self._last_finite_end = at
+        self._completion["l2-complete"] = at
 
     def _resolve_time(self, action: Phase2Action) -> int:
         if action.at is not None:
@@ -197,6 +242,7 @@ class V90DigitalPhase2Transmitter:
                 self._array = samples
                 self._array_pos = 0
                 self._array_name = name
+                self._array_start_at = at
             elif kind == "tone_b":
                 self._mode = "tone_b"
             elif kind == "reverse-tone-b":
@@ -206,3 +252,4 @@ class V90DigitalPhase2Transmitter:
                 self._array = None
                 self._array_pos = 0
                 self._array_name = None
+                self._array_start_at = None

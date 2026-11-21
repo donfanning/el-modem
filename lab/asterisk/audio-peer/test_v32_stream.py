@@ -167,5 +167,20 @@ class V8StageTests(unittest.TestCase):
         self.assertFalse(any(out))
 
 
+class V42DetectWindowTests(unittest.TestCase):
+    def test_t400_grows_by_the_measured_round_trip(self):
+        import os
+        from unittest.mock import patch
+        from v32_stream import V32Modem
+        m = V32Modem(fs=8000, my_rates=(9600,), use_v8=False)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("V42_DETECT_EXTRA_S", None)
+            self.assertEqual(m.v42_detect_extra_seconds, 0.0)          # no handshake measured yet
+            m._cc_tx_at, m._rev2_at = 8000, 8000 + m.blk // 2 + 8800    # 1.1 s round trip
+            self.assertAlmostEqual(m.v42_detect_extra_seconds, 1.1 + m.V42_RX_LAG_MARGIN_S)
+            os.environ["V42_DETECT_EXTRA_S"] = "0"
+            self.assertEqual(m.v42_detect_extra_seconds, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

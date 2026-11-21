@@ -354,9 +354,14 @@ class RetrainTriggerTests(unittest.TestCase):
             b1_errors=0,
             trellis_violations=0, failure=None, _pending=[1.0, 2.0])
         p4 = types.SimpleNamespace(data_rx=types.SimpleNamespace(rx=pcm_rx))
+        fractional_timing = {"count": 42, "p99_ms": 0.2, "max_ms": 0.4,
+                             "max_location": {"feed_block": 41,
+                                              "sample_position": 6560}}
         engine._phase3 = types.SimpleNamespace(
             state="running", stage="data", lapm=link,
-            upstream=upstream, upstream_data=upstream_data, _p4=p4)
+            upstream=upstream, upstream_data=upstream_data, _p4=p4,
+            _p3=types.SimpleNamespace(
+                fractional_rx_timing_diagnostics=lambda: fractional_timing))
 
         engine._begin_retrain(initiating=True, reason="data link failed")
 
@@ -371,7 +376,7 @@ class RetrainTriggerTests(unittest.TestCase):
             "ack_pending": False, "peer_busy": False,
             "last_events": ["poll", "retransmit", "N400 retransmissions exhausted"],
         })
-        self.assertEqual(start["phase3"], {
+        expected_phase3 = {
             "state": "running", "stage": "data",
             "upstream_phase3_state": "tracking",
             "upstream_failure_reason": None, "upstream_samples_seen": 100000,
@@ -388,6 +393,7 @@ class RetrainTriggerTests(unittest.TestCase):
             "phase4_mp_prime_frames_sent": None,
             "phase4_rx_bits_seen": None, "phase4_profiles": [],
             "phase4_receive_armed": False, "phase4_cpt_acquired": False,
+            "fractional_rx_timing": fractional_timing,
             "timing": timing,
             "pcm_upstream_rx": {
                 "state": "data", "frames": 75, "lost_frames": 0,
@@ -396,7 +402,11 @@ class RetrainTriggerTests(unittest.TestCase):
                 "b1_errors": 0, "trellis_violations": 0,
                 "failure": None, "pending_symbols": 2,
             },
-        })
+        }
+        # Later diagnostics (V.92 Phase 3, session failure) are added alongside; compare the fields named here.
+        self.assertEqual({key: start["phase3"].get(key) for key in expected_phase3}, expected_phase3)
+        self.assertIsNone(start["phase3"]["session_failure"])
+        self.assertIn("v92_phase3", start["phase3"])
         self.assertIsNone(engine._phase3)
         self.assertEqual(engine._retired_phase3[0].lapm, link)
 
