@@ -72,8 +72,8 @@ def _metrics_json_default(value):
         return item()
     raise TypeError(f"metrics value {type(value).__name__} is not JSON serializable")
 PRODUCT = "EL-MODEM"
-VERSION = "0.4.0-rc1"
-PRODUCT_CODE = "0040"          # four digits: major, minor, patch (V0.4.0)
+VERSION = "0.5.0-rc1"
+PRODUCT_CODE = "0050"          # four digits: major, minor, patch (V0.5.0)
 STORED_NUMBER_SLOTS = 4        # phone-number slots 0-3 (AT&Zn=, ATDSn)
 PNP_ID = "ELM0001"            # three-letter vendor tag + number; not registered with any PnP authority
 PROJECT_URL = "https://github.com/donfanning/el-modem"

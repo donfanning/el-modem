@@ -2576,11 +2576,11 @@ class AtiScreenTests(unittest.TestCase):
 
     def test_identification_screens(self) -> None:
         dce = AtDce()
-        self.assertEqual(self.ati(dce, 0), "ATI0\r\r\n0040\r\n\r\nOK\r\n")        # code, blank line, OK like a Courier
+        self.assertEqual(self.ati(dce, 0), "ATI0\r\r\n0050\r\n\r\nOK\r\n")        # code, blank line, OK like a Courier
         self.assertRegex(self.ati(dce, 1), r"\r\n[0-9A-F]{4}\r\n\r\nOK\r\n$")
         self.assertIn("\r\nOK\r\nOK\r\n", self.ati(dce, 2))                    # self-test OK, then the command's own OK
         out = self.ati(dce, 3)
-        for text in ("El-Modem Software Modem", "Build date:", "Revision: 0.4.0-rc1", "https://github.com/donfanning/el-modem"):
+        for text in ("El-Modem Software Modem", "Build date:", "Revision: 0.5.0-rc1", "https://github.com/donfanning/el-modem"):
             self.assertIn(text, out)
         for n in (7, 8, 9, 10, 11, 12, 15, 16, 17):
             self.assertTrue(self.ati(dce, n).endswith("OK\r\n"), n)
