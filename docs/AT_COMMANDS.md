@@ -8,7 +8,7 @@ characters are escaped. ATI9 is a machine-readable packet and is not reformatted
 ## Information screens (ATI)
 | Command | Shows |
 |---|---|
-| `ATI0` | four-digit product code (`0040` = V0.4.0) |
+| `ATI0` | four-digit product code (`0050` = V0.5.0) |
 | `ATI1` | CRC-16 of the program image (the executable, or the source file) |
 | `ATI2` | self test (CRC known answer, RAM pattern, FFT): `OK`/`ERROR`, then the command's own `OK` |
 | `ATI3` | banner, embedded UTC compilation timestamp, revision, project URL |
