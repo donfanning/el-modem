@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "baseline_private_source_commit": "35f7635b4adc2aec030d6304c0fc69b37a9aa299",
-  "public_base_revision": "518a49806bbb5efcfcb17bd6a7afcebe4bac5a91",
+  "public_base_revision": "5ea9220d38223d29043562487c1cdc030c94c1e5",
   "scope": "Current regular tracked public files; manifest itself excluded. Base revisions are historical anchors, not claims that changed files were built at those revisions.",
   "files": {
     ".gitattributes": {
@@ -9,7 +9,7 @@
       "mode": "100644"
     },
     ".github/workflows/build.yml": {
-      "sha256": "fd4553d5a5b88474fc2e75d0b882ba725484c7d0627c486e4174a9e4dba41e7a",
+      "sha256": "e09a443da1143041072e5c7c196d9c948e28cd93ddc69f11f66159c011c3b12f",
       "mode": "100644"
     },
     ".github/workflows/macos-pty.yml": {
@@ -49,7 +49,7 @@
       "mode": "100644"
     },
     "docs/AT_COMMANDS.md": {
-      "sha256": "8de117486a46218d466f25780365694b1663103a3915835bad877ca802453f35",
+      "sha256": "05d3e21dd03ab66c4eeec95c6bc187509e30c4de388a5b439eb0ba1478ebf930",
       "mode": "100644"
     },
     "docs/DESKTOP.md": {
@@ -1845,7 +1845,7 @@
       "mode": "100644"
     },
     "lab/asterisk/modem_dce.py": {
-      "sha256": "79734299488ee8f55c727ac647dff9a7595daae4fc8b6497b0ae543e5da0788d",
+      "sha256": "e9945db8c66c24c0ba36cfc2e7ecbd8b53c8bba7752292a76a4208a1a7967723",
       "mode": "100644"
     },
     "lab/asterisk/modem_diagnostics.py": {
@@ -1973,7 +1973,7 @@
       "mode": "100644"
     },
     "lab/asterisk/test_modem_dce.py": {
-      "sha256": "a25165039260552fe86d09e16a747ec02a0a3224938803cfcacffcc5b9e838b5",
+      "sha256": "7e4c51e20a9158ca8533f1fa6a4a2be6d570289b10f241b3140fa182f1cf89d4",
       "mode": "100644"
     },
     "lab/asterisk/test_modem_desktop.py": {
@@ -2341,7 +2341,7 @@
       "mode": "100644"
     },
     "packaging/windows/el-modem.iss": {
-      "sha256": "b33104b8fb2b93f919fc575dfba8dd1ec57663dc176afd76330da94befd4990e",
+      "sha256": "08b2f143fa47aa26e3ffdbaea9d91a71599fbd5fac4bc7079daeb939f8cde08f",
       "mode": "100644"
     },
     "packaging/windows/install_driver.ps1": {
