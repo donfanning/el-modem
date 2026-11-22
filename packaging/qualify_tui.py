@@ -78,6 +78,17 @@ def run(executable, output):
     def click_at(x, y):
         send(f'\x1b[<0;{x+1};{y+1}M\x1b[<0;{x+1};{y+1}m'.encode())
 
+    def click_input_after(label):
+        """Click inside the input box drawn to the right of a field label."""
+        for y,line in reversed(list(enumerate(screen.display))):
+            x=line.find(label)
+            if x>=0:
+                edge=line.find('\u258a', x+len(label))   # the box's left border
+                if edge<0:break
+                click_at(edge+3, y)
+                return
+        raise AssertionError(f'input beside {label!r} not visible')
+
     def type_text(text):
         for ch in text:
             os.write(master, ch.encode())
@@ -109,42 +120,36 @@ def run(executable, output):
         assert '(.)' in view() and 'HS' in view() and 'ARQ' in view()
         checks.append('dashboard displays actual idle worker and modem lamp columns')
         send(b's')
-        wait(lambda:'modem.echo' in view() and 'sip.user' in view())
+        # Settings open on the Modem view: a VIEW selector over a SETTING/VALUE
+        # table with fields shown by label (Echo, User, Transport), not key.
+        wait(lambda:'SETTINGS' in view() and 'VIEW' in view() and 'Echo' in view())
         save('settings')
-        assert 'IAX2 share the modem DSP' in view()
-        click('All')
-        wait(lambda:'Iax' in view())
-        click('Iax')
-        wait(lambda:'iax.user' in view())
-        assert 'iax.user' in view()
-        click('Iax')
-        wait(lambda:'Routing' in view())
-        click('Routing')
-        wait(lambda:'network.trunk' in view())
-        assert 'network.trunk' in view()
-        click('Routing')
-        wait(lambda:'All' in view())
-        click('All')
-        wait(lambda:'modem.echo' in view())
-        checks.append('settings screen loads live modem, SIP and stored IAX values')
-        click('modem.echo')
-        # Selecting the row fills the editor. Tab from the table focuses it.
-        click('modem.echo')
+        def choose_view(current, option, ready):
+            click(current)                      # open the VIEW selector
+            wait(lambda:'Advanced' in view())   # its option list is showing
+            click(option)
+            wait(ready)
+        choose_view('Modem','IAX2',lambda:'Register' in view() and 'User' in view())
+        save('settings-iax')
+        choose_view('IAX2','Route',lambda:'Transport' in view() and 'Register' not in view())
+        save('settings-route')
+        choose_view('Route','Modem',lambda:'Echo' in view() and 'Transport' not in view())
+        checks.append('settings screen loads live modem, IAX2 and routing values through the view selector')
+        click('Echo')
+        wait(lambda:'ECHO' in view())           # the editor label names the selected field
         save('settings-selected')
-        # The modal puts the value editor at a stable fixed row below the
-        # scrollable table. Focus it directly; Tab order varies by Textual.
-        click_at(42,32)
+        click_input_after('ECHO')               # into the value editor beside its label
         send(b'\x1b[H\x1b[3~')  # Home, Delete: replace the current Input value.
         type_text('0')
         save('settings-editor')
         click('Apply')
-        wait(lambda:re.search(r'modem\.echo\s+0\s+0\s+immediate',view()) is not None)
+        wait(lambda:re.search(r'Echo\s+(~ )?0\s',view()) is not None)
         save('settings-applied')
         click('Save profile')
         profile=output/'instances/modem-1/profiles.json'
         wait(lambda:profile.exists() and json.loads(profile.read_text()).get('profiles',{}).get('0',{}).get('echo') == 0)
         checks.append('setting edited and saved through actual UI callbacks into worker profile')
-        click('Close [Esc]')
+        click('Close')
         wait(lambda:'UI qualification' in view() and 'ONLINE' in view())
         send(b't')
         wait(lambda:'ASCII TERMINAL' in view().upper())
@@ -165,18 +170,17 @@ def run(executable, output):
         send(b'\x1b[21~')  # F10 releases terminal rather than transmitting it.
         wait(lambda:'UI qualification' in view() and 'ASCII TERMINAL' not in view().upper())
         send(b's')
-        wait(lambda:'modem.echo' in view())
+        wait(lambda:'SETTINGS' in view() and 'Echo' in view())
         save('settings-after-terminal')
-        click('modem.echo')
-        wait(lambda:re.search(r'modem\.echo\s+1\s+1\s+immediate',view()) is not None)
+        wait(lambda:re.search(r'Echo\s+(~ )?1\s',view()) is not None)
         save('settings-echo-restored')
-        click('Close [Esc]')
+        click('Close')
         select_modem_action(4)  # fifth modem action: start/stop
         wait(lambda:'OFFLINE' in view())
         select_modem_action(3)  # fourth modem action: configure instance
-        wait(lambda:'INSTANCE / CONNECTION SETUP' in view())
+        wait(lambda:'/  CONNECTION' in view() and 'SIP port' in view())
         save('instance-dialog')
-        assert 'sip_port' in view() and 'media_port' in view() and '27232' in view()
+        assert 'SIP port' in view() and 'RTP port' in view() and '27232' in view()
         click('Cancel')
         wait(lambda:'UI qualification' in view() and 'OFFLINE' in view())
         select_modem_action(4)
